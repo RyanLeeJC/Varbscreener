@@ -38,7 +38,7 @@ def validate_vr_token(
     endpoint: str = "/api/positions",
     timeout_s: int = 20,
 ) -> Tuple[bool, Dict[str, Any]]:
-    session = Session(impersonate="chrome124")
+    session = Session(impersonate="chrome136")
     resp = session.get(
         f"{BASE_URL}{endpoint}",
         headers=_build_headers(wallet_address),
