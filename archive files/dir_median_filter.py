@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import statistics
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+
+def _repo_root_from_here() -> str:
+    # This file lives in: <repo_root>/Varibot/dir_median_filter.py
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def default_listingtable_json_path() -> str:
+    return os.path.join(_repo_root_from_here(), "Vari Listings", "listingtabledata.json")
+
+
+# Skip names with extremely one-sided OI (|long-short|/OI); None disables the filter.
+DEFAULT_MAX_OI_SKEW: Optional[float] = 0.95
+
+# Always dropped when building the top-N-by-OI universe (unioned with --exclude).
+TICKER_BLACKLIST: frozenset[str] = frozenset(
+    {
+        "XPL",
+    }
+)
+
+
+def _as_str(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+def _as_float(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+
+def _parse_pct(v: Any) -> Optional[float]:
+    """
+    Parses values like "1.23%" or "-0.47%" into percentage points as float.
+    Returns None when parsing fails.
+    """
+    s = _as_str(v)
+    if not s:
+        return None
+    s = s.replace("%", "").strip()
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+@dataclass(frozen=True)
+class ListingRow:
+    ticker: str
+    oi: float
+    chg_24h_pct: float
+
+
+def _load_listing_rows(payload: Any) -> List[Dict[str, Any]]:
+    if isinstance(payload, dict) and isinstance(payload.get("listings"), list):
+        listings = payload.get("listings")
+        return [x for x in listings if isinstance(x, dict)]
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    raise ValueError("Unexpected listingtable payload shape (expected dict with 'listings' or a list).")
+
+
+def _to_listing_row(d: Dict[str, Any]) -> Optional[ListingRow]:
+    ticker = _as_str(d.get("vari_ticker") or d.get("ticker") or d.get("symbol"))
+    if not ticker:
+        return None
+    oi = _as_float(d.get("OI") if "OI" in d else d.get("open_interest"))
+    if oi is None:
+        return None
+    chg = _parse_pct(d.get("price_change_24h_pct") or d.get("price_change_24h") or d.get("chg_24h_pct"))
+    if chg is None:
+        return None
+    return ListingRow(ticker=ticker.upper(), oi=float(oi), chg_24h_pct=float(chg))
+
+
+def select_top_n_by_oi(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    n: int,
+    exclude: Set[str],
+    max_oi_skew: Optional[float] = DEFAULT_MAX_OI_SKEW,
+) -> List[ListingRow]:
+    parsed: List[ListingRow] = []
+    for d in rows:
+        if max_oi_skew is not None:
+            skew = _as_float(d.get("OI Skew"))
+            if skew is not None and skew > max_oi_skew:
+                continue
+        r = _to_listing_row(d)
+        if r is None:
+            continue
+        if r.ticker in exclude:
+            continue
+        parsed.append(r)
+
+    parsed.sort(key=lambda r: (r.oi, r.ticker), reverse=True)
+    if len(parsed) < n:
+        raise ValueError(f"Not enough valid rows to select top {n} by OI (got {len(parsed)} after parsing/excludes).")
+    return parsed[:n]
+
+
+@dataclass(frozen=True)
+class MedianSplitResult:
+    universe: List[ListingRow]
+    median_24h_chg_pct: float
+    outperformers: List[str]
+    underperformers: List[str]
+
+
+def median_split_by_24h_change(
+    universe: Sequence[ListingRow],
+    *,
+    group_size: int = 50,
+) -> MedianSplitResult:
+    if len(universe) != group_size * 2:
+        raise ValueError(f"Universe must be exactly {group_size*2} rows (got {len(universe)}).")
+
+    chgs = [r.chg_24h_pct for r in universe]
+    median_val = float(statistics.median(chgs))
+
+    # Deterministic 50/50: sort by 24h change, then OI, then ticker.
+    ordered = sorted(universe, key=lambda r: (r.chg_24h_pct, -r.oi, r.ticker))
+    under = [r.ticker for r in ordered[:group_size]]
+    over = [r.ticker for r in ordered[-group_size:]]
+
+    return MedianSplitResult(
+        universe=list(universe),
+        median_24h_chg_pct=median_val,
+        outperformers=over,
+        underperformers=under,
+    )
+
+
+def get_median_groups_from_listingtable_json(
+    *,
+    json_path: str,
+    top_n: int = 20,
+    exclude: Optional[Iterable[str]] = None,
+    max_oi_skew: Optional[float] = DEFAULT_MAX_OI_SKEW,
+) -> MedianSplitResult:
+    exclude_set = {s.strip().upper() for s in (exclude or []) if s and str(s).strip()}
+    exclude_set |= TICKER_BLACKLIST
+    with open(json_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    rows = _load_listing_rows(payload)
+    universe = select_top_n_by_oi(
+        rows, n=top_n, exclude=exclude_set, max_oi_skew=max_oi_skew
+    )
+    return median_split_by_24h_change(universe, group_size=top_n // 2)
+
+
+def _split_csv(s: Optional[str]) -> List[str]:
+    if not s:
+        return []
+    parts: List[str] = []
+    for p in str(s).replace(";", ",").split(","):
+        t = p.strip()
+        if t:
+            parts.append(t)
+    return parts
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        description="Median split filter: top N by OI (ex BTC/ETH, blacklist, ex OI Skew>0.95), "
+        "then long top half by 24h change and short bottom half."
+    )
+    ap.add_argument(
+        "--json-path",
+        default=os.getenv("LISTINGTABLE_JSON", default_listingtable_json_path()),
+        help="Path to listingtabledata.json (default: LISTINGTABLE_JSON env or repo default).",
+    )
+    ap.add_argument("--top-n", type=int, default=20, help="Universe size by OI after exclusions (default 20).")
+    ap.add_argument(
+        "--exclude",
+        default="BTC,ETH",
+        help="Comma-separated tickers to exclude (default BTC,ETH).",
+    )
+    ap.add_argument(
+        "--max-oi-skew",
+        type=float,
+        default=DEFAULT_MAX_OI_SKEW if DEFAULT_MAX_OI_SKEW is not None else -1.0,
+        help=f"Skip listings with OI Skew above this (default {DEFAULT_MAX_OI_SKEW}); use negative to disable.",
+    )
+    ap.add_argument("--print-json", action="store_true", help="Print machine-readable JSON output.")
+    return ap
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    exclude = _split_csv(args.exclude)
+    all_excluded = sorted(
+        {e.strip().upper() for e in exclude if e and str(e).strip()} | set(TICKER_BLACKLIST)
+    )
+    max_skew: Optional[float] = float(args.max_oi_skew)
+    if max_skew is not None and max_skew < 0:
+        max_skew = None
+
+    res = get_median_groups_from_listingtable_json(
+        json_path=str(args.json_path),
+        top_n=int(args.top_n),
+        exclude=exclude,
+        max_oi_skew=max_skew,
+    )
+
+    if args.print_json:
+        print(
+            json.dumps(
+                {
+                    "json_path": os.path.abspath(str(args.json_path)),
+                    "top_n": int(args.top_n),
+                    "exclude": [e.strip().upper() for e in exclude],
+                    "blacklist": sorted(TICKER_BLACKLIST),
+                    "excluded_effective": all_excluded,
+                    "max_oi_skew": max_skew,
+                    "median_24h_chg_pct": res.median_24h_chg_pct,
+                    "long": res.outperformers,
+                    "short": res.underperformers,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    print(f"listingtable json: {os.path.abspath(str(args.json_path))}")
+    skew_note = f"; OI Skew ≤ {max_skew}" if max_skew is not None else "; OI Skew filter off"
+    print(
+        f"universe: top {int(args.top_n)} by OI (excluded: {', '.join(all_excluded)}){skew_note}"
+    )
+    print(f"median 24hChg%: {res.median_24h_chg_pct:.4f}%")
+    print()
+    print(f"Median Outperformers (LONG) [{len(res.outperformers)}]:")
+    print(",".join(res.outperformers))
+    print()
+    print(f"Median Underperformers (SHORT) [{len(res.underperformers)}]:")
+    print(",".join(res.underperformers))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

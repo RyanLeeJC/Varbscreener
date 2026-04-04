@@ -1,0 +1,3 @@
+# Root requirements for Railway (Nixpacks looks here). Same as Varibot/requirements.txt.
+curl_cffi>=0.7.0
+python-dotenv>=1.0.1

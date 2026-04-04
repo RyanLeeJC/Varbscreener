@@ -1,0 +1,11 @@
+.env
+.varibot_position_latch.json
+varibot_output.txt
+state.db
+__pycache__/
+*.pyc
+.cursor/
+runs/
+Bot_credentials/
+*.log
+.DS_Store

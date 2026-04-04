@@ -1,0 +1,14 @@
+.DS_Store
+.cursor/
+*.log
+
+# Secrets (never commit)
+.env
+**/.env
+
+# Local bot state / logs
+Varibot/varibot_output.txt
+Varibot/state.db
+Varibot/.varibot_position_latch.json
+Varibot/runs/
+Varibot/Bot_credentials/

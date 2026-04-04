@@ -1,0 +1,476 @@
+{
+  "ts": 1775111532.725837,
+  "base_url": "https://omni.variational.io",
+  "wallet": "0xbc31c7582489484e81ba39a7ce020a76d73e9a59",
+  "live": true,
+  "max_slippage": 0.001,
+  "reduce_only": false,
+  "leverage": 20,
+  "usd_notional_per_asset": 100.0,
+  "long": [
+    "BTC"
+  ],
+  "short": [
+    "ETH"
+  ],
+  "assets": [],
+  "job_count": 2,
+  "orders": [
+    {
+      "asset": "BTC",
+      "side": "buy",
+      "instrument": {
+        "instrument_type": "perpetual_future",
+        "underlying": "BTC",
+        "funding_interval_s": 3600,
+        "settlement_asset": "USDC"
+      },
+      "steps": {
+        "set_leverage": {
+          "requested": 20,
+          "response": {
+            "current": 20,
+            "max": 50
+          }
+        },
+        "quote": {
+          "instrument": {
+            "instrument_type": "perpetual_future",
+            "underlying": "BTC",
+            "funding_interval_s": 3600,
+            "settlement_asset": "USDC"
+          },
+          "qty": "0.0015",
+          "bid": "66631.56",
+          "ask": "66636.57",
+          "mark_price": "66634.1441270177",
+          "index_price": "66661.0926345285",
+          "timestamp": "2026-04-02T06:32:13.056Z",
+          "quote_id": "682ed593-6cab-4e49-961b-ddadd7aa0f38",
+          "margin_requirements": {
+            "existing_margin": {
+              "initial_margin": "9.997926",
+              "maintenance_margin": "4.998964"
+            },
+            "bid_margin_delta": {
+              "initial_margin": "-4.995596",
+              "maintenance_margin": "-2.497798"
+            },
+            "ask_margin_delta": {
+              "initial_margin": "4.995595",
+              "maintenance_margin": "2.497797"
+            },
+            "bid_max_notional_delta": "9877.457237",
+            "ask_max_notional_delta": "9675.94439",
+            "estimated_fees_bid": "0",
+            "estimated_fees_ask": "0"
+          },
+          "margin_params": {
+            "margin_mode": "simple",
+            "params": {
+              "asset_params": {
+                "BTC": {
+                  "futures_initial_margin": "0.05",
+                  "futures_maintenance_margin": "0.025",
+                  "futures_leverage": "100000000000",
+                  "option_initial_margin": "0.15",
+                  "option_initial_margin_min": "0.1",
+                  "option_maintenance_margin": "0.075"
+                }
+              },
+              "default_asset_param": {
+                "futures_initial_margin": "0.2",
+                "futures_maintenance_margin": "0.1",
+                "futures_leverage": "100000000000",
+                "option_initial_margin": "0.15",
+                "option_initial_margin_min": "0.1",
+                "option_maintenance_margin": "0.075"
+              },
+              "use_default_asset_param": false,
+              "liquidation_penalty": "0.1",
+              "auto_liquidation": true
+            }
+          },
+          "qty_limits": {
+            "bid": {
+              "min_qty_tick": "0.000001",
+              "min_qty": "0.000002",
+              "max_qty": "15007903.161805"
+            },
+            "ask": {
+              "min_qty_tick": "0.000001",
+              "min_qty": "0.000002",
+              "max_qty": "15006774.808487"
+            }
+          }
+        },
+        "order_request": {
+          "method": "POST",
+          "path": "/api/orders/new/market",
+          "json": {
+            "quote_id": "682ed593-6cab-4e49-961b-ddadd7aa0f38",
+            "side": "buy",
+            "max_slippage": 0.001,
+            "is_reduce_only": false
+          }
+        },
+        "order_response": {
+          "rfq_id": "593a0258-4a61-412f-a0cb-47ccb3049df6",
+          "take_profit_rfq_id": null,
+          "stop_loss_rfq_id": null
+        },
+        "rfq_id": "593a0258-4a61-412f-a0cb-47ccb3049df6",
+        "order_id": null
+      }
+    },
+    {
+      "asset": "ETH",
+      "side": "sell",
+      "instrument": {
+        "instrument_type": "perpetual_future",
+        "underlying": "ETH",
+        "funding_interval_s": 3600,
+        "settlement_asset": "USDC"
+      },
+      "steps": {
+        "set_leverage": {
+          "requested": 20,
+          "response": {
+            "current": 20,
+            "max": 50
+          }
+        },
+        "quote": {
+          "instrument": {
+            "instrument_type": "perpetual_future",
+            "underlying": "ETH",
+            "funding_interval_s": 3600,
+            "settlement_asset": "USDC"
+          },
+          "qty": "0.0488",
+          "bid": "2048.71",
+          "ask": "2049.05",
+          "mark_price": "2048.791197668251",
+          "index_price": "2050.233590680715",
+          "timestamp": "2026-04-02T06:32:13.510Z",
+          "quote_id": "327c4f30-5ee1-4bc3-935d-0cb352600016",
+          "margin_requirements": {
+            "existing_margin": {
+              "initial_margin": "14.992489",
+              "maintenance_margin": "7.496245"
+            },
+            "bid_margin_delta": {
+              "initial_margin": "4.999",
+              "maintenance_margin": "2.499501"
+            },
+            "ask_margin_delta": {
+              "initial_margin": "-4.999",
+              "maintenance_margin": "-2.4995"
+            },
+            "bid_max_notional_delta": "9575.573696",
+            "ask_max_notional_delta": "9775.321935",
+            "estimated_fees_bid": "0",
+            "estimated_fees_ask": "0",
+            "estimated_liquidation_price_bid": "6884.63069923319"
+          },
+          "margin_params": {
+            "margin_mode": "simple",
+            "params": {
+              "asset_params": {
+                "ETH": {
+                  "futures_initial_margin": "0.05",
+                  "futures_maintenance_margin": "0.025",
+                  "futures_leverage": "100000000000",
+                  "option_initial_margin": "0.15",
+                  "option_initial_margin_min": "0.1",
+                  "option_maintenance_margin": "0.075"
+                }
+              },
+              "default_asset_param": {
+                "futures_initial_margin": "0.2",
+                "futures_maintenance_margin": "0.1",
+                "futures_leverage": "100000000000",
+                "option_initial_margin": "0.15",
+                "option_initial_margin_min": "0.1",
+                "option_maintenance_margin": "0.075"
+              },
+              "use_default_asset_param": false,
+              "liquidation_penalty": "0.1",
+              "auto_liquidation": true
+            }
+          },
+          "qty_limits": {
+            "bid": {
+              "min_qty_tick": "0.00001",
+              "min_qty": "0.00005",
+              "max_qty": "488112031.47346"
+            },
+            "ask": {
+              "min_qty_tick": "0.00001",
+              "min_qty": "0.00005",
+              "max_qty": "488031038.77406"
+            }
+          }
+        },
+        "order_request": {
+          "method": "POST",
+          "path": "/api/orders/new/market",
+          "json": {
+            "quote_id": "327c4f30-5ee1-4bc3-935d-0cb352600016",
+            "side": "sell",
+            "max_slippage": 0.001,
+            "is_reduce_only": false
+          }
+        },
+        "order_response": {
+          "rfq_id": "9deb9a26-2c1c-4a8e-af24-27261d6fb5db",
+          "take_profit_rfq_id": null,
+          "stop_loss_rfq_id": null
+        },
+        "rfq_id": "9deb9a26-2c1c-4a8e-af24-27261d6fb5db",
+        "order_id": null
+      }
+    }
+  ]
+}
+{
+  "ts": 1775114114.789047,
+  "base_url": "https://omni.variational.io",
+  "wallet": "0xbc31c7582489484e81ba39a7ce020a76d73e9a59",
+  "live": true,
+  "max_slippage": 0.001,
+  "reduce_only": false,
+  "leverage": 20,
+  "usd_notional_per_asset": 100.0,
+  "long": [
+    "BTC"
+  ],
+  "short": [
+    "ETH"
+  ],
+  "assets": [],
+  "job_count": 2,
+  "orders": [
+    {
+      "asset": "BTC",
+      "side": "buy",
+      "instrument": {
+        "instrument_type": "perpetual_future",
+        "underlying": "BTC",
+        "funding_interval_s": 3600,
+        "settlement_asset": "USDC"
+      },
+      "steps": {
+        "set_leverage": {
+          "requested": 20,
+          "response": {
+            "current": 20,
+            "max": 50
+          }
+        },
+        "quote": {
+          "instrument": {
+            "instrument_type": "perpetual_future",
+            "underlying": "BTC",
+            "funding_interval_s": 3600,
+            "settlement_asset": "USDC"
+          },
+          "qty": "0.001502",
+          "bid": "66553.51",
+          "ask": "66558.67",
+          "mark_price": "66556.2423320415",
+          "index_price": "66590.0095291614",
+          "timestamp": "2026-04-02T07:15:15.187639Z",
+          "quote_id": "f6178771-7258-4f30-acdc-ca5fa6cc6874",
+          "margin_requirements": {
+            "existing_margin": {
+              "initial_margin": "0",
+              "maintenance_margin": "0"
+            },
+            "bid_margin_delta": {
+              "initial_margin": "4.996606",
+              "maintenance_margin": "2.498303"
+            },
+            "ask_margin_delta": {
+              "initial_margin": "4.996606",
+              "maintenance_margin": "2.498303"
+            },
+            "bid_max_notional_delta": "9881.511517",
+            "ask_max_notional_delta": "9880.103444",
+            "estimated_fees_bid": "0",
+            "estimated_fees_ask": "0",
+            "estimated_liquidation_price_bid": "385811.6655453253"
+          },
+          "margin_params": {
+            "margin_mode": "simple",
+            "params": {
+              "asset_params": {
+                "BTC": {
+                  "futures_initial_margin": "0.05",
+                  "futures_maintenance_margin": "0.025",
+                  "futures_leverage": "100000000000",
+                  "option_initial_margin": "0.15",
+                  "option_initial_margin_min": "0.1",
+                  "option_maintenance_margin": "0.075"
+                }
+              },
+              "default_asset_param": {
+                "futures_initial_margin": "0.2",
+                "futures_maintenance_margin": "0.1",
+                "futures_leverage": "100000000000",
+                "option_initial_margin": "0.15",
+                "option_initial_margin_min": "0.1",
+                "option_maintenance_margin": "0.075"
+              },
+              "use_default_asset_param": false,
+              "liquidation_penalty": "0.1",
+              "auto_liquidation": true
+            }
+          },
+          "qty_limits": {
+            "bid": {
+              "min_qty_tick": "0.000001",
+              "min_qty": "0.000002",
+              "max_qty": "15025503.53843"
+            },
+            "ask": {
+              "min_qty_tick": "0.000001",
+              "min_qty": "0.000002",
+              "max_qty": "15024338.67744"
+            }
+          }
+        },
+        "order_request": {
+          "method": "POST",
+          "path": "/api/orders/new/market",
+          "json": {
+            "quote_id": "f6178771-7258-4f30-acdc-ca5fa6cc6874",
+            "side": "buy",
+            "max_slippage": 0.001,
+            "is_reduce_only": false
+          }
+        },
+        "order_response": {
+          "rfq_id": "872ef7a8-e3c4-4ca5-8fcb-6f6582c3a87b",
+          "take_profit_rfq_id": null,
+          "stop_loss_rfq_id": null
+        },
+        "rfq_id": "872ef7a8-e3c4-4ca5-8fcb-6f6582c3a87b",
+        "order_id": null
+      }
+    },
+    {
+      "asset": "ETH",
+      "side": "sell",
+      "instrument": {
+        "instrument_type": "perpetual_future",
+        "underlying": "ETH",
+        "funding_interval_s": 3600,
+        "settlement_asset": "USDC"
+      },
+      "steps": {
+        "set_leverage": {
+          "requested": 20,
+          "response": {
+            "current": 20,
+            "max": 50
+          }
+        },
+        "quote": {
+          "instrument": {
+            "instrument_type": "perpetual_future",
+            "underlying": "ETH",
+            "funding_interval_s": 3600,
+            "settlement_asset": "USDC"
+          },
+          "qty": "0.04891",
+          "bid": "2044.26",
+          "ask": "2044.45",
+          "mark_price": "2044.369146662358",
+          "index_price": "2045.839270613916",
+          "timestamp": "2026-04-02T07:15:15.712Z",
+          "quote_id": "0fa8c2aa-e9f3-48ee-90ad-940a01392556",
+          "margin_requirements": {
+            "existing_margin": {
+              "initial_margin": "4.996606",
+              "maintenance_margin": "2.498303"
+            },
+            "bid_margin_delta": {
+              "initial_margin": "4.998554",
+              "maintenance_margin": "2.499278"
+            },
+            "ask_margin_delta": {
+              "initial_margin": "4.998553",
+              "maintenance_margin": "2.499276"
+            },
+            "bid_max_notional_delta": "9780.443947",
+            "ask_max_notional_delta": "9779.712815",
+            "estimated_fees_bid": "0",
+            "estimated_fees_ask": "0",
+            "estimated_liquidation_price_bid": "11798.20990523468"
+          },
+          "margin_params": {
+            "margin_mode": "simple",
+            "params": {
+              "asset_params": {
+                "ETH": {
+                  "futures_initial_margin": "0.05",
+                  "futures_maintenance_margin": "0.025",
+                  "futures_leverage": "100000000000",
+                  "option_initial_margin": "0.15",
+                  "option_initial_margin_min": "0.1",
+                  "option_maintenance_margin": "0.075"
+                }
+              },
+              "default_asset_param": {
+                "futures_initial_margin": "0.2",
+                "futures_maintenance_margin": "0.1",
+                "futures_leverage": "100000000000",
+                "option_initial_margin": "0.15",
+                "option_initial_margin_min": "0.1",
+                "option_maintenance_margin": "0.075"
+              },
+              "use_default_asset_param": false,
+              "liquidation_penalty": "0.1",
+              "auto_liquidation": true
+            }
+          },
+          "qty_limits": {
+            "bid": {
+              "min_qty_tick": "0.00001",
+              "min_qty": "0.00005",
+              "max_qty": "489174566.83592"
+            },
+            "ask": {
+              "min_qty_tick": "0.00001",
+              "min_qty": "0.00005",
+              "max_qty": "489129105.62743"
+            }
+          }
+        },
+        "order_request": {
+          "method": "POST",
+          "path": "/api/orders/new/market",
+          "json": {
+            "quote_id": "0fa8c2aa-e9f3-48ee-90ad-940a01392556",
+            "side": "sell",
+            "max_slippage": 0.001,
+            "is_reduce_only": false
+          }
+        },
+        "order_response": {
+          "rfq_id": "4c15bb7e-b5bd-4897-80d8-07a10a80a9cb",
+          "take_profit_rfq_id": null,
+          "stop_loss_rfq_id": null
+        },
+        "rfq_id": "4c15bb7e-b5bd-4897-80d8-07a10a80a9cb",
+        "order_id": null
+      }
+    }
+  ]
+}
+Positions entered: 2
+Symbol  Qty      Side
+------  -------  ----
+BTC     0.0015   Buy 
+ETH     0.04879  Sell
