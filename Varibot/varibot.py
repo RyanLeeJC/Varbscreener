@@ -39,6 +39,14 @@ _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json"
 # After a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait).
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0
 
+# Default CLI values (override with --period-min / --tp-pct).
+_DEFAULT_PERIOD_MIN: int = 60
+_DEFAULT_TP_PCT: float = 5.0
+# Median universe: top-N by OI → half long / half short (see median_filter.py).
+_DEFAULT_MEDIAN_TOP_N: int = 20
+_DEFAULT_MEDIAN_EXCLUDE: str = "BTC,ETH"
+_COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
+
 _MONTH_ABBR_TO_NUM = {
     "jan": 1,
     "feb": 2,
@@ -369,15 +377,16 @@ def _run_script(
 
 
 def run_listingtable_or_use_cache(*, timeout_s: float = 120.0) -> str:
-    script = os.path.join(_LISTINGS_DIR, "listingtable.py")
+    script_name = "listingtable_pro.py" if _COINGECKO_PLAN.strip().lower() == "pro" else "listingtable.py"
+    script = os.path.join(_LISTINGS_DIR, script_name)
     json_path = os.path.join(_LISTINGS_DIR, "listingtabledata.json")
     if not os.path.isfile(script):
-        raise FileNotFoundError(f"listingtable.py not found: {script}")
+        raise FileNotFoundError(f"{script_name} not found: {script}")
     rc = _run_script(script, cwd=_LISTINGS_DIR, timeout_s=timeout_s)
     if rc != 0 and os.path.isfile(json_path):
-        _log(f"listingtable.py exited {rc}; using cached listingtabledata.json if present.")
+        _log(f"{script_name} exited {rc}; using cached listingtabledata.json if present.")
     elif rc != 0:
-        raise RuntimeError(f"listingtable.py failed (code {rc}) and no cache at {json_path}")
+        raise RuntimeError(f"{script_name} failed (code {rc}) and no cache at {json_path}")
     if not os.path.isfile(json_path):
         raise FileNotFoundError(f"Expected {json_path} after listingtable.")
     return json_path
@@ -525,7 +534,8 @@ def one_cycle(
     if not has_pos:
         _clear_position_latch()
         _log("No open positions → listingtable → marketstate → median_filter → multimarket")
-        _log("step: running listingtable.py (may take a while)...")
+        plan = _COINGECKO_PLAN.strip().lower()
+        _log(f"step: running listingtable ({'CoinGecko Pro' if plan == 'pro' else 'CoinGecko Free'}) (may take a while)...")
         listing_json = run_listingtable_or_use_cache(timeout_s=float(args.listing_timeout_s))
         _log(f"step: listingtable finished → {listing_json}")
         _log("step: running marketstate.py...")
@@ -643,8 +653,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Actually close positions and place orders (otherwise dry-run).",
     )
-    p.add_argument("--period-min", type=int, default=5, help="Wall-clock period minutes (default 15).")
-    p.add_argument("--tp-pct", type=float, default=5.0, help="TP Check threshold %% of portfolio (default 5).")
+    p.add_argument(
+        "--period-min",
+        type=int,
+        default=_DEFAULT_PERIOD_MIN,
+        help=f"Wall-clock period minutes (default {_DEFAULT_PERIOD_MIN}).",
+    )
+    p.add_argument(
+        "--tp-pct",
+        type=float,
+        default=_DEFAULT_TP_PCT,
+        help=f"TP Check threshold %% of portfolio (default {_DEFAULT_TP_PCT:g}).",
+    )
     p.add_argument(
         "--time-exit-periods",
         type=int,
@@ -689,8 +709,17 @@ def parse_args() -> argparse.Namespace:
         default="multimarketorder.py",
         help="Script name under Varibot/ (default multimarketorder.py; try multimarketorder_cadence_1s.py).",
     )
-    p.add_argument("--median-top-n", type=int, default=20)
-    p.add_argument("--median-exclude", default="BTC,ETH")
+    p.add_argument(
+        "--median-top-n",
+        type=int,
+        default=_DEFAULT_MEDIAN_TOP_N,
+        help=f"Median filter: universe size by OI before split (default {_DEFAULT_MEDIAN_TOP_N}).",
+    )
+    p.add_argument(
+        "--median-exclude",
+        default=_DEFAULT_MEDIAN_EXCLUDE,
+        help=f"Comma-separated tickers excluded from median universe (default {_DEFAULT_MEDIAN_EXCLUDE!r}).",
+    )
     p.add_argument("--median-max-oi-skew", type=float, default=0.95)
     p.add_argument("--listing-timeout-s", type=float, default=120.0)
     p.add_argument("--marketstate-timeout-s", type=float, default=90.0)

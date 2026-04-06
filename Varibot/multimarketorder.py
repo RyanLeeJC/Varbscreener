@@ -26,9 +26,11 @@ from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 from variationalbot.vari.endpoints import Instrument
 
 # Used when neither --usd nor --im-target-pct is passed (change here to retarget default sizing).
-DEFAULT_IM_TARGET_PCT: float = 50.0
+DEFAULT_IM_TARGET_PCT: float = 75.0
 # IM-target per-order notional is rounded up to this USD step (e.g. 241.04 -> 250).
 USD_NOTIONAL_ROUND_STEP: float = 10.0
+# Default max slippage when --max-slippage and MAX_SLIPPAGE env are unset (fraction of notional).
+_DEFAULT_MAX_SLIPPAGE: float = 0.0025
 
 
 def _split_assets(raw: Optional[str]) -> List[str]:
@@ -131,7 +133,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Call POST /api/settlement_pools/set_leverage before each order. Default: skip (saves 1 request per ticker).",
     )
-    p.add_argument("--max-slippage", type=float, default=None, help="Max slippage (default: MAX_SLIPPAGE env)")
+    p.add_argument(
+        "--max-slippage",
+        type=float,
+        default=None,
+        help=f"Max slippage fraction of notional (default: MAX_SLIPPAGE env or {_DEFAULT_MAX_SLIPPAGE}).",
+    )
     p.add_argument(
         "--reduce-only",
         action="store_true",
@@ -405,7 +412,11 @@ def main() -> int:
         usd_per_order = float(args.usd)
 
     leverage = int(args.leverage)
-    max_slippage = float(args.max_slippage) if args.max_slippage is not None else float(os.environ.get("MAX_SLIPPAGE", "0.002"))
+    max_slippage = (
+        float(args.max_slippage)
+        if args.max_slippage is not None
+        else float(os.environ.get("MAX_SLIPPAGE", str(_DEFAULT_MAX_SLIPPAGE)))
+    )
 
     out: Dict[str, Any] = {
         "ts": time.time(),

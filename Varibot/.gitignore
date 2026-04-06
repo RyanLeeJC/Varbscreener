@@ -1,6 +1,7 @@
 .env
 .varibot_position_latch.json
 varibot_output.txt
+median_filter_output.txt
 state.db
 __pycache__/
 *.pyc

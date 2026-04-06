@@ -17,6 +17,17 @@ from .errors import (
 )
 
 
+def vari_http_proxies() -> Optional[Dict[str, str]]:
+    """
+    If HTTPS_PROXY or HTTP_PROXY is set (e.g. on Railway behind Cloudflare), use it for
+    all Omni requests. Example: https://user:pass@host:port
+    """
+    u = (os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or "").strip()
+    if not u:
+        return None
+    return {"http": u, "https": u}
+
+
 def _default_user_agent() -> str:
     # Keep close to a modern Chrome UA; curl_cffi impersonation handles the rest.
     return (
@@ -56,6 +67,7 @@ class VariClient:
         self.timeout_s = timeout_s
         self.session = Session(impersonate=impersonate)
         self.user_agent = user_agent or _default_user_agent()
+        self._proxies = vari_http_proxies()
         # Sliding window: at most `_rate_max` calls per `_rate_window_s` seconds (monotonic clock).
         self._rate_window_s = float(os.getenv("VARI_RATE_LIMIT_WINDOW_S", "10"))
         self._rate_max = int(os.getenv("VARI_RATE_LIMIT_MAX", "10"))
@@ -110,14 +122,17 @@ class VariClient:
                 n429 = 0
                 while True:
                     self._wait_for_rate_limit()
-                    resp = self.session.request(
-                        method=method.upper(),
-                        url=url,
-                        headers=self._headers(),
-                        cookies=self._cookies(),
-                        json=json_body,
-                        timeout=timeout_s or self.timeout_s,
-                    )
+                    req_kw: Dict[str, Any] = {
+                        "method": method.upper(),
+                        "url": url,
+                        "headers": self._headers(),
+                        "cookies": self._cookies(),
+                        "json": json_body,
+                        "timeout": timeout_s or self.timeout_s,
+                    }
+                    if self._proxies:
+                        req_kw["proxies"] = self._proxies
+                    resp = self.session.request(**req_kw)
 
                     ctype = (resp.headers.get("content-type", "") or "").lower()
                     if ctype.startswith("text/html"):

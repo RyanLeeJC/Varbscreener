@@ -7,6 +7,13 @@ from curl_cffi.requests import Session
 from dotenv import load_dotenv
 
 
+def _env_proxies() -> Optional[Dict[str, str]]:
+    u = (os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or "").strip()
+    if not u:
+        return None
+    return {"http": u, "https": u}
+
+
 BASE_URL = os.getenv("VARI_BASE_URL", "https://omni.variational.io")
 
 
@@ -38,6 +45,7 @@ def validate_vr_token(
     endpoint: str = "/api/positions",
     timeout_s: int = 20,
 ) -> Tuple[bool, Dict[str, Any]]:
+<<<<<<< HEAD
     session = Session(impersonate="chrome136")
     resp = session.get(
         f"{BASE_URL}{endpoint}",
@@ -45,6 +53,18 @@ def validate_vr_token(
         cookies=_build_cookies(vr_token, wallet_address),
         timeout=timeout_s,
     )
+=======
+    session = Session(impersonate="chrome124")
+    get_kw: Dict[str, Any] = {
+        "headers": _build_headers(wallet_address),
+        "cookies": _build_cookies(vr_token, wallet_address),
+        "timeout": timeout_s,
+    }
+    px = _env_proxies()
+    if px:
+        get_kw["proxies"] = px
+    resp = session.get(f"{BASE_URL}{endpoint}", **get_kw)
+>>>>>>> 21d9922 (Use CoinGecko Pro listingtable + deps)
 
     ctype = resp.headers.get("content-type", "")
     if ctype.startswith("text/html"):

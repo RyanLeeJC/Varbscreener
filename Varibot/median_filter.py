@@ -5,10 +5,24 @@ import json
 import os
 import sys
 import statistics
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, Tuple
 
 MedianMode = Literal["directional", "sideways"]
+
+# Default universe size by OI (split is half long / half short via median of 24h %).
+_DEFAULT_TOP_N: int = 40
+
+# Skip names with extremely one-sided OI (|long-short|/OI); None disables the filter.
+DEFAULT_MAX_OI_SKEW: Optional[float] = 0.95
+
+# Always dropped when building the top-N-by-OI universe (unioned with --exclude).
+TICKER_BLACKLIST: frozenset[str] = frozenset(
+    {
+        "XPL","ETC","PAXG","XAUT","RIVER","EDGE","BASED","VVV","IP"
+    }
+)
 
 
 def _repo_root_from_here() -> str:
@@ -22,17 +36,6 @@ def default_listingtable_json_path() -> str:
 
 def default_marketstate_json_path() -> str:
     return os.path.join(_repo_root_from_here(), "Vari Listings", "marketstate.json")
-
-
-# Skip names with extremely one-sided OI (|long-short|/OI); None disables the filter.
-DEFAULT_MAX_OI_SKEW: Optional[float] = 0.95
-
-# Always dropped when building the top-N-by-OI universe (unioned with --exclude).
-TICKER_BLACKLIST: frozenset[str] = frozenset(
-    {
-        "XPL","ETC","PAXG","XAUT","RIVER"
-    }
-)
 
 
 def _as_str(v: Any) -> Optional[str]:
@@ -156,7 +159,7 @@ def median_split_by_24h_change(
 def get_median_groups_from_listingtable_json(
     *,
     json_path: str,
-    top_n: int = 20,
+    top_n: int = _DEFAULT_TOP_N,
     exclude: Optional[Iterable[str]] = None,
     max_oi_skew: Optional[float] = DEFAULT_MAX_OI_SKEW,
 ) -> MedianSplitResult:
@@ -225,6 +228,47 @@ def long_short_for_mode(res: MedianSplitResult, mode: MedianMode) -> Tuple[List[
     return res.underperformers, res.outperformers
 
 
+def _chg_pct_by_ticker(res: MedianSplitResult) -> Dict[str, float]:
+    return {r.ticker.upper(): float(r.chg_24h_pct) for r in res.universe}
+
+
+def _group_table_lines(title: str, tickers: Sequence[str], chg: Dict[str, float]) -> List[str]:
+    lines: List[str] = [f"{title} [{len(tickers)}]:", ""]
+    if not tickers:
+        lines.append("(none)")
+        return lines
+    col_a, col_b = "Symbol", "24hChg%"
+    rows = [(t, f"{chg.get(t, float('nan')):.2f}") for t in tickers]
+    w0 = max(len(col_a), max((len(r[0]) for r in rows), default=0))
+    w1 = max(len(col_b), max((len(r[1]) for r in rows), default=0))
+    lines.append(f"{col_a:<{w0}}  {col_b:>{w1}}")
+    lines.append(f"{'-' * w0}  {'-' * w1}")
+    for t, p in rows:
+        lines.append(f"{t:<{w0}}  {p:>{w1}}")
+    return lines
+
+
+def write_median_filter_output_txt(
+    path: str,
+    *,
+    res: MedianSplitResult,
+    longs: List[str],
+    shorts: List[str],
+    long_title: str,
+    short_title: str,
+    header_lines: List[str],
+) -> None:
+    chg = _chg_pct_by_ticker(res)
+    body: List[str] = []
+    body.extend(header_lines)
+    body.append("")
+    body.extend(_group_table_lines(long_title, longs, chg))
+    body.append("")
+    body.extend(_group_table_lines(short_title, shorts, chg))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(body) + "\n")
+
+
 def _split_csv(s: Optional[str]) -> List[str]:
     if not s:
         return []
@@ -261,7 +305,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="auto: map regime Now → split for expected Next (Sideways Now→directional, Directional Now→sideways); "
         "directional/sideways: force split style (see description).",
     )
-    ap.add_argument("--top-n", type=int, default=20, help="Universe size by OI after exclusions (default 20).")
+    ap.add_argument(
+        "--top-n",
+        type=int,
+        default=_DEFAULT_TOP_N,
+        help=f"Universe size by OI after exclusions (default {_DEFAULT_TOP_N}).",
+    )
     ap.add_argument(
         "--exclude",
         default="BTC,ETH",
@@ -359,6 +408,28 @@ def main() -> int:
     print()
     print(f"{short_title} [{len(shorts)}]:")
     print(",".join(shorts))
+
+    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "median_filter_output.txt")
+    file_header: List[str] = [
+        f"Written at: {datetime.now().isoformat(timespec='seconds')}",
+        "",
+        f"Filtering: Top {int(args.top_n)} by OI (excluded: {', '.join(all_excluded)}){skew_note}",
+        f"Median 24hChg%: {res.median_24h_chg_pct:.2f}%",
+    ]
+    if market_regime is not None:
+        file_header.append(f"Current Market Regime: {format_regime_now_to_next(market_regime)}")
+    try:
+        write_median_filter_output_txt(
+            out_path,
+            res=res,
+            longs=longs,
+            shorts=shorts,
+            long_title=long_title,
+            short_title=short_title,
+            header_lines=file_header,
+        )
+    except OSError as e:
+        print(f"warning: could not write {out_path}: {e}", file=sys.stderr)
     return 0
 
 
