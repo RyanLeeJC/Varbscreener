@@ -45,16 +45,7 @@ def validate_vr_token(
     endpoint: str = "/api/positions",
     timeout_s: int = 20,
 ) -> Tuple[bool, Dict[str, Any]]:
-<<<<<<< HEAD
     session = Session(impersonate="chrome136")
-    resp = session.get(
-        f"{BASE_URL}{endpoint}",
-        headers=_build_headers(wallet_address),
-        cookies=_build_cookies(vr_token, wallet_address),
-        timeout=timeout_s,
-    )
-=======
-    session = Session(impersonate="chrome124")
     get_kw: Dict[str, Any] = {
         "headers": _build_headers(wallet_address),
         "cookies": _build_cookies(vr_token, wallet_address),
@@ -64,7 +55,6 @@ def validate_vr_token(
     if px:
         get_kw["proxies"] = px
     resp = session.get(f"{BASE_URL}{endpoint}", **get_kw)
->>>>>>> 21d9922 (Use CoinGecko Pro listingtable + deps)
 
     ctype = resp.headers.get("content-type", "")
     if ctype.startswith("text/html"):
