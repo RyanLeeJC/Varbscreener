@@ -13,11 +13,25 @@ Run:
 from __future__ import annotations
 
 import os
+import sys
+
+try:
+    # Optional: allows local runs to pick up Varibot/.env without manual export.
+    from dotenv import load_dotenv  # type: ignore
+except Exception:  # pragma: no cover
+    load_dotenv = None  # type: ignore[assignment]
 
 import listingtable as lt
 
 
 def main() -> int:
+    if load_dotenv is not None:
+        # Local convenience: load ../Varibot/.env if present. (Railway uses service Variables instead.)
+        here = os.path.dirname(os.path.abspath(__file__))
+        maybe_env = os.path.abspath(os.path.join(here, "..", "Varibot", ".env"))
+        if os.path.isfile(maybe_env):
+            load_dotenv(maybe_env)
+
     api_key = os.getenv(lt.COINGECKO_API_KEY_ENV, "").strip()
     if api_key:
         # Pro API keys must use the Pro root URL.
@@ -34,6 +48,16 @@ def main() -> int:
         lt.COINGECKO_MIN_SECONDS_BETWEEN_CALLS = float(
             os.getenv("COINGECKO_MIN_SECONDS_BETWEEN_CALLS_PRO", "0.25")
         )
+
+    # One-line banner so it's obvious why this is slow (usually: missing key → Free limits).
+    plan = "pro" if api_key else "free"
+    key_hint = (api_key[:6] + "..." + api_key[-4:]) if api_key and len(api_key) >= 12 else ("set" if api_key else "missing")
+    print(
+        f"[listingtable_pro] plan={plan} api_key={key_hint} base={lt.COINGECKO_BASE_URL} "
+        f"per_page={lt.COINGECKO_MARKETS_PER_PAGE} id_batch={lt.COINGECKO_ID_BATCH_SIZE} "
+        f"min_sleep_s={lt.COINGECKO_MIN_SECONDS_BETWEEN_CALLS}",
+        file=sys.stderr,
+    )
 
     lt.main()
     return 0
