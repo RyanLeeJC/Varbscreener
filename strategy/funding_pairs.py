@@ -456,6 +456,99 @@ def default_listingtable_json_path() -> str:
     return os.path.join(_repo_root_from_here(), "Vari Listings", "listingtabledata.json")
 
 
+def pick_replacement_pair(
+    *,
+    listing_json: str,
+    state_json_path: Optional[str] = None,
+    top_n_by_vol: Optional[int] = None,
+    extra_disallow: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Pick a single replacement pair (long/short) for the existing funding_pairs state.
+
+    This is intended for an orchestrator (Varibot) to:
+      - close a specific slot's two legs
+      - open a fresh pair to refill that slot
+
+    It does NOT mutate the state file.
+    """
+    st_path = os.path.abspath(state_json_path or default_state_json_path())
+    state = _read_state(st_path)
+    disallow: Set[str] = set(_tickers_in_state_pairs(state))
+    disallow |= set(TICKER_BLACKLIST)
+    disallow |= {"BTC", "ETH"}
+    if extra_disallow:
+        disallow |= {str(x).strip().upper() for x in extra_disallow if str(x).strip()}
+
+    with open(str(listing_json), "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    rows = _load_listing_rows(payload)
+
+    universe = _eligible_universe(
+        rows,
+        exclude=disallow,
+        top_n_by_vol=int(top_n_by_vol) if top_n_by_vol is not None else TOP_N_BY_VOL_24H,
+    )
+    pairs = _build_pairs(universe, target_pairs=1, disallow=disallow)
+    if not pairs:
+        raise ValueError(f"{STRATEGY_NAME}: no eligible replacement pair found (top={len(universe)} by vol).")
+    p = pairs[0]
+    return {
+        "strategy": STRATEGY_NAME,
+        "long": p.long,
+        "short": p.short,
+        "long_afr": p.long_afr,
+        "short_afr": p.short_afr,
+        "afr_diff": p.afr_diff,
+        "universe_top_n_by_vol": int(top_n_by_vol) if top_n_by_vol is not None else TOP_N_BY_VOL_24H,
+        "state_json": st_path,
+    }
+
+
+def replace_state_pair_slot(
+    *,
+    state_json_path: Optional[str],
+    slot: int,
+    new_long: str,
+    new_short: str,
+    opened_unix: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Update the funding_pairs state file in-place, replacing the pair for `slot`.
+    Returns the updated state dict.
+    """
+    st_path = os.path.abspath(state_json_path or default_state_json_path())
+    state = _read_state(st_path)
+    pairs = _state_pairs(state)
+    if not pairs:
+        raise ValueError(f"{STRATEGY_NAME}: state has no pairs at {st_path}")
+
+    now = _now()
+    opened = float(opened_unix) if opened_unix is not None else now
+    updated = False
+    for p in pairs:
+        try:
+            s = int(p.get("slot"))
+        except Exception:
+            continue
+        if s != int(slot):
+            continue
+        p["long"] = str(new_long).strip().upper()
+        p["short"] = str(new_short).strip().upper()
+        p["opened_unix"] = opened
+        p["closed_unix"] = None
+        p["last_seen"] = {"combined_upnl_usd": None, "combined_notional_usd": None, "combined_upnl_pct": None}
+        updated = True
+        break
+    if not updated:
+        raise ValueError(f"{STRATEGY_NAME}: slot {slot} not found in state at {st_path}")
+
+    state["pairs"] = pairs
+    state["written_at_unix"] = now
+    _write_state(st_path, state)
+    return state
+
+
 def paper_run(
     *,
     listing_json: Optional[str] = None,

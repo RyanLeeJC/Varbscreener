@@ -95,6 +95,7 @@ from variationalbot.vari import VariAuth, VariClient, VariEndpoints  # noqa: E40
 
 from multimarketorder import DEFAULT_IM_TARGET_PCT  # noqa: E402
 from strategy import strategies as strategies_mod  # noqa: E402
+from strategy import funding_pairs as funding_pairs_mod  # noqa: E402
 
 
 def _log(msg: str) -> None:
@@ -691,6 +692,158 @@ def build_endpoints() -> Tuple[Any, VariEndpoints]:
     return cfg, ep
 
 
+def _resolve_max_slippage() -> float:
+    try:
+        v = os.getenv("MAX_SLIPPAGE", "").strip()
+        if v:
+            return float(v)
+    except Exception:
+        pass
+    return 0.0025
+
+
+def _extract_quote_id(resp: Any) -> Optional[str]:
+    if not isinstance(resp, dict):
+        return None
+    for k in ("quote_id", "quoteId", "id"):
+        v = resp.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _funding_pairs_manager(
+    *,
+    ep: VariEndpoints,
+    args: argparse.Namespace,
+    positions_raw: Any,
+) -> None:
+    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
+    k = strat_key.strip().lower()
+    if k.endswith(".py"):
+        k = k[:-3]
+    if k != "funding_pairs":
+        return
+
+    plan = funding_pairs_mod.desired_actions_from_positions(positions_raw=positions_raw)
+    pairs_to_close = plan.get("pairs_to_close") if isinstance(plan, dict) else None
+    if not isinstance(pairs_to_close, list):
+        return
+    if not pairs_to_close:
+        _log("funding_pairs manager: no slots to close (per-pair TP/max-age).")
+        return
+
+    _log(f"funding_pairs manager: {len(pairs_to_close)} slot(s) flagged to close:")
+    for p in pairs_to_close:
+        if not isinstance(p, dict):
+            continue
+        slot = p.get("slot")
+        long_t = p.get("long")
+        short_t = p.get("short")
+        up = p.get("combined_upnl_pct")
+        reason = p.get("close_reason")
+        age_s = p.get("age_s")
+        up_s = "-" if up is None else f"{float(up):.3f}%"
+        age_s_s = "-" if age_s is None else _format_duration_s(float(age_s))
+        _log(f"  slot={slot} {reason} age={age_s_s} combined_uPNL%={up_s} LONG {long_t} / SHORT {short_t}")
+
+    if not bool(args.live):
+        _log("funding_pairs manager: dry-run (not live) — would close flagged slot legs and open replacements.")
+        return
+
+    # Build a quick lookup of current position qty by underlying.
+    by_sym: Dict[str, float] = {}
+    for pos in _positions_list(positions_raw):
+        sym = _instrument_label(pos).strip().upper()
+        q = _position_qty(pos)
+        if sym and q is not None and abs(float(q)) > 1e-12:
+            by_sym[sym] = float(q)
+
+    max_slip = _resolve_max_slippage()
+    listing_json = os.path.join(_LISTINGS_DIR, "listingtabledata.json")
+    top_n = _top_n_for_strategy(strat_key)
+
+    for p in pairs_to_close:
+        if not isinstance(p, dict):
+            continue
+        try:
+            slot_i = int(p.get("slot"))
+        except Exception:
+            continue
+        long_t = str(p.get("long") or "").strip().upper()
+        short_t = str(p.get("short") or "").strip().upper()
+        if not long_t or not short_t:
+            continue
+
+        # Close both legs reduce-only at full size.
+        for sym in (long_t, short_t):
+            q = by_sym.get(sym)
+            if q is None or abs(float(q)) <= 1e-12:
+                _log(f"funding_pairs manager: skip close {sym} (no open qty found).")
+                continue
+            close_side = "sell" if float(q) > 0 else "buy"
+            qty_abs = abs(float(q))
+            _log(f"funding_pairs manager: closing {sym} qty={qty_abs:g} side={close_side} reduce-only...")
+            # quote_indicative_simple doesn't include side; stash override in response container
+            from variationalbot.vari.endpoints import Instrument  # local import
+
+            instrument = Instrument(instrument_type="perpetual_future", underlying=sym)
+            qresp = ep.quote_indicative_simple(instrument=instrument, qty=qty_abs)
+            if isinstance(qresp, dict):
+                qresp["_close_side_override"] = close_side
+            quote_id = _extract_quote_id(qresp)
+            if not quote_id:
+                raise ValueError(f"indicative quote missing quote_id for {sym} qty={qty_abs}")
+            ep.place_order_market(
+                quote_id=str(quote_id),
+                side=close_side,
+                max_slippage=float(max_slip),
+                is_reduce_only=True,
+            )
+
+        # Open a replacement pair for that slot (best-effort).
+        try:
+            repl = funding_pairs_mod.pick_replacement_pair(
+                listing_json=os.path.abspath(listing_json),
+                state_json_path=None,
+                top_n_by_vol=int(top_n),
+                extra_disallow=set(by_sym.keys()),
+            )
+            new_long = str(repl.get("long") or "").strip().upper()
+            new_short = str(repl.get("short") or "").strip().upper()
+            if new_long and new_short:
+                _log(f"funding_pairs manager: opening replacement for slot {slot_i}: LONG {new_long} / SHORT {new_short}")
+                if args.usd is not None:
+                    run_multimarket(
+                        multi_script=str(args.multi_script),
+                        longs=[new_long],
+                        shorts=[new_short],
+                        usd=float(args.usd),
+                        live=True,
+                    )
+                else:
+                    pct = float(args.im_target_pct) if args.im_target_pct is not None else float(DEFAULT_IM_TARGET_PCT)
+                    run_multimarket(
+                        multi_script=str(args.multi_script),
+                        longs=[new_long],
+                        shorts=[new_short],
+                        im_target_pct=pct,
+                        live=True,
+                    )
+                try:
+                    funding_pairs_mod.replace_state_pair_slot(
+                        state_json_path=None,
+                        slot=int(slot_i),
+                        new_long=new_long,
+                        new_short=new_short,
+                        opened_unix=time.time(),
+                    )
+                except Exception as e:
+                    _log(f"funding_pairs manager: WARNING could not update state slot {slot_i}: {e}")
+        except Exception as e:
+            _log(f"funding_pairs manager: replacement open skipped (error: {type(e).__name__}: {e})")
+
+
 def one_cycle(
     *,
     ep: VariEndpoints,
@@ -780,6 +933,8 @@ def one_cycle(
         return False
 
     # --- have positions: TP exit, then time-in-position ---
+    _funding_pairs_manager(ep=ep, args=args, positions_raw=raw_pos)
+
     if str(args.time_exit_source) in ("auto", "orders", "latch"):
         if _read_position_latch_ts() is None:
             _write_position_latch(time.time())
