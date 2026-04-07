@@ -1,6 +1,6 @@
 # Railway config-as-code: https://docs.railway.app/reference/config-as-code
 # Repo root must be this folder (Vari/) so Varibot/ and Vari Listings/ paths work.
 [deploy]
-startCommand = "python3 Varibot/run_varibot_logged.py --live"
+startCommand = "python3 Varibot/varibot.py --live"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

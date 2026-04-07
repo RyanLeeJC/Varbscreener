@@ -5,7 +5,7 @@ Varibot orchestrator — implements the VariBotFlowchart workflow:
 
   Auth (validate_vr_token) → every T minutes: portfolio + TP Check →
   if positions → TP exit and/or time-in-position exit (closeallpositions.py) →
-  if flat → listingtable → marketstate → median_filter → multimarketorder.
+  if flat → listingtable → marketstate → strategy → multimarketorder.
 
 Run from the Varibot directory (or any cwd; this file fixes imports):
 
@@ -15,17 +15,21 @@ Run from the Varibot directory (or any cwd; this file fixes imports):
 
 Dependencies: repo layout
   ../Vari Listings/listingtable.py, marketstate.py, *.json
-  ./validate_vr_token.py, check_portfolio_stats.py, median_filter.py,
+  ../strategy/ (strategy modules), ./validate_vr_token.py, check_portfolio_stats.py,
   ./closeallpositions.py, ./multimarketorder.py (or *_cadence_1s.py)
 """
 
 import argparse
 import json
 import os
+import queue
 import re
+import importlib
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -36,16 +40,32 @@ _REPO_ROOT = os.path.abspath(os.path.join(_VARIBOT_DIR, ".."))
 _LISTINGS_DIR = os.path.join(_REPO_ROOT, "Vari Listings")
 _DEFAULT_MARKETSTATE_JSON = os.path.join(_LISTINGS_DIR, "marketstate.json")
 _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json")
-# After a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait).
-_TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0
 
-# Default CLI values (override with --period-min / --tp-pct).
-_DEFAULT_PERIOD_MIN: int = 60
-_DEFAULT_TP_PCT: float = 5.0
-# Median universe: top-N by OI → half long / half short (see median_filter.py).
-_DEFAULT_MEDIAN_TOP_N: int = 20
-_DEFAULT_MEDIAN_EXCLUDE: str = "BTC,ETH"
+_TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
+DEFAULT_TICKER_QTY: int = 10 # default ticker qty (total universe size before split; becomes half long / half short)
+DEFAULT_FUNDING_PAIRS_TOP_N: int = 60 # funding_pairs uses top-N-by-volume universe; keep separate from DEFAULT_TICKER_QTY
+_DEFAULT_CYCLE_PERIOD_MIN: int = 15 # how often to run a new cycle (wall-clock aligned by default)
+max_time_position: int = 240 # close-all time-in-position threshold (minutes)
+_DEFAULT_TP_PCT: float = 5.0 # take profit percentage
 _COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
+
+# User setting: which strategy to run when flat.
+# You can put a module name (preferred) or a filename:
+#   "revert_median" or "revert_median.py"
+Strategy: str = os.getenv("VARIBOT_STRATEGY", "funding_pairs.py").strip() or "funding_pairs.py"
+
+# Rolling log (wrapper mode): varibot.py can self-wrap to prefix lines and keep a rolling logfile,
+# so you can run just `python3 varibot.py --live` and still get the run_varibot_logged behavior.
+_VARIBOT_LOG_MAX_LINES: int = 1000
+_VARIBOT_WRAPPED_ENV: str = "VARIBOT_WRAPPED"
+
+# Post-multimarket verification: /api/positions can lag behind fills by a second or two.
+POST_MULTIMARKET_POSITIONS_MAX_WAIT_S: float = 2.0
+POST_MULTIMARKET_POSITIONS_POLL_S: float = 0.5
+
+# Local debugging: write the strategy output we *actually used* to Varibot/strategy_output.json
+# Set VARIBOT_WRITE_STRATEGY_OUTPUT=1 to enable (local only; ignored on Railway).
+_VARIBOT_WRITE_STRATEGY_OUTPUT_ENV: str = "VARIBOT_WRITE_STRATEGY_OUTPUT"
 
 _MONTH_ABBR_TO_NUM = {
     "jan": 1,
@@ -61,6 +81,8 @@ _MONTH_ABBR_TO_NUM = {
     "nov": 11,
     "dec": 12,
 }
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
@@ -71,12 +93,139 @@ from variationalbot.config import load_config  # noqa: E402
 from variationalbot.domain import parse_portfolio_snapshot  # noqa: E402
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints  # noqa: E402
 
-import median_filter as median_filter_mod  # noqa: E402
 from multimarketorder import DEFAULT_IM_TARGET_PCT  # noqa: E402
+from strategy import strategies as strategies_mod  # noqa: E402
 
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def _should_write_strategy_output() -> bool:
+    v = (os.getenv(_VARIBOT_WRITE_STRATEGY_OUTPUT_ENV, "") or "").strip().lower()
+    if v not in ("1", "true", "yes", "y", "on"):
+        return False
+    # Railway services should not write these local debug artifacts.
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID") or os.getenv("RAILWAY_SERVICE_ID"):
+        return False
+    return True
+
+
+def _sgt_stamp_ms() -> str:
+    now = datetime.now(ZoneInfo("Asia/Singapore"))
+    ms = now.microsecond // 1000
+    return f"{now.strftime('%H:%M:%S')}.{ms:03d} {now.day} {now.strftime('%b')}"
+
+
+def _sgt_prefix() -> str:
+    return f"[{_sgt_stamp_ms()}] "
+
+
+def _default_roll_log_path() -> str:
+    override = os.getenv("VARIBOT_LOG_PATH", "").strip()
+    if override:
+        return os.path.abspath(override)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "varibot_output.txt")
+
+
+def _run_self_wrapped() -> int:
+    """
+    Wrapper mode: spawn this script as a child, stamp each output line with SGT time,
+    and keep a rolling logfile of the last N lines (like run_varibot_logged.py used to do).
+    """
+    if os.getenv(_VARIBOT_WRAPPED_ENV, "").strip() == "1":
+        return 0
+
+    log_path = _default_roll_log_path()
+    child_args = [sys.executable, "-u", os.path.abspath(__file__)] + sys.argv[1:]
+    env = os.environ.copy()
+    env[_VARIBOT_WRAPPED_ENV] = "1"
+    env.setdefault("PYTHONUNBUFFERED", "1")
+
+    lines: deque[str] = deque(maxlen=_VARIBOT_LOG_MAX_LINES)
+    lines_lock = threading.Lock()
+    intro = f"[varibot] logging last {_VARIBOT_LOG_MAX_LINES} lines to: {log_path}\n"
+    banner = f"[varibot] start log={log_path} pid={os.getpid()}\n"
+    lines.append(f"{_sgt_prefix()}{intro}")
+    lines.append(f"{_sgt_prefix()}{banner}")
+
+    def _write_snap_to_disk(snap: list[str]) -> None:
+        try:
+            with open(log_path, "w", encoding="utf-8") as f:
+                f.writelines(snap)
+                f.flush()
+        except OSError as e:
+            print(f"\n[varibot] log write failed: {e}", file=sys.stderr, flush=True)
+
+    def _write_log_sync() -> None:
+        with lines_lock:
+            snap = list(lines)
+        _write_snap_to_disk(snap)
+
+    _FLUSH = object()
+    _STOP = object()
+    log_q: queue.Queue[object] = queue.Queue()
+
+    def _log_writer() -> None:
+        while True:
+            token = log_q.get()
+            if token is _STOP:
+                _write_log_sync()
+                return
+            if token is not _FLUSH:
+                continue
+            time.sleep(0.05)
+            while True:
+                try:
+                    t2 = log_q.get_nowait()
+                    if t2 is _STOP:
+                        _write_log_sync()
+                        return
+                except queue.Empty:
+                    break
+            _write_log_sync()
+
+    writer = threading.Thread(target=_log_writer, name="varibot-log-writer", daemon=True)
+    writer.start()
+
+    def _request_log_flush() -> None:
+        log_q.put(_FLUSH)
+
+    sys.stdout.writelines(lines)
+    sys.stdout.flush()
+    _write_log_sync()
+
+    proc = subprocess.Popen(
+        child_args,
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+    )
+
+    assert proc.stdout is not None
+    try:
+        for line in proc.stdout:
+            stamped = f"{_sgt_prefix()}{line}"
+            with lines_lock:
+                lines.append(stamped)
+            sys.stdout.write(stamped)
+            sys.stdout.flush()
+            _request_log_flush()
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        rc = proc.wait()
+        log_q.put(_STOP)
+        writer.join(timeout=30.0)
+        if writer.is_alive():
+            _write_log_sync()
+
+    return int(rc) if rc is not None else 1
 
 
 def _format_duration_s(secs: float) -> str:
@@ -137,40 +286,69 @@ def _log_post_multimarket_positions_tally(
     longs: List[str],
     shorts: List[str],
 ) -> None:
-    """GET /api/positions and compare to tickers we attempted to open (live only)."""
-    raw = ep.get_positions()
-    by_ticker: Dict[str, float] = {}
-    for p in _positions_list(raw):
-        sym = _instrument_label(p).strip().upper()
-        q = _position_qty(p)
-        if sym and q is not None:
-            by_ticker[sym] = float(q)
+    """
+    GET /api/positions and compare to tickers we attempted to open (live only).
 
-    ok_l: List[str] = []
-    miss_l: List[str] = []
-    bad_l: List[str] = []
-    for t in longs:
-        u = str(t).strip().upper()
-        q = by_ticker.get(u)
-        if q is None or abs(q) <= 1e-12:
-            miss_l.append(u)
-        elif q <= 0:
-            bad_l.append(f"{u} qty={q}")
-        else:
-            ok_l.append(u)
+    The venue can take a moment to reflect the last fill(s), so we poll briefly and
+    use the best snapshot (fewest missing/bad) to avoid false "missing" warnings.
+    """
+    exp_l = [str(t).strip().upper() for t in longs]
+    exp_s = [str(t).strip().upper() for t in shorts]
 
-    ok_s: List[str] = []
-    miss_s: List[str] = []
-    bad_s: List[str] = []
-    for t in shorts:
-        u = str(t).strip().upper()
-        q = by_ticker.get(u)
-        if q is None or abs(q) <= 1e-12:
-            miss_s.append(u)
-        elif q >= 0:
-            bad_s.append(f"{u} qty={q}")
-        else:
-            ok_s.append(u)
+    best: Optional[Tuple[Dict[str, float], List[str], List[str], List[str], List[str]]] = None
+    best_score: Optional[int] = None
+    start = time.monotonic()
+    attempt = 0
+    while True:
+        attempt += 1
+        raw = ep.get_positions()
+        by_ticker: Dict[str, float] = {}
+        for p in _positions_list(raw):
+            sym = _instrument_label(p).strip().upper()
+            q = _position_qty(p)
+            if sym and q is not None:
+                by_ticker[sym] = float(q)
+
+        ok_l: List[str] = []
+        miss_l: List[str] = []
+        bad_l: List[str] = []
+        for u in exp_l:
+            q = by_ticker.get(u)
+            if q is None or abs(q) <= 1e-12:
+                miss_l.append(u)
+            elif q <= 0:
+                bad_l.append(f"{u} qty={q}")
+            else:
+                ok_l.append(u)
+
+        ok_s: List[str] = []
+        miss_s: List[str] = []
+        bad_s: List[str] = []
+        for u in exp_s:
+            q = by_ticker.get(u)
+            if q is None or abs(q) <= 1e-12:
+                miss_s.append(u)
+            elif q >= 0:
+                bad_s.append(f"{u} qty={q}")
+            else:
+                ok_s.append(u)
+
+        score = (len(miss_l) + len(bad_l) + len(miss_s) + len(bad_s))
+        if best is None or best_score is None or score < best_score:
+            best = (by_ticker, ok_l, miss_l, ok_s, miss_s)
+            best_score = score
+
+        if not (miss_l or bad_l or miss_s or bad_s):
+            break
+        if time.monotonic() - start >= POST_MULTIMARKET_POSITIONS_MAX_WAIT_S:
+            break
+        time.sleep(POST_MULTIMARKET_POSITIONS_POLL_S)
+
+    assert best is not None
+    by_ticker, ok_l, miss_l, ok_s, miss_s = best
+    # Recompute "bad" for final reporting from best snapshot.
+    bad_l = [f"{u} qty={by_ticker.get(u)}" for u in exp_l if u in by_ticker and float(by_ticker[u]) <= 0]
+    bad_s = [f"{u} qty={by_ticker.get(u)}" for u in exp_s if u in by_ticker and float(by_ticker[u]) >= 0]
 
     n_exp = len(longs) + len(shorts)
     n_ok = len(ok_l) + len(ok_s)
@@ -275,7 +453,7 @@ def read_marketstate_position_epoch_ts(
     path: str = _DEFAULT_MARKETSTATE_JSON,
 ) -> Optional[float]:
     """
-    Time-in-position anchor: when ``marketstate.py`` last wrote JSON (just before median + orders in varibot).
+    Time-in-position anchor: when ``marketstate.py`` last wrote JSON (just before strategy + orders in varibot).
     Prefers ``fetched_at_unix``; falls back to parsing ``fetched_at`` for older files.
     """
     try:
@@ -401,36 +579,42 @@ def run_marketstate(*, timeout_s: float = 90.0) -> None:
         raise RuntimeError(f"marketstate.py exited {rc}")
 
 
-def run_median_pick_tickers(
+def run_strategy_pick_tickers(
     *,
+    strategy_key: str,
     listing_json: str,
     top_n: int,
-    exclude_csv: str,
-    max_oi_skew: float,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
-    mf = median_filter_mod
     ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
-    max_skew: Optional[float] = None if max_oi_skew < 0 else float(max_oi_skew)
-    exclude = mf._split_csv(exclude_csv)
-    res = mf.get_median_groups_from_listingtable_json(
-        json_path=listing_json,
-        top_n=int(top_n),
-        exclude=exclude,
-        max_oi_skew=max_skew,
-    )
     if not os.path.isfile(ms_path):
         raise FileNotFoundError(f"marketstate.json missing at {ms_path} (run marketstate.py).")
-    regime = mf.read_24h_market_regime_from_marketstate_json(ms_path)
-    mode = mf.regime_to_median_mode(regime)
-    longs, shorts = mf.long_short_for_mode(res, mode)
-    meta = {
-        "median_mode": mode,
-        "24h_market_regime": regime,
-        "median_24h_chg_pct": res.median_24h_chg_pct,
-        "long_count": len(longs),
-        "short_count": len(shorts),
-    }
-    return longs, shorts, meta
+    return strategies_mod.run_strategy(
+        strategy_key=strategy_key,
+        listing_json=listing_json,
+        marketstate_json=ms_path,
+        top_n=int(top_n),
+        write_output_txt=True,
+    )
+
+
+def _top_n_for_strategy(strategy_key: str) -> int:
+    """
+    Some strategies interpret `top_n` differently. Keep funding_pairs separate from the
+    default long/short ticker-universe sizing used by other strategies.
+    """
+    k = (strategy_key or "").strip().lower()
+    if k.endswith(".py"):
+        k = k[:-3]
+    if k == "funding_pairs":
+        # Optional env override for quick tuning without code changes.
+        v = (os.getenv("VARIBOT_FUNDING_PAIRS_TOP_N", "") or "").strip()
+        if v:
+            try:
+                return max(1, int(float(v)))
+            except Exception:
+                pass
+        return int(DEFAULT_FUNDING_PAIRS_TOP_N)
+    return int(DEFAULT_TICKER_QTY)
 
 
 def run_closeallpositions(
@@ -533,24 +717,40 @@ def one_cycle(
 
     if not has_pos:
         _clear_position_latch()
-        _log("No open positions → listingtable → marketstate → median_filter → multimarket")
+        _log("No open positions → listingtable → marketstate → strategy → multimarket")
         plan = _COINGECKO_PLAN.strip().lower()
         _log(f"step: running listingtable ({'CoinGecko Pro' if plan == 'pro' else 'CoinGecko Free'}) (may take a while)...")
         listing_json = run_listingtable_or_use_cache(timeout_s=float(args.listing_timeout_s))
-        _log(f"step: listingtable finished → {listing_json}")
         _log("step: running marketstate.py...")
         run_marketstate(timeout_s=float(args.marketstate_timeout_s))
-        _log("step: marketstate finished → median_filter (in-process)...")
-        longs, shorts, meta = run_median_pick_tickers(
+        strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
+        top_n = _top_n_for_strategy(strat_key)
+        longs, shorts, meta = run_strategy_pick_tickers(
+            strategy_key=strat_key,
             listing_json=listing_json,
-            top_n=int(args.median_top_n),
-            exclude_csv=str(args.median_exclude),
-            max_oi_skew=float(args.median_max_oi_skew),
+            top_n=top_n,
         )
-        _log(f"median: regime={meta.get('24h_market_regime')} mode={meta.get('median_mode')}")
+        _log("step: marketstate finished")
+        _log(f"step: strategy finished (strategy={meta.get('strategy')}, longs={len(longs)}, shorts={len(shorts)})")
+
+        if _should_write_strategy_output():
+            out_path = os.path.join(_VARIBOT_DIR, "strategy_output.json")
+            try:
+                payload = {
+                    "written_at": _sgt_stamp_ms(),
+                    "listing_json": os.path.abspath(str(listing_json)),
+                    "strategy_key": strat_key,
+                    "meta": meta,
+                    "long": longs,
+                    "short": shorts,
+                }
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+            except OSError as e:
+                _log(f"WARNING: could not write {out_path}: {e}")
 
         if not longs and not shorts:
-            _log("median_filter returned no tickers; skip multimarket.")
+            _log("strategy returned no tickers; skip multimarket.")
             return False
 
         _log(f"step: running {args.multi_script} (many API calls possible)...")
@@ -593,7 +793,7 @@ def one_cycle(
             _log("TP Check Yes — [dry-run] would run closeallpositions.py --live")
         return False
 
-    hold_limit_s = float(args.period_min) * 60.0 * max(1, int(args.time_exit_periods))
+    hold_limit_s = float(max_time_position) * 60.0 * max(1, int(args.time_exit_periods))
     ms_path = str(args.marketstate_json or _DEFAULT_MARKETSTATE_JSON)
     market_ts = read_marketstate_position_epoch_ts(ms_path)
     order_ts = last_non_reduce_order_ts(ep.get_orders_v2())
@@ -656,8 +856,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--period-min",
         type=int,
-        default=_DEFAULT_PERIOD_MIN,
-        help=f"Wall-clock period minutes (default {_DEFAULT_PERIOD_MIN}).",
+        default=_DEFAULT_CYCLE_PERIOD_MIN,
+        help=f"Wall-clock cycle interval minutes (default {_DEFAULT_CYCLE_PERIOD_MIN}).",
     )
     p.add_argument(
         "--tp-pct",
@@ -669,7 +869,7 @@ def parse_args() -> argparse.Namespace:
         "--time-exit-periods",
         type=int,
         default=1,
-        help="Close all if reference time exceeds this many T periods (default 1).",
+        help=f"Close all if time-in-position exceeds max_time_position × this many periods (default 1).",
     )
     p.add_argument(
         "--time-exit-source",
@@ -710,17 +910,10 @@ def parse_args() -> argparse.Namespace:
         help="Script name under Varibot/ (default multimarketorder.py; try multimarketorder_cadence_1s.py).",
     )
     p.add_argument(
-        "--median-top-n",
-        type=int,
-        default=_DEFAULT_MEDIAN_TOP_N,
-        help=f"Median filter: universe size by OI before split (default {_DEFAULT_MEDIAN_TOP_N}).",
+        "--strategy",
+        default=Strategy,
+        help=f"Strategy key to use when flat (default {Strategy!r}; see strategy/strategies.py).",
     )
-    p.add_argument(
-        "--median-exclude",
-        default=_DEFAULT_MEDIAN_EXCLUDE,
-        help=f"Comma-separated tickers excluded from median universe (default {_DEFAULT_MEDIAN_EXCLUDE!r}).",
-    )
-    p.add_argument("--median-max-oi-skew", type=float, default=0.95)
     p.add_argument("--listing-timeout-s", type=float, default=120.0)
     p.add_argument("--marketstate-timeout-s", type=float, default=90.0)
     p.add_argument("--once", action="store_true", help="Run a single cycle then exit (no sleep loop).")
@@ -732,7 +925,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def main() -> int:
+def _child_main() -> int:
     args = parse_args()
     if args.usd is not None and args.im_target_pct is not None:
         print("varibot: pass at most one of --usd and --im-target-pct.", file=sys.stderr)
@@ -777,4 +970,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if os.getenv(_VARIBOT_WRAPPED_ENV, "").strip() != "1":
+        raise SystemExit(_run_self_wrapped())
+    raise SystemExit(_child_main())
