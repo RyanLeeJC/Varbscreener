@@ -5,9 +5,6 @@ Duplicate of multimarketorder.py for a fixed cadence test:
   default --sleep-between-s 1 (pause after each ticker job before the next)
   default --batch-size 0 (no extra batch pauses)
 
-If you omit --long, --short, --assets, and --asset, long/short tickers are loaded
-from median_filter.py (listingtable + marketstate, same rules as that script).
-
 Use multimarketorder.py for batch-10 / batch-sleep defaults.
 """
 
@@ -18,15 +15,13 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-import median_filter as median_filter_mod
-
 from variationalbot.config import load_config
 from variationalbot.domain import parse_portfolio_snapshot
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 from variationalbot.vari.endpoints import Instrument
 
 # Used when neither --usd nor --im-target-pct is passed (change here to retarget default sizing).
-DEFAULT_IM_TARGET_PCT: float = 75.0
+DEFAULT_IM_TARGET_PCT: float = 50.0
 # IM-target per-order notional is rounded up to this USD step (e.g. 241.04 -> 250).
 USD_NOTIONAL_ROUND_STEP: float = 10.0
 # Default max slippage when --max-slippage and MAX_SLIPPAGE env are unset (fraction of notional).
@@ -81,12 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--long",
         default=None,
-        help="Comma-separated tickers to go long (maps to side=buy). If no ticker flags are set, median_filter supplies long/short.",
+        help="Comma-separated tickers to go long (maps to side=buy).",
     )
     p.add_argument(
         "--short",
         default=None,
-        help="Comma-separated tickers to go short (maps to side=sell). If no ticker flags are set, median_filter supplies long/short.",
+        help="Comma-separated tickers to go short (maps to side=sell).",
     )
     p.add_argument(
         "--assets",
@@ -188,47 +183,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=5.0,
         help="Seconds to sleep after each full batch. Ignored if --batch-size is 0.",
     )
-    p.add_argument(
-        "--listing-json",
-        dest="listing_json",
-        default=None,
-        help=(
-            "When sourcing tickers from median_filter: path to listingtabledata.json "
-            "(default: LISTINGTABLE_JSON env or repo default)."
-        ),
-    )
-    p.add_argument(
-        "--marketstate-json",
-        dest="marketstate_json",
-        default=None,
-        help=(
-            "When median_mode=auto: path to marketstate.json "
-            "(default: MARKETSTATE_JSON env or repo default)."
-        ),
-    )
-    p.add_argument(
-        "--median-mode",
-        choices=("auto", "directional", "sideways"),
-        default="auto",
-        help="When sourcing from median_filter: same as median_filter.py --mode (default auto).",
-    )
-    p.add_argument(
-        "--median-top-n",
-        type=int,
-        default=20,
-        help="When sourcing from median_filter: universe size by OI (default 20).",
-    )
-    p.add_argument(
-        "--median-exclude",
-        default="BTC,ETH",
-        help="When sourcing from median_filter: comma-separated tickers to exclude (default BTC,ETH).",
-    )
-    p.add_argument(
-        "--median-max-oi-skew",
-        type=float,
-        default=0.95,
-        help="When sourcing from median_filter: skip listings with OI Skew above this; negative disables.",
-    )
     return p
 
 
@@ -259,72 +213,6 @@ def _try_fetch_pending_order_by_rfq(
         if str(item.get("rfq_id") or "") == rfq_id:
             return item
     return None
-
-
-def _load_long_short_from_median_filter(args: argparse.Namespace) -> Tuple[List[str], List[str], Dict[str, Any]]:
-    mf = median_filter_mod
-    json_path = str(
-        args.listing_json
-        or os.getenv("LISTINGTABLE_JSON")
-        or mf.default_listingtable_json_path()
-    )
-    max_skew_arg = float(args.median_max_oi_skew)
-    max_skew_opt: Optional[float] = None if max_skew_arg < 0 else max_skew_arg
-    exclude = mf._split_csv(str(args.median_exclude))
-
-    res = mf.get_median_groups_from_listingtable_json(
-        json_path=json_path,
-        top_n=int(args.median_top_n),
-        exclude=exclude,
-        max_oi_skew=max_skew_opt,
-    )
-
-    market_regime: Optional[str] = None
-    marketstate_abspath: Optional[str] = None
-    if args.median_mode == "auto":
-        ms_path = str(
-            args.marketstate_json
-            or os.getenv("MARKETSTATE_JSON")
-            or mf.default_marketstate_json_path()
-        )
-        marketstate_abspath = os.path.abspath(ms_path)
-        if not os.path.isfile(ms_path):
-            raise SystemExit(
-                f"median_mode=auto requires marketstate JSON at {marketstate_abspath} "
-                f"(run Vari Listings/marketstate.py), or pass --marketstate-json / --median-mode directional|sideways."
-            )
-        market_regime = mf.read_24h_market_regime_from_marketstate_json(ms_path)
-        median_mode = mf.regime_to_median_mode(market_regime)
-    else:
-        median_mode = args.median_mode
-
-    longs, shorts = mf.long_short_for_mode(res, median_mode)
-
-    meta: Dict[str, Any] = {
-        "listing_json": os.path.abspath(json_path),
-        "median_mode": median_mode,
-        "median_24h_chg_pct": res.median_24h_chg_pct,
-        "top_n": int(args.median_top_n),
-        "exclude": [e.strip().upper() for e in exclude if e.strip()],
-    }
-    if market_regime is not None:
-        meta["24h_market_regime"] = market_regime
-    if marketstate_abspath is not None:
-        meta["marketstate_json"] = marketstate_abspath
-    if max_skew_opt is not None:
-        meta["max_oi_skew"] = max_skew_opt
-    return longs, shorts, meta
-
-
-def _print_median_source_line(meta: Optional[Dict[str, Any]], *, print_json: bool) -> None:
-    if print_json or not meta:
-        return
-    reg = meta.get("24h_market_regime")
-    mm = meta.get("median_mode")
-    if reg:
-        print(f"Tickers from median_filter: {reg} (median_mode={mm})")
-    else:
-        print(f"Tickers from median_filter: median_mode={mm}")
 
 
 def _print_positions_entered_table(rows: List[Tuple[str, str, str, str]]) -> None:
@@ -366,10 +254,6 @@ def main() -> int:
     short_assets = _split_assets(args.short)
     flat_assets = _split_assets(args.assets) + _split_assets(args.asset)
 
-    median_meta: Optional[Dict[str, Any]] = None
-    if not long_assets and not short_assets and not flat_assets:
-        long_assets, short_assets, median_meta = _load_long_short_from_median_filter(args)
-
     jobs: List[Dict[str, str]] = []
     for a in long_assets:
         jobs.append({"asset": a, "side": "buy"})
@@ -381,9 +265,7 @@ def main() -> int:
         jobs.append({"asset": a, "side": str(args.side)})
 
     if not jobs:
-        raise SystemExit(
-            "Provide --long/--short, --assets/--asset, or omit those to load long/short from median_filter.py."
-        )
+        raise SystemExit("Provide --long/--short, or provide --assets/--asset with --side {buy,sell}.")
 
     portfolio_value_for_sizing: Optional[float] = None
     if args.usd is None:
@@ -442,8 +324,6 @@ def main() -> int:
     if args.usd is None:
         out["im_target_pct"] = float(args.im_target_pct)  # type: ignore[arg-type]
         out["portfolio_value_usd_for_sizing"] = portfolio_value_for_sizing
-    if median_meta is not None:
-        out["median_filter"] = median_meta
 
     orders_out: List[Dict[str, Any]] = []
     for i, job in enumerate(jobs):
@@ -528,7 +408,6 @@ def main() -> int:
         if args.print_json:
             print(json.dumps(out, indent=2, default=str))
             return 0
-        _print_median_source_line(median_meta, print_json=False)
         # Compact dry-run summary
         rows: List[Tuple[str, str, str, str]] = []
         for o in orders_out:
@@ -551,8 +430,6 @@ def main() -> int:
     if args.print_json:
         print(json.dumps(out, indent=2, default=str))
         return 0
-
-    _print_median_source_line(median_meta, print_json=False)
 
     # Compact live confirmation (best-effort).
     rows2: List[Tuple[str, str, str, str]] = []
