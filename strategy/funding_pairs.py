@@ -88,13 +88,36 @@ def _to_row(d: Dict[str, Any]) -> Optional[ListingRow]:
     t = _as_str(d.get("vari_ticker") or d.get("ticker") or d.get("symbol"))
     if not t:
         return None
-    vol = _as_float(d.get("vol_24h") if "vol_24h" in d else d.get("volume_24h"))
+    # listingtable payloads have evolved; be permissive in accepted field names.
+    vol = _as_float(
+        d.get("vol_24h")
+        if "vol_24h" in d
+        else (
+            d.get("volume_24h")
+            or d.get("vol_24h_usd")
+            or d.get("volume_24h_usd")
+            or d.get("total_volume")
+            or d.get("vol")
+        )
+    )
     if vol is None or float(vol) <= 0:
         return None
-    afr = _parse_pct_field(d.get("ann_fundingrate"))
+    afr = _parse_pct_field(
+        d.get("ann_fundingrate")
+        or d.get("ann_fundingrate_pct")
+        or d.get("annualized_funding_rate")
+        or d.get("ann_funding_rate")
+        or d.get("funding_rate_annualized")
+    )
     if afr is None:
         return None
-    chg = _parse_pct_field(d.get("price_change_24h_pct") or d.get("price_change_24h") or d.get("chg_24h_pct"))
+    chg = _parse_pct_field(
+        d.get("price_change_24h_pct")
+        or d.get("price_change_percentage_24h")
+        or d.get("price_change_percentage_24h_in_currency")
+        or d.get("price_change_24h")
+        or d.get("chg_24h_pct")
+    )
     if chg is None:
         return None
     return ListingRow(
