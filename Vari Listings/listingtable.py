@@ -47,6 +47,7 @@ OUTPUT_JSON_FILENAME: str = "listingtabledata.json"
 # Hardcoded mapping: Variational ticker -> CoinGecko coin id.
 # Generated from listingtabledata_ref.csv (canonical mapping).
 COINGECKO_TICKER_TO_ID: Dict[str, str] = {
+    "4": "4-2",
     "W": "wormhole",
     "PHA": "pha",
     "RAY": "raydium",
@@ -254,7 +255,6 @@ COINGECKO_TICKER_TO_ID: Dict[str, str] = {
     "FLUID": "instadapp",
     "PTB": "portal-to-bitcoin",
     "STRK": "starknet",
-    "4": "2-Apr",
     "TAIKO": "taiko",
     "IDOL": "meet48",
     "INIT": "initia",
@@ -777,6 +777,15 @@ def enrich_listings_with_coingecko(
     mapped = 0
 
     for it in listings:
+        ann_fundingrate: Optional[float]
+        try:
+            # Variational "Ann. Funding" matches the *per-interval* funding rate
+            # expressed as a percentage (e.g. funding_rate=-1.257 -> -125.7%).
+            fr = it.get("funding_rate")
+            ann_fundingrate = float(fr) * 100.0 if fr not in (None, "") else None
+        except Exception:
+            ann_fundingrate = None
+
         vari_ticker = it.get("ticker", "")
         vari_name = it.get("name", "")
         mark_price = it.get("mark_price", "")
@@ -823,6 +832,7 @@ def enrich_listings_with_coingecko(
                 "vari_name": vari_name,
                 "mark_price": mark_price,
                  "vol_24h": vol_24h,
+                "ann_fundingrate": ann_fundingrate,
                 "OI": oi_total,
                  "OI_long": oi_long,
                  "OI_short": oi_short,
@@ -890,9 +900,11 @@ def main() -> None:
         f"Fetching CoinGecko data for {unique_symbols_count} symbols"
         f" and {unique_override_ids_count} explicit ids..."
     )
+    t0 = time.time()
     coins_by_symbol = fetch_coingecko_markets_for_symbols(symbols)
     coins_by_id = fetch_coingecko_markets_for_ids(override_ids) if override_ids else []
     coins = coins_by_symbol + coins_by_id
+    dt_s = time.time() - t0
 
     symbol_index = build_symbol_index(coins)
     id_index = build_id_index(coins)
@@ -935,6 +947,7 @@ def main() -> None:
                 "vari_name": row.get("vari_name"),
                 "mark_price": row.get("mark_price"),
                 "vol_24h": row.get("vol_24h"),
+                "ann_fundingrate": row.get("ann_fundingrate"),
                 "OI": row.get("OI"),
                 "OI_long": row.get("OI_long"),
                 "OI_short": row.get("OI_short"),
@@ -963,8 +976,7 @@ def main() -> None:
             indent=2,
         )
 
-    print(f"Tickers successfully fetched: {len(listings)}")
-    print(f"Wrote {out_json_path}")
+    print(f"Tickers successfully fetched: {len(listings)}...in {dt_s:.2f}s")
 
 
 if __name__ == "__main__":
