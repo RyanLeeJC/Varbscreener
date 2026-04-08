@@ -25,7 +25,7 @@ PAIR_MAX_AGE_S: float = 2.0 * 3600.0
 PAIR_TP_UPNL_PCT: float = 2.0
 
 # Copied from strategy/revert_median.py (and also present in other strategy modules).
-TICKER_BLACKLIST: frozenset[str] = frozenset({"BERA","XPL", "ETC", "PAXG", "XAUT", "RIVER", "EDGE", "BASED", "VVV", "IP"})
+TICKER_BLACKLIST: frozenset[str] = frozenset({"BERA","XPL", "ETC", "PAXG", "XAUT", "RIVER", "EDGE", "BASED", "VVV", "IP", "STO"})
 
 
 def _repo_root_from_here() -> str:
