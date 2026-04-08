@@ -98,6 +98,35 @@ from strategy import strategies as strategies_mod  # noqa: E402
 from strategy import funding_pairs as funding_pairs_mod  # noqa: E402
 
 
+def _strategy_key_normalized(strategy: str) -> str:
+    k = (strategy or "").strip().lower()
+    if k.endswith(".py"):
+        k = k[:-3]
+    return k
+
+
+def _resolve_im_target_pct_for_multimarket(
+    *,
+    strategy_key: str,
+    n_long: int,
+    n_short: int,
+    args_im_target_pct: Optional[float],
+) -> float:
+    """
+    For strategy funding_pairs, multimarketorder's --im-target-pct is derived so each pair uses
+    funding_pairs.FUNDING_PAIR_MAX_IM_PCT of (portfolio_value × leverage), split across two legs.
+    Other strategies use --im-target-pct or DEFAULT_IM_TARGET_PCT.
+    """
+    if _strategy_key_normalized(strategy_key) == "funding_pairs":
+        n = int(n_long) + int(n_short)
+        if n <= 0:
+            return float(args_im_target_pct) if args_im_target_pct is not None else float(DEFAULT_IM_TARGET_PCT)
+        return float(
+            funding_pairs_mod.im_target_pct_for_funding_pairs_multimarket(int(n_long), int(n_short))
+        )
+    return float(args_im_target_pct) if args_im_target_pct is not None else float(DEFAULT_IM_TARGET_PCT)
+
+
 def _log(msg: str) -> None:
     print(msg, flush=True)
 
@@ -725,6 +754,10 @@ def _funding_pairs_manager(
     if k != "funding_pairs":
         return
 
+    snap = funding_pairs_mod.pair_interval_status(positions_raw=positions_raw)
+    for line in funding_pairs_mod.format_pair_interval_log_lines(snap):
+        _log(line)
+
     plan = funding_pairs_mod.desired_actions_from_positions(positions_raw=positions_raw)
     pairs_to_close = plan.get("pairs_to_close") if isinstance(plan, dict) else None
     if not isinstance(pairs_to_close, list):
@@ -822,7 +855,14 @@ def _funding_pairs_manager(
                         live=True,
                     )
                 else:
-                    pct = float(args.im_target_pct) if args.im_target_pct is not None else float(DEFAULT_IM_TARGET_PCT)
+                    pct = _resolve_im_target_pct_for_multimarket(
+                        strategy_key=strat_key,
+                        n_long=1,
+                        n_short=1,
+                        args_im_target_pct=(
+                            float(args.im_target_pct) if args.im_target_pct is not None else None
+                        ),
+                    )
                     run_multimarket(
                         multi_script=str(args.multi_script),
                         longs=[new_long],
@@ -916,7 +956,12 @@ def one_cycle(
                 live=bool(args.live),
             )
         else:
-            pct = float(args.im_target_pct) if args.im_target_pct is not None else float(DEFAULT_IM_TARGET_PCT)
+            pct = _resolve_im_target_pct_for_multimarket(
+                strategy_key=strat_key,
+                n_long=len(longs),
+                n_short=len(shorts),
+                args_im_target_pct=float(args.im_target_pct) if args.im_target_pct is not None else None,
+            )
             rc = run_multimarket(
                 multi_script=str(args.multi_script),
                 longs=longs,
@@ -1055,7 +1100,10 @@ def parse_args() -> argparse.Namespace:
         metavar="PCT",
         help=(
             "Multimarket IM%% sizing: per-order USD = (portfolio_value_usd × leverage × PCT/100) / n_orders. "
-            f"If --usd is omitted and this is omitted, defaults to {DEFAULT_IM_TARGET_PCT:g}%%. "
+            f"If --usd is omitted and this is omitted, defaults to {DEFAULT_IM_TARGET_PCT:g}%% "
+            "(non-funding_pairs strategies). "
+            "For strategy funding_pairs, this flag is ignored unless you use --usd; "
+            "notional per leg is sized from strategy.funding_pairs.FUNDING_PAIR_MAX_IM_PCT of (pv×leverage). "
             "Do not pass both --usd and --im-target-pct."
         ),
     )

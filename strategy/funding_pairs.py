@@ -12,16 +12,20 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 STRATEGY_NAME: str = "funding_pairs"
 
 # Pairing rules / constants
-TARGET_PAIR_COUNT: int = 5
+MAX_PAIR_COUNT: int = 5
+# % of (portfolio_value_usd × leverage) allocated to each pair (long+short legs combined).
+# Each leg receives half: per_order_usd = (pv×lev×FUNDING_PAIR_MAX_IM_PCT/100) / 2.
+# See im_target_pct_for_funding_pairs_multimarket() for mapping to multimarketorder's --im-target-pct.
+FUNDING_PAIR_MAX_IM_PCT: float = 15.0
 TOP_N_BY_VOL_24H: int = 60
 MAX_ABS_24H_MOVE_PCT: float = 10.0
 MAX_ABS_ANN_FUNDINGRATE_PCT: float = 50.0
-MIN_ABS_FUNDINGRATE_DIFF_PCT: float = 20.0
+MIN_ABS_FUNDINGRATE_DIFF_PCT: float = 4.0
 PAIR_MAX_AGE_S: float = 4.0 * 3600.0
 PAIR_TP_UPNL_PCT: float = 2.0
 
 # Copied from strategy/revert_median.py (and also present in other strategy modules).
-TICKER_BLACKLIST: frozenset[str] = frozenset({"XPL", "ETC", "PAXG", "XAUT", "RIVER", "EDGE", "BASED", "VVV", "IP"})
+TICKER_BLACKLIST: frozenset[str] = frozenset({"BERA","XPL", "ETC", "PAXG", "XAUT", "RIVER", "EDGE", "BASED", "VVV", "IP"})
 
 
 def _repo_root_from_here() -> str:
@@ -31,6 +35,25 @@ def _repo_root_from_here() -> str:
 
 def default_state_json_path() -> str:
     return os.path.join(os.path.dirname(__file__), "funding_pairs_state.json")
+
+
+def im_target_pct_for_funding_pairs_multimarket(n_long: int, n_short: int) -> float:
+    """
+    multimarketorder computes:
+      per_order_usd = (portfolio_value_usd × leverage × im_target_pct / 100) / (n_long + n_short)
+
+    For funding pairs we want each pair to use FUNDING_PAIR_MAX_IM_PCT of max notional (pv×lev),
+    split evenly across the two legs:
+      per_leg_usd = (portfolio_value_usd × leverage × FUNDING_PAIR_MAX_IM_PCT / 100) / 2
+
+    Solving for im_target_pct:
+      im_target_pct = (n_long + n_short) × FUNDING_PAIR_MAX_IM_PCT / 2
+    (e.g. 5 pairs → 10 orders → 75 when FUNDING_PAIR_MAX_IM_PCT=15, so each leg is 7.5% of max IM.)
+    """
+    n = int(n_long) + int(n_short)
+    if n <= 0:
+        raise ValueError("im_target_pct_for_funding_pairs_multimarket requires at least one order")
+    return float(n) * float(FUNDING_PAIR_MAX_IM_PCT) / 2.0
 
 
 def _as_str(v: Any) -> Optional[str]:
@@ -272,14 +295,41 @@ def pick_tickers(
 
     universe = _eligible_universe(rows, exclude=exclude, top_n_by_vol=int(top_n) if top_n is not None else TOP_N_BY_VOL_24H)
 
-    # When flat, we can safely (re)seed all 5 pairs from scratch.
+    # When flat, seed up to MAX_PAIR_COUNT disjoint pairs (may be fewer if the universe is thin).
     disallow: Set[str] = set(exclude)
-    new_pairs = _build_pairs(universe, target_pairs=TARGET_PAIR_COUNT, disallow=disallow)
-    if len(new_pairs) < TARGET_PAIR_COUNT:
-        raise ValueError(
-            f"{STRATEGY_NAME}: could only form {len(new_pairs)}/{TARGET_PAIR_COUNT} pairs from eligible universe "
-            f"(top={len(universe)} by vol). Consider relaxing filters."
-        )
+    new_pairs = _build_pairs(universe, target_pairs=MAX_PAIR_COUNT, disallow=disallow)
+    if not new_pairs:
+        now0 = _now()
+        state_empty: Dict[str, Any] = {
+            "strategy": STRATEGY_NAME,
+            "written_at_unix": now0,
+            "pair_max_age_s": PAIR_MAX_AGE_S,
+            "pair_tp_upnl_pct": PAIR_TP_UPNL_PCT,
+            "min_abs_fundingrate_diff_pct": MIN_ABS_FUNDINGRATE_DIFF_PCT,
+            "filters": {
+                "top_n_by_vol_24h": int(top_n) if top_n is not None else TOP_N_BY_VOL_24H,
+                "max_abs_24h_move_pct": MAX_ABS_24H_MOVE_PCT,
+                "max_abs_ann_fundingrate_pct": MAX_ABS_ANN_FUNDINGRATE_PCT,
+                "funding_pair_max_im_pct": FUNDING_PAIR_MAX_IM_PCT,
+            },
+            "pairs": [],
+        }
+        _write_state(state_path, state_empty)
+        meta_empty: Dict[str, Any] = {
+            "strategy": STRATEGY_NAME,
+            "listing_json": os.path.abspath(str(listing_json)),
+            "marketstate_json": os.path.abspath(str(marketstate_json)) if marketstate_json else None,
+            "pair_count": 0,
+            "max_pair_count": MAX_PAIR_COUNT,
+            "reason": "no_eligible_pairs",
+            "universe_top_n_by_vol": int(top_n) if top_n is not None else TOP_N_BY_VOL_24H,
+            "state_json": os.path.abspath(state_path),
+            "funding_pair_max_im_pct": FUNDING_PAIR_MAX_IM_PCT,
+            "note": (
+                "No funding-opposite pairs met filters; relax MIN_ABS_FUNDINGRATE_DIFF_PCT / volume filters or wait."
+            ),
+        }
+        return [], [], meta_empty
 
     opened = _now()
     state_out: Dict[str, Any] = {
@@ -292,6 +342,7 @@ def pick_tickers(
             "top_n_by_vol_24h": int(top_n) if top_n is not None else TOP_N_BY_VOL_24H,
             "max_abs_24h_move_pct": MAX_ABS_24H_MOVE_PCT,
             "max_abs_ann_fundingrate_pct": MAX_ABS_ANN_FUNDINGRATE_PCT,
+            "funding_pair_max_im_pct": FUNDING_PAIR_MAX_IM_PCT,
         },
         "pairs": [
             {
@@ -312,27 +363,297 @@ def pick_tickers(
 
     longs = [p.long for p in new_pairs]
     shorts = [p.short for p in new_pairs]
+    n_long = len(longs)
+    n_short = len(shorts)
     meta: Dict[str, Any] = {
         "strategy": STRATEGY_NAME,
         "listing_json": os.path.abspath(str(listing_json)),
         "marketstate_json": os.path.abspath(str(marketstate_json)) if marketstate_json else None,
-        "pair_count": TARGET_PAIR_COUNT,
+        "pair_count": len(new_pairs),
+        "max_pair_count": MAX_PAIR_COUNT,
         "universe_top_n_by_vol": int(top_n) if top_n is not None else TOP_N_BY_VOL_24H,
         "filters": {
             "abs_price_change_24h_pct_lte": MAX_ABS_24H_MOVE_PCT,
             "abs_ann_fundingrate_lte": MAX_ABS_ANN_FUNDINGRATE_PCT,
             "min_abs_ann_fundingrate_diff": MIN_ABS_FUNDINGRATE_DIFF_PCT,
+            "funding_pair_max_im_pct": FUNDING_PAIR_MAX_IM_PCT,
         },
         "pairs": [{"slot": i + 1, "long": p.long, "short": p.short, "afr_diff": p.afr_diff} for i, p in enumerate(new_pairs)],
         "state_json": os.path.abspath(state_path),
-        "long_count": len(longs),
-        "short_count": len(shorts),
+        "long_count": n_long,
+        "short_count": n_short,
+        "im_target_pct_for_multimarket": im_target_pct_for_funding_pairs_multimarket(n_long, n_short),
         "note": (
-            "This strategy seeds 5 funding-opposite pairs when flat. "
-            "Pair-level TP/rotation requires a pair-manager loop (not part of the default varibot flat-only strategy call)."
+            f"This strategy seeds up to {MAX_PAIR_COUNT} funding-opposite pairs when flat "
+            f"(each pair uses {FUNDING_PAIR_MAX_IM_PCT:g}% of max IM (pv×leverage), split across two legs). "
+            "Pair-level TP/rotation uses the funding_pairs manager when positions exist."
         ),
     }
     return longs, shorts, meta
+
+
+def _pos_list(raw: Any) -> List[Dict[str, Any]]:
+    if isinstance(raw, list):
+        return [p for p in raw if isinstance(p, dict)]
+    if isinstance(raw, dict) and isinstance(raw.get("positions"), list):
+        return [p for p in raw["positions"] if isinstance(p, dict)]
+    return []
+
+
+def _inst_sym(p: Dict[str, Any]) -> str:
+    # Match Varibot/positions._instrument_label: omni often nests instrument under position_info.
+    inst = p.get("instrument")
+    if isinstance(inst, dict):
+        u = inst.get("underlying")
+        if isinstance(u, str) and u.strip():
+            return u.strip().upper()
+    if isinstance(inst, str) and inst.strip():
+        return inst.strip().upper()
+    pos_info = p.get("position_info")
+    if isinstance(pos_info, dict):
+        inst2 = pos_info.get("instrument")
+        if isinstance(inst2, dict):
+            u = inst2.get("underlying")
+            if isinstance(u, str) and u.strip():
+                return u.strip().upper()
+    for k in ("underlying", "symbol", "asset"):
+        v = p.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().upper()
+    return "UNKNOWN"
+
+
+def _first_float(p: Dict[str, Any], keys: Iterable[str]) -> Optional[float]:
+    for k in keys:
+        if k not in p:
+            continue
+        v = p.get(k)
+        if v is None:
+            continue
+        try:
+            return float(v)
+        except Exception:
+            continue
+    return None
+
+
+def _nested_float(p: Dict[str, Any], path2: Sequence[str]) -> Optional[float]:
+    cur: Any = p
+    for k in path2:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur.get(k)
+    if cur is None:
+        return None
+    try:
+        return float(cur)
+    except Exception:
+        return None
+
+
+def _metrics_by_underlying_from_positions(positions_raw: Any) -> Dict[str, Dict[str, float]]:
+    """
+    Map upper underlying -> {upnl_usd, notional_usd}. Skips rows missing uPNL or notional in the API payload.
+    """
+    by_sym: Dict[str, Dict[str, float]] = {}
+    for p in _pos_list(positions_raw):
+        sym = _inst_sym(p)
+        upnl = _first_float(p, ["unrealized_pnl", "u_pnl", "upnl", "unrealizedPnl"])
+        value = _first_float(p, ["value", "position_value", "notional", "notional_value", "usd_value"])
+        if value is None:
+            value = _nested_float(p, ["position_info", "value"])
+        if upnl is None or value is None:
+            continue
+        by_sym[sym] = {"upnl_usd": float(upnl), "notional_usd": abs(float(value))}
+    return by_sym
+
+
+def pair_interval_status(
+    *,
+    positions_raw: Any,
+    state_json_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    One row per slot in funding_pairs state with combined uPnL / notional / % (for terminal visibility).
+    Includes rows when a leg is missing from GET /api/positions (partial data).
+    """
+    path = state_json_path or default_state_json_path()
+    state = _read_state(path)
+    pairs = _state_pairs(state)
+    by_sym = _metrics_by_underlying_from_positions(positions_raw)
+    now = _now()
+    rows: List[Dict[str, Any]] = []
+    if not pairs:
+        return {
+            "state_json": os.path.abspath(path),
+            "pair_tp_upnl_pct": float(PAIR_TP_UPNL_PCT),
+            "pair_max_age_s": float(PAIR_MAX_AGE_S),
+            "rows": [],
+            "computed_at_unix": now,
+            "reason": "no_pairs_in_state",
+        }
+
+    for p in pairs:
+        long_t = _as_str(p.get("long"))
+        short_t = _as_str(p.get("short"))
+        slot = p.get("slot")
+        opened = _as_float(p.get("opened_unix"))
+        age_s = (now - float(opened)) if opened is not None else None
+
+        if not long_t or not short_t:
+            rows.append(
+                {
+                    "slot": slot,
+                    "long": long_t or "?",
+                    "short": short_t or "?",
+                    "combined_upnl_usd": None,
+                    "combined_notional_usd": None,
+                    "combined_upnl_pct": None,
+                    "age_s": age_s,
+                    "would_close_tp": False,
+                    "would_close_age": False,
+                    "missing_legs": "incomplete_state",
+                }
+            )
+            continue
+
+        lu, su = long_t.upper(), short_t.upper()
+        l = by_sym.get(lu)
+        s = by_sym.get(su)
+        miss: List[str] = []
+        if not l:
+            miss.append("long")
+        if not s:
+            miss.append("short")
+
+        if miss:
+            rows.append(
+                {
+                    "slot": slot,
+                    "long": lu,
+                    "short": su,
+                    "combined_upnl_usd": None,
+                    "combined_notional_usd": None,
+                    "combined_upnl_pct": None,
+                    "age_s": age_s,
+                    "would_close_tp": False,
+                    "would_close_age": False,
+                    "missing_legs": ",".join(miss),
+                }
+            )
+            continue
+
+        combined_upnl = float(l["upnl_usd"]) + float(s["upnl_usd"])
+        combined_notional = float(l["notional_usd"]) + float(s["notional_usd"])
+        upnl_pct = None if combined_notional <= 0 else (combined_upnl / combined_notional) * 100.0
+        tp_hit = (upnl_pct is not None) and (float(upnl_pct) >= float(PAIR_TP_UPNL_PCT))
+        age_hit = (age_s is not None) and (float(age_s) >= float(PAIR_MAX_AGE_S))
+        rows.append(
+            {
+                "slot": slot,
+                "long": lu,
+                "short": su,
+                "combined_upnl_usd": combined_upnl,
+                "combined_notional_usd": combined_notional,
+                "combined_upnl_pct": upnl_pct,
+                "age_s": age_s,
+                "would_close_tp": bool(tp_hit),
+                "would_close_age": bool(age_hit),
+                "missing_legs": None,
+            }
+        )
+
+    return {
+        "state_json": os.path.abspath(path),
+        "pair_tp_upnl_pct": float(PAIR_TP_UPNL_PCT),
+        "pair_max_age_s": float(PAIR_MAX_AGE_S),
+        "rows": rows,
+        "computed_at_unix": now,
+    }
+
+
+def format_pair_interval_log_lines(snapshot: Dict[str, Any]) -> List[str]:
+    """Human-readable lines for Varibot _log (table + threshold reminder)."""
+    lines: List[str] = []
+    tp_pct = float(snapshot.get("pair_tp_upnl_pct") or PAIR_TP_UPNL_PCT)
+    max_age = float(snapshot.get("pair_max_age_s") or PAIR_MAX_AGE_S)
+    rows_in = snapshot.get("rows")
+    reason = snapshot.get("reason")
+    lines.append(
+        f"funding_pairs manager: per-pair uPnL (close if >={tp_pct:g}% of pair notional OR age >={max_age/3600:g}h)"
+    )
+    if reason == "no_pairs_in_state":
+        lines.append("  (no rows: funding_pairs_state.json has no pair slots)")
+        return lines
+    if not isinstance(rows_in, list) or not rows_in:
+        lines.append("  (no pair rows)")
+        return lines
+
+    def fmt_usd(v: Optional[float]) -> str:
+        if v is None:
+            return "-"
+        sign = "+" if v >= 0 else ""
+        return f"{sign}${v:.2f}"
+
+    def fmt_pct(v: Optional[float]) -> str:
+        if v is None:
+            return "-"
+        sign = "+" if v >= 0 else ""
+        return f"({sign}{v:.2f}%)"
+
+    def fmt_age(age: Any) -> str:
+        if age is None:
+            return "-"
+        try:
+            sec = float(age)
+        except Exception:
+            return "-"
+        if sec < 3600:
+            return f"{int(sec // 60)}m"
+        return f"{sec / 3600:.1f}h"
+
+    table: List[List[str]] = []
+    for r in rows_in:
+        if not isinstance(r, dict):
+            continue
+        slot = r.get("slot")
+        pair_no = f"#{slot}" if slot is not None else "#?"
+        legs = f"Long {r.get('long')}/ Short {r.get('short')}"
+        cu = r.get("combined_upnl_usd")
+        cp = r.get("combined_upnl_pct")
+        miss = r.get("missing_legs")
+        if miss:
+            if miss == "incomplete_state":
+                mid = "[state: missing long/short]"
+            else:
+                mid = f"[no position row for leg(s): {miss}]"
+        else:
+            mid = (
+                f"{fmt_usd(None if cu is None else float(cu))} {fmt_pct(None if cp is None else float(cp))}"
+            ).strip()
+        flags: List[str] = []
+        if r.get("would_close_tp"):
+            flags.append("TP")
+        if r.get("would_close_age"):
+            flags.append("MAX_AGE")
+        flag_s = f" [{'/'.join(flags)}]" if flags else ""
+        age_s = fmt_age(r.get("age_s"))
+        table.append([pair_no, legs, mid, f"age={age_s}{flag_s}"])
+
+    cols = ["Pair", "Long / Short", "Pair uPnL (notional %)", "Age / flags"]
+    widths = [len(c) for c in cols]
+    for row in table:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    def line(parts: List[str]) -> str:
+        return "  ".join(parts[i].ljust(widths[i]) for i in range(len(parts)))
+
+    lines.append(line(cols))
+    lines.append(line(["-" * w for w in widths]))
+    for row in table:
+        lines.append(line(row))
+    return lines
 
 
 def desired_actions_from_positions(
@@ -356,64 +677,7 @@ def desired_actions_from_positions(
     if not pairs:
         return {"state_json": os.path.abspath(path), "pairs_to_close": [], "reason": "no_pairs_in_state"}
 
-    # Extract per-position metrics (best-effort, matching Varibot/positions.py field probing).
-    def pos_list(raw: Any) -> List[Dict[str, Any]]:
-        if isinstance(raw, list):
-            return [p for p in raw if isinstance(p, dict)]
-        if isinstance(raw, dict) and isinstance(raw.get("positions"), list):
-            return [p for p in raw["positions"] if isinstance(p, dict)]
-        return []
-
-    def inst_sym(p: Dict[str, Any]) -> str:
-        inst = p.get("instrument")
-        if isinstance(inst, dict):
-            u = inst.get("underlying")
-            if isinstance(u, str) and u.strip():
-                return u.strip().upper()
-        for k in ("underlying", "symbol", "asset"):
-            v = p.get(k)
-            if isinstance(v, str) and v.strip():
-                return v.strip().upper()
-        return "UNKNOWN"
-
-    def first_float(p: Dict[str, Any], keys: Iterable[str]) -> Optional[float]:
-        for k in keys:
-            if k not in p:
-                continue
-            v = p.get(k)
-            if v is None:
-                continue
-            try:
-                return float(v)
-            except Exception:
-                continue
-        return None
-
-    def nested_float(p: Dict[str, Any], path2: Sequence[str]) -> Optional[float]:
-        cur: Any = p
-        for k in path2:
-            if not isinstance(cur, dict) or k not in cur:
-                return None
-            cur = cur.get(k)
-        if cur is None:
-            return None
-        try:
-            return float(cur)
-        except Exception:
-            return None
-
-    by_sym: Dict[str, Dict[str, float]] = {}
-    for p in pos_list(positions_raw):
-        sym = inst_sym(p)
-        upnl = first_float(p, ["unrealized_pnl", "u_pnl", "upnl", "unrealizedPnl"])
-        # "value" here is used as notional proxy; positions.py takes abs(value).
-        value = first_float(p, ["value", "position_value", "notional", "notional_value", "usd_value"])
-        if value is None:
-            # Some payloads store notional under position_info.
-            value = nested_float(p, ["position_info", "value"])
-        if upnl is None or value is None:
-            continue
-        by_sym[sym] = {"upnl_usd": float(upnl), "notional_usd": abs(float(value))}
+    by_sym = _metrics_by_underlying_from_positions(positions_raw)
 
     now = _now()
     pairs_to_close: List[Dict[str, Any]] = []
@@ -558,7 +822,7 @@ def paper_run(
 ) -> Dict[str, Any]:
     """
     Paper-run helper:
-      - seeds 5 pairs from listingtabledata.json (writes/overwrites state JSON)
+      - seeds up to MAX_PAIR_COUNT pairs from listingtabledata.json (writes/overwrites state JSON)
       - optionally evaluates pair TP / max-age close signals from a saved positions snapshot
 
     This function does not place orders.
@@ -581,7 +845,9 @@ def paper_run(
 
 
 def _cli() -> int:
-    ap = argparse.ArgumentParser(description="Paper-run: seed 5 funding-opposite pairs (no orders).")
+    ap = argparse.ArgumentParser(
+        description=f"Paper-run: seed up to {MAX_PAIR_COUNT} funding-opposite pairs (no orders unless --live)."
+    )
     ap.add_argument(
         "--listing-json",
         default=default_listingtable_json_path(),
@@ -619,7 +885,11 @@ def _cli() -> int:
         type=float,
         default=None,
         dest="im_target_pct",
-        help="Optional IM-target pct passed to multimarketorder.py (ignored if --usd is set).",
+        help=(
+            "Optional override for multimarketorder --im-target-pct (ignored if --usd is set). "
+            "If omitted, uses funding-pairs sizing: each pair uses FUNDING_PAIR_MAX_IM_PCT of (pv×lev), "
+            "split across two legs (see im_target_pct_for_funding_pairs_multimarket)."
+        ),
     )
     ap.add_argument(
         "--multi-script",
@@ -646,27 +916,35 @@ def _cli() -> int:
 
     # Default remains paper/dry-run; only place orders when --live is set.
     if args.live:
-        repo_root = _repo_root_from_here()
-        varibot_dir = os.path.join(repo_root, "Varibot")
-        script_path = os.path.join(varibot_dir, str(args.multi_script))
-        if not os.path.isfile(script_path):
-            raise FileNotFoundError(f"Missing multi-order script: {script_path}")
-        cmd: List[str] = [
-            sys.executable,
-            "-u",
-            script_path,
-            "--long",
-            ",".join([str(x).strip().upper() for x in longs if str(x).strip()]),
-            "--short",
-            ",".join([str(x).strip().upper() for x in shorts if str(x).strip()]),
-            "--live",
-        ]
-        if args.usd is not None:
-            cmd += ["--usd", str(float(args.usd))]
-        elif args.im_target_pct is not None:
-            cmd += ["--im-target-pct", str(float(args.im_target_pct))]
-        rc = int(subprocess.call(cmd, cwd=varibot_dir))
-        out["multimarket_invocation"] = {"cmd": cmd, "cwd": varibot_dir, "exit_code": rc}
+        if not longs and not shorts:
+            out["multimarket_invocation"] = {"skipped": True, "reason": "no_pairs"}
+        else:
+            repo_root = _repo_root_from_here()
+            varibot_dir = os.path.join(repo_root, "Varibot")
+            script_path = os.path.join(varibot_dir, str(args.multi_script))
+            if not os.path.isfile(script_path):
+                raise FileNotFoundError(f"Missing multi-order script: {script_path}")
+            cmd: List[str] = [
+                sys.executable,
+                "-u",
+                script_path,
+                "--long",
+                ",".join([str(x).strip().upper() for x in longs if str(x).strip()]),
+                "--short",
+                ",".join([str(x).strip().upper() for x in shorts if str(x).strip()]),
+                "--live",
+            ]
+            if args.usd is not None:
+                cmd += ["--usd", str(float(args.usd))]
+            elif args.im_target_pct is not None:
+                cmd += ["--im-target-pct", str(float(args.im_target_pct))]
+            else:
+                cmd += [
+                    "--im-target-pct",
+                    str(im_target_pct_for_funding_pairs_multimarket(len(longs), len(shorts))),
+                ]
+            rc = int(subprocess.call(cmd, cwd=varibot_dir))
+            out["multimarket_invocation"] = {"cmd": cmd, "cwd": varibot_dir, "exit_code": rc}
 
     if args.print_json:
         print(json.dumps(out, indent=2, default=str))
@@ -678,7 +956,9 @@ def _cli() -> int:
             for p in pairs:
                 if not isinstance(p, dict):
                     continue
-                print(f"Slot {p.get('slot')}: LONG {p.get('long')} / SHORT {p.get('short')} (diff={p.get('afr_diff'):.2f}%)")
+                ad = p.get("afr_diff")
+                ad_s = f"{float(ad):.2f}%" if ad is not None else "-"
+                print(f"Slot {p.get('slot')}: LONG {p.get('long')} / SHORT {p.get('short')} (diff={ad_s})")
         else:
             print(f"Longs: {', '.join(longs)}")
             print(f"Shorts: {', '.join(shorts)}")
