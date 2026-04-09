@@ -45,7 +45,7 @@ _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-positi
 DEFAULT_TICKER_QTY: int = 10 # default ticker qty (total universe size before split; becomes half long / half short)
 DEFAULT_FUNDING_PAIRS_TOP_N: int = 60 # funding_pairs uses top-N-by-volume universe; keep separate from DEFAULT_TICKER_QTY
 _DEFAULT_CYCLE_PERIOD_MIN: int = 15 # how often to run a new cycle (wall-clock aligned by default)
-max_time_position: int = 60 # close-all time-in-position threshold (minutes)
+max_time_position: int = 240 # close-all time-in-position threshold (minutes)
 _DEFAULT_TP_PCT: float = 5.0 # take profit percentage
 _COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
 
