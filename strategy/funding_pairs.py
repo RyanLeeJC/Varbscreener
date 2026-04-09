@@ -12,16 +12,16 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 STRATEGY_NAME: str = "funding_pairs"
 
 # Pairing rules / constants
-MAX_PAIR_COUNT: int = 5
+MAX_PAIR_COUNT: int = 10
 # % of (portfolio_value_usd × leverage) allocated to each pair (long+short legs combined).
 # Each leg receives half: per_order_usd = (pv×lev×FUNDING_PAIR_MAX_IM_PCT/100) / 2.
 # See im_target_pct_for_funding_pairs_multimarket() for mapping to multimarketorder's --im-target-pct.
-FUNDING_PAIR_MAX_IM_PCT: float = 15.0
-TOP_N_BY_VOL_24H: int = 60
+FUNDING_PAIR_MAX_IM_PCT: float = 7.5
+TOP_N_BY_VOL_24H: int = 100
 MAX_ABS_24H_MOVE_PCT: float = 10.0
 MAX_ABS_ANN_FUNDINGRATE_PCT: float = 50.0
-MIN_ABS_FUNDINGRATE_DIFF_PCT: float = 4.0
-PAIR_MAX_AGE_S: float = 2.0 * 3600.0
+MIN_ABS_FUNDINGRATE_DIFF_PCT: float = 5.0
+PAIR_MAX_AGE_S: float = 4.0 * 3600.0
 PAIR_TP_UPNL_PCT: float = 2.0
 
 # Copied from strategy/revert_median.py (and also present in other strategy modules).
