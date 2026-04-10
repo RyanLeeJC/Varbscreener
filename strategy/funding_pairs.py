@@ -21,7 +21,7 @@ TOP_N_BY_VOL_24H: int = 100
 MAX_ABS_24H_MOVE_PCT: float = 10.0
 MAX_ABS_ANN_FUNDINGRATE_PCT: float = 50.0
 MIN_ABS_FUNDINGRATE_DIFF_PCT: float = 5.0
-PAIR_MAX_AGE_S: float = 4.0 * 3600.0
+PAIR_MAX_AGE_S: float = 3.0 * 3600.0
 PAIR_TP_UPNL_PCT: float = 2.0
 
 # Copied from strategy/revert_median.py (and also present in other strategy modules).
