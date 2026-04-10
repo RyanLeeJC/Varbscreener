@@ -5,7 +5,9 @@ Varibot orchestrator — implements the VariBotFlowchart workflow:
 
   Auth (validate_vr_token) → every T minutes: portfolio + TP Check →
   if positions → TP exit and/or time-in-position exit (closeallpositions.py) →
-  if flat → listingtable → marketstate → strategy → multimarketorder.
+  if flat → listingtable → marketstate → strategy → multimarketorder
+  (strategy funding_pairs skips marketstate on entry; per-pair exits in funding_pairs manager; portfolio TP /
+   --tp-pct can still close-all; global time-in-position is skipped for funding_pairs only.)
 
 Run from the Varibot directory (or any cwd; this file fixes imports):
 
@@ -616,6 +618,15 @@ def run_strategy_pick_tickers(
     top_n: int,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
     ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
+    # funding_pairs.pick_tickers does not use marketstate; avoid requiring marketstate.json on disk.
+    if _strategy_key_normalized(strategy_key) == "funding_pairs":
+        return strategies_mod.run_strategy(
+            strategy_key=strategy_key,
+            listing_json=listing_json,
+            marketstate_json=None,
+            top_n=int(top_n),
+            write_output_txt=True,
+        )
     if not os.path.isfile(ms_path):
         raise FileNotFoundError(f"marketstate.json missing at {ms_path} (run marketstate.py).")
     return strategies_mod.run_strategy(
@@ -894,6 +905,7 @@ def one_cycle(
     Returns True when a live time-in-position close-all just succeeded; main() should
     use a short cooldown then run the next cycle instead of sleeping to the wall clock.
     """
+    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
     raw_pf = ep.get_portfolio(compute_margin=True)
     snap = parse_portfolio_snapshot(raw_pf)
     out = _build_out_dict(cfg=cfg, snap=snap)
@@ -910,20 +922,24 @@ def one_cycle(
 
     if not has_pos:
         _clear_position_latch()
-        _log("No open positions → listingtable → marketstate → strategy → multimarket")
+        if _strategy_key_normalized(strat_key) == "funding_pairs":
+            _log("No open positions → listingtable → strategy → multimarket (marketstate skipped for funding_pairs)")
+        else:
+            _log("No open positions → listingtable → marketstate → strategy → multimarket")
         plan = _COINGECKO_PLAN.strip().lower()
         _log(f"step: running listingtable ({'CoinGecko Pro' if plan == 'pro' else 'CoinGecko Free'}) (may take a while)...")
         listing_json = run_listingtable_or_use_cache(timeout_s=float(args.listing_timeout_s))
-        _log("step: running marketstate.py...")
-        run_marketstate(timeout_s=float(args.marketstate_timeout_s))
-        strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
+        if _strategy_key_normalized(strat_key) != "funding_pairs":
+            _log("step: running marketstate.py...")
+            run_marketstate(timeout_s=float(args.marketstate_timeout_s))
         top_n = _top_n_for_strategy(strat_key)
         longs, shorts, meta = run_strategy_pick_tickers(
             strategy_key=strat_key,
             listing_json=listing_json,
             top_n=top_n,
         )
-        _log("step: marketstate finished")
+        if _strategy_key_normalized(strat_key) != "funding_pairs":
+            _log("step: marketstate finished")
         _log(f"step: strategy finished (strategy={meta.get('strategy')}, longs={len(longs)}, shorts={len(shorts)})")
 
         if _should_write_strategy_output():
@@ -977,12 +993,8 @@ def one_cycle(
                 _log_post_multimarket_positions_tally(ep=ep, longs=longs, shorts=shorts)
         return False
 
-    # --- have positions: TP exit, then time-in-position ---
+    # --- have positions: funding_pairs per-slot manager, then portfolio TP, then time-in-position ---
     _funding_pairs_manager(ep=ep, args=args, positions_raw=raw_pos)
-
-    if str(args.time_exit_source) in ("auto", "orders", "latch"):
-        if _read_position_latch_ts() is None:
-            _write_position_latch(time.time())
 
     if out.get("tp_check") == "Yes":
         if args.live:
@@ -992,6 +1004,13 @@ def one_cycle(
         else:
             _log("TP Check Yes — [dry-run] would run closeallpositions.py --live")
         return False
+
+    if _strategy_key_normalized(strat_key) == "funding_pairs":
+        return False
+
+    if str(args.time_exit_source) in ("auto", "orders", "latch"):
+        if _read_position_latch_ts() is None:
+            _write_position_latch(time.time())
 
     hold_limit_s = float(max_time_position) * 60.0 * max(1, int(args.time_exit_periods))
     ms_path = str(args.marketstate_json or _DEFAULT_MARKETSTATE_JSON)
@@ -1063,7 +1082,10 @@ def parse_args() -> argparse.Namespace:
         "--tp-pct",
         type=float,
         default=_DEFAULT_TP_PCT,
-        help=f"TP Check threshold %% of portfolio (default {_DEFAULT_TP_PCT:g}).",
+        help=(
+            f"Portfolio TP threshold %% of account: tp_check Yes → closeallpositions when uPNL%% of account "
+            f"≥ this (default {_DEFAULT_TP_PCT:g}). Applies to all strategies including funding_pairs."
+        ),
     )
     p.add_argument(
         "--time-exit-periods",
