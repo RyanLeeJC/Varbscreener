@@ -195,12 +195,12 @@ def _build_pairs(
 ) -> List[Pair]:
     """
     Build up to target_pairs disjoint (no repeated tickers) pairs:
-      - long: negative ann_fundingrate
-      - short: positive ann_fundingrate
+      - long: positive ann_fundingrate
+      - short: negative ann_fundingrate
       - |afr_short - afr_long| >= MIN_ABS_FUNDINGRATE_DIFF_PCT
     """
-    longs = [r for r in universe if float(r.ann_fundingrate_pct) < 0 and r.ticker not in disallow]
-    shorts = [r for r in universe if float(r.ann_fundingrate_pct) > 0 and r.ticker not in disallow]
+    longs = [r for r in universe if float(r.ann_fundingrate_pct) > 0 and r.ticker not in disallow]
+    shorts = [r for r in universe if float(r.ann_fundingrate_pct) < 0 and r.ticker not in disallow]
 
     # Greedy: prefer larger funding diff first, with volume as tie-breaker.
     candidates: List[Tuple[float, float, str, str, float, float]] = []
