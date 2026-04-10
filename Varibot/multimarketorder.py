@@ -25,7 +25,7 @@ DEFAULT_IM_TARGET_PCT: float = 50.0
 # IM-target per-order notional is rounded up to this USD step (e.g. 241.04 -> 250).
 USD_NOTIONAL_ROUND_STEP: float = 10.0
 # Default max slippage when --max-slippage and MAX_SLIPPAGE env are unset (fraction of notional).
-_DEFAULT_MAX_SLIPPAGE: float = 0.0020
+_DEFAULT_MAX_SLIPPAGE: float = 0.0025
 
 
 def _split_assets(raw: Optional[str]) -> List[str]:
