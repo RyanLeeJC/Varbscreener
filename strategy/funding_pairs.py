@@ -17,7 +17,7 @@ MAX_PAIR_COUNT: int = 10
 # Each leg receives half: per_order_usd = (pv×lev×FUNDING_PAIR_MAX_IM_PCT/100) / 2.
 # See im_target_pct_for_funding_pairs_multimarket() for mapping to multimarketorder's --im-target-pct.
 FUNDING_PAIR_MAX_IM_PCT: float = 7.0
-TOP_N_BY_VOL_24H: int = 100
+TOP_N_BY_VOL_24H: int = 80
 MAX_ABS_24H_MOVE_PCT: float = 10.0
 MAX_ABS_ANN_FUNDINGRATE_PCT: float = 50.0
 MIN_ABS_FUNDINGRATE_DIFF_PCT: float = 5.0
