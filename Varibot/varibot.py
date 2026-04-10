@@ -742,6 +742,25 @@ def _resolve_max_slippage() -> float:
     return 0.0025
 
 
+def _looks_like_slippage_reject(msg: str) -> bool:
+    m = (msg or "").lower()
+    return ("max slippage" in m and ("exceed" in m or "exceeded" in m)) or ("slippage" in m and "exceed" in m)
+
+
+def _current_qty_for_sym(ep: VariEndpoints, sym: str) -> Optional[float]:
+    want = str(sym).strip().upper()
+    raw = ep.get_positions()
+    for pos in _positions_list(raw):
+        s = _instrument_label(pos).strip().upper()
+        if s != want:
+            continue
+        q = _position_qty(pos)
+        if q is None:
+            continue
+        return float(q)
+    return 0.0
+
+
 def _extract_quote_id(resp: Any) -> Optional[str]:
     if not isinstance(resp, dict):
         return None
@@ -828,22 +847,54 @@ def _funding_pairs_manager(
             close_side = "sell" if float(q) > 0 else "buy"
             qty_abs = abs(float(q))
             _log(f"funding_pairs manager: closing {sym} qty={qty_abs:g} side={close_side} reduce-only...")
-            # quote_indicative_simple doesn't include side; stash override in response container
             from variationalbot.vari.endpoints import Instrument  # local import
 
             instrument = Instrument(instrument_type="perpetual_future", underlying=sym)
-            qresp = ep.quote_indicative_simple(instrument=instrument, qty=qty_abs)
-            if isinstance(qresp, dict):
-                qresp["_close_side_override"] = close_side
-            quote_id = _extract_quote_id(qresp)
-            if not quote_id:
-                raise ValueError(f"indicative quote missing quote_id for {sym} qty={qty_abs}")
-            ep.place_order_market(
-                quote_id=str(quote_id),
-                side=close_side,
-                max_slippage=float(max_slip),
-                is_reduce_only=True,
-            )
+
+            # Retry on slippage rejection (stepped), and verify via GET /api/positions that qty moved toward flat.
+            last_err: Optional[Exception] = None
+            for attempt in range(1, 7):
+                slip = float(max_slip) + float(attempt - 1) * 0.0005
+                try:
+                    qresp = ep.quote_indicative_simple(instrument=instrument, qty=qty_abs)
+                    if isinstance(qresp, dict):
+                        qresp["_close_side_override"] = close_side
+                        qresp["_attempt"] = attempt
+                        qresp["_max_slippage"] = float(slip)
+                    quote_id = _extract_quote_id(qresp)
+                    if not quote_id:
+                        raise ValueError(f"indicative quote missing quote_id for {sym} qty={qty_abs}")
+                    ep.place_order_market(
+                        quote_id=str(quote_id),
+                        side=close_side,
+                        max_slippage=float(slip),
+                        is_reduce_only=True,
+                    )
+
+                    # confirm close by polling positions a few times
+                    time.sleep(1.0)
+                    ok = False
+                    for _ in range(8):
+                        cur_q = _current_qty_for_sym(ep, sym)
+                        if cur_q is not None and abs(float(cur_q)) <= 1e-12:
+                            ok = True
+                            break
+                        time.sleep(1.0)
+                    if not ok:
+                        _log(f"funding_pairs manager: WARNING close submitted but {sym} still open after polling.")
+                    break
+                except Exception as e:
+                    last_err = e
+                    if not _looks_like_slippage_reject(str(e)):
+                        raise
+                    if attempt < 7:
+                        _log(
+                            f"funding_pairs manager: close {sym} rejected for slippage; retry {attempt+1}/7 with higher max_slippage..."
+                        )
+                        time.sleep(0.25)
+            else:
+                if last_err is not None:
+                    raise last_err
 
         # Open a replacement pair for that slot (best-effort).
         try:

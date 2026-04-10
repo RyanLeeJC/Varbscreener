@@ -27,6 +27,120 @@ USD_NOTIONAL_ROUND_STEP: float = 10.0
 # Default max slippage when --max-slippage and MAX_SLIPPAGE env are unset (fraction of notional).
 _DEFAULT_MAX_SLIPPAGE: float = 0.0025
 
+# Retry policy for per-ticker market orders when venue rejects due to slippage.
+# Mirrors closeallpositions.py's stepped approach, but for individual orders.
+SLIPPAGE_RETRY_INCREMENT: float = 0.0005  # +0.05% notional per retry
+MAX_LIVE_ATTEMPTS: int = 6
+POST_ORDER_INITIAL_DELAY_S: float = 1.0
+POST_ORDER_POLL_INTERVAL_S: float = 1.0
+POST_ORDER_POLL_MAX: int = 8
+
+
+def _positions_list(raw: Any) -> List[Dict[str, Any]]:
+    if isinstance(raw, list):
+        return [p for p in raw if isinstance(p, dict)]
+    if isinstance(raw, dict) and isinstance(raw.get("positions"), list):
+        return [p for p in raw["positions"] if isinstance(p, dict)]
+    return []
+
+
+def _instrument_underlying(p: Dict[str, Any]) -> str:
+    inst = p.get("instrument")
+    if isinstance(inst, dict):
+        u = inst.get("underlying")
+        if isinstance(u, str) and u.strip():
+            return u.strip().upper()
+    if isinstance(inst, str) and inst.strip():
+        return inst.strip().upper()
+    pi = p.get("position_info")
+    if isinstance(pi, dict):
+        inst2 = pi.get("instrument")
+        if isinstance(inst2, dict):
+            u = inst2.get("underlying")
+            if isinstance(u, str) and u.strip():
+                return u.strip().upper()
+    for k in ("underlying", "symbol", "asset"):
+        v = p.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().upper()
+    return "UNKNOWN"
+
+
+def _position_qty(p: Dict[str, Any]) -> Optional[float]:
+    for k in ("qty", "quantity", "position_qty", "net_qty", "net_position", "size", "positionSize"):
+        if k not in p:
+            continue
+        try:
+            return float(p[k])
+        except (TypeError, ValueError):
+            continue
+    pi = p.get("position_info")
+    if isinstance(pi, dict) and "qty" in pi:
+        try:
+            return float(pi["qty"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _current_qty_for_asset(ep: VariEndpoints, asset: str) -> Optional[float]:
+    want = str(asset).strip().upper()
+    raw = ep.get_positions()
+    for p in _positions_list(raw):
+        if _instrument_underlying(p) != want:
+            continue
+        q = _position_qty(p)
+        if q is None:
+            continue
+        return float(q)
+    return 0.0
+
+
+def _looks_like_slippage_reject(msg: str) -> bool:
+    m = (msg or "").lower()
+    return ("max slippage" in m and ("exceed" in m or "exceeded" in m)) or ("slippage" in m and "exceed" in m)
+
+
+def _verify_position_after_order(
+    *,
+    ep: VariEndpoints,
+    asset: str,
+    side: str,
+    reduce_only: bool,
+    prev_qty: Optional[float],
+) -> bool:
+    """
+    Best-effort: poll GET /api/positions to confirm the intended position state.
+      - non-reduce-only buy: qty should be > 0
+      - non-reduce-only sell: qty should be < 0
+      - reduce-only: abs(qty) should be smaller than before; for full closes it should reach ~0
+    """
+    time.sleep(POST_ORDER_INITIAL_DELAY_S)
+    for _ in range(POST_ORDER_POLL_MAX):
+        q = _current_qty_for_asset(ep, asset)
+        if q is None:
+            time.sleep(POST_ORDER_POLL_INTERVAL_S)
+            continue
+
+        if not reduce_only:
+            if str(side).lower() == "buy" and float(q) > 1e-12:
+                return True
+            if str(side).lower() == "sell" and float(q) < -1e-12:
+                return True
+        else:
+            # If we knew the prior qty, require improvement (closer to zero). Otherwise just accept ~flat.
+            if prev_qty is not None:
+                if abs(float(q)) <= max(1e-12, abs(float(prev_qty)) * 0.2):
+                    return True
+                if abs(float(q)) < abs(float(prev_qty)) - 1e-12:
+                    return True
+            else:
+                if abs(float(q)) <= 1e-12:
+                    return True
+
+        time.sleep(POST_ORDER_POLL_INTERVAL_S)
+    return False
+
 
 def _split_assets(raw: Optional[str]) -> List[str]:
     if not raw:
@@ -349,6 +463,13 @@ def main() -> int:
         }
 
         try:
+            prev_qty: Optional[float] = None
+            if args.live:
+                try:
+                    prev_qty = _current_qty_for_asset(ep, asset)
+                except Exception:
+                    prev_qty = None
+
             if args.set_leverage:
                 lev_res = ep.set_leverage(asset=asset, leverage=int(leverage))
                 item["steps"]["set_leverage"] = {
@@ -378,15 +499,64 @@ def main() -> int:
             }
 
             if args.live:
-                resp = ep.place_order_market(
-                    quote_id=quote_id,
-                    side=side,
-                    max_slippage=float(max_slippage),
-                    is_reduce_only=bool(args.reduce_only),
-                )
-                item["steps"]["order_response"] = resp
-                item["steps"]["rfq_id"] = _extract_rfq_id(resp)
-                item["steps"]["order_id"] = _extract_order_id(resp)
+                attempts: List[Dict[str, Any]] = []
+                last_err: Optional[Exception] = None
+                for attempt in range(1, MAX_LIVE_ATTEMPTS + 1):
+                    slip = float(max_slippage) + float(attempt - 1) * float(SLIPPAGE_RETRY_INCREMENT)
+                    try:
+                        quote_id2, quote2 = ep.quote_id_for_usd_notional(
+                            instrument=instrument,
+                            side=side,
+                            usd_notional=float(usd_per_order),
+                        )
+                        resp = ep.place_order_market(
+                            quote_id=quote_id2,
+                            side=side,
+                            max_slippage=float(slip),
+                            is_reduce_only=bool(args.reduce_only),
+                        )
+                        ok = _verify_position_after_order(
+                            ep=ep,
+                            asset=asset,
+                            side=side,
+                            reduce_only=bool(args.reduce_only),
+                            prev_qty=prev_qty,
+                        )
+                        attempts.append(
+                            {
+                                "attempt": attempt,
+                                "max_slippage": float(slip),
+                                "quote": quote2,
+                                "order_response": resp,
+                                "verified_by_positions": bool(ok),
+                            }
+                        )
+                        item["steps"]["attempts"] = attempts
+                        item["steps"]["order_response"] = resp
+                        item["steps"]["rfq_id"] = _extract_rfq_id(resp)
+                        item["steps"]["order_id"] = _extract_order_id(resp)
+                        if not ok:
+                            item["steps"]["warning"] = (
+                                "Order submitted but positions check did not confirm expected state within polling window."
+                            )
+                        break
+                    except Exception as e:
+                        last_err = e
+                        msg = str(e)
+                        attempts.append(
+                            {
+                                "attempt": attempt,
+                                "max_slippage": float(slip),
+                                "error": {"type": type(e).__name__, "message": msg},
+                            }
+                        )
+                        if not _looks_like_slippage_reject(msg):
+                            raise
+                        if attempt < MAX_LIVE_ATTEMPTS:
+                            time.sleep(0.25)
+                else:
+                    if last_err is not None:
+                        raise last_err
             else:
                 item["steps"]["note"] = "Dry-run only. Re-run with --live to actually place orders."
         except Exception as e:
