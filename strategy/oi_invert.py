@@ -13,7 +13,7 @@ STRATEGY_NAME: str = "oi_invert"
 TRADE_THESIS: str = (
     "Regime-gated OI skew strategy. "
     "First, read BTC/ETH 24h % change (and OI short/long skew). "
-    "Only run when BTC/ETH are moving strongly and shorts are building (Pump Now → Dump Next). "
+    "Only run when BTC/ETH are moving strongly and shorts are building (Pump Now -> Dump Next). "
     "Then, inside a liquid universe (ranked by 24h volume with min OI/volume filters), "
     "short outperformers with low OI_short/long, and long outperformers with high OI_short/long (to balance)."
 )
@@ -780,11 +780,11 @@ def main() -> int:
 
     print(f"Gate: proceed if max(|BTC 24h|, |ETH 24h|) > {_fmt2(trig)} (now={_fmt2(max_abs)}).")
     print(
-        f"Regime: Pump Now → Dump Next if max(BTC/ETH 24h) > {_fmt2(trig)} (now={_fmt2(max_24)}) and "
+        f"Regime: Pump Now -> Dump Next if max(BTC/ETH 24h) > {_fmt2(trig)} (now={_fmt2(max_24)}) and "
         f"max(BTC/ETH OI_short/long) > {_fmt2(min_sl)} (now={_fmt2(max_oi_sl)})."
     )
     print(
-        f"Regime: Dump Now → Pump Next if min(BTC/ETH 24h) < -{_fmt2(trig)} (now={_fmt2(min_24)}) and "
+        f"Regime: Dump Now -> Pump Next if min(BTC/ETH 24h) < -{_fmt2(trig)} (now={_fmt2(min_24)}) and "
         f"max(BTC/ETH OI_long/short) > {_fmt2(min_sl)} (now={_fmt2(max_oi_ls)})."
     )
     print(

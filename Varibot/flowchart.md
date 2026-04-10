@@ -1,4 +1,4 @@
-# Varibot flowchart → `varibot.py`
+# Varibot flowchart -> `varibot.py`
 
 This document maps **`Varibot/varibot.py`** to the **VariBotFlowchart** workflow (see `VariBotFlowchart.jpg` at repo root).
 
@@ -13,15 +13,15 @@ This document maps **`Varibot/varibot.py`** to the **VariBotFlowchart** workflow
 1. **Portfolio / TP** — `GET /api/portfolio` + `parse_portfolio_snapshot`, then the same logic as **`check_portfolio_stats`** (`_build_out_dict` + `_apply_tp_check` with `--tp-pct`, default **5%**).
 2. **Positions** — `GET /api/positions`; non-zero size ⇒ “has positions” (same idea as **`positions.py`**, no subprocess).
 3. **If positions**
-   - **TP path:** if `tp_check == Yes` and **`--live`** → runs **`closeallpositions.py --live`** (flowchart’s “closeall”).
-   - Else **time-in-position:** compare a **reference time** to **`--time-exit-periods` × T** (default **1 × 15 min**); if age ≥ limit and **`--live`** → **`closeallpositions.py --live`**.
+   - **TP path:** if `tp_check == Yes` and **`--live`** -> runs **`closeallpositions.py --live`** (flowchart’s “closeall”).
+   - Else **time-in-position:** compare a **reference time** to **`--time-exit-periods` × T** (default **1 × 15 min**); if age ≥ limit and **`--live`** -> **`closeallpositions.py --live`**.
    - **Reference time** (see `--time-exit-source`):
      - **`marketstate` (default):** **`Vari Listings/marketstate.json`** — `fetched_at_unix` (written by `marketstate.py`) or parsed `fetched_at` (SGT string). This matches the flowchart: regime is refreshed **just before** `median_filter` and multimarket orders, so the file timestamp approximates “cycle start” for the current batch (assuming orders ran right after).
-     - **`auto`:** `marketstate` → **`/api/orders/v2`** (non–reduce-only order timestamps) → **disk latch**.
+     - **`auto`:** `marketstate` -> **`/api/orders/v2`** (non–reduce-only order timestamps) -> **disk latch**.
      - **`latch`:** only **`Varibot/.varibot_position_latch.json`**.
      - **`orders`:** only the orders API.
 4. **If flat** — runs (as subprocesses, same as your runner):
-   - **`Vari Listings/listingtable.py`** → `listingtabledata.json` (with timeout + cache fallback like `runner_dir_median_c1s.py`),
+   - **`Vari Listings/listingtable.py`** -> `listingtabledata.json` (with timeout + cache fallback like `runner_dir_median_c1s.py`),
    - **`Vari Listings/marketstate.py`**,
    - **`median_filter`** in-process (regime from `marketstate.json`, same long/short rules),
    - **`multimarketorder.py`** with `--long` / `--short` / `--usd` and **`--live`** only if you passed **`--live`**.
@@ -53,7 +53,7 @@ Additional flags: `--median-top-n`, `--median-exclude`, `--median-max-oi-skew`, 
 
 **Caveats:** If you have positions but `marketstate.json` was **not** refreshed on that entry cycle (manual trades, failed `marketstate.py`, or stale file), the age can be wrong — use **`--time-exit-source auto`** or **`latch`** as fallback, or re-run `marketstate.py`.
 
-**Other modes:** `orders` = `/api/orders/v2` heuristics; `latch` = Varibot’s `.varibot_position_latch.json`; `auto` tries marketstate → orders → latch.
+**Other modes:** `orders` = `/api/orders/v2` heuristics; `latch` = Varibot’s `.varibot_position_latch.json`; `auto` tries marketstate -> orders -> latch.
 
 ## Examples
 

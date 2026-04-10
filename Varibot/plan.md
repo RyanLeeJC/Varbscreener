@@ -57,8 +57,8 @@ Run a **24/7 trading bot loop** that:
   - Inputs: BTC 24hChg%, ETH 24hChg%, SidewaysNow?, DirectionalNow?
   - Output: `SidewaysNow` or `DirectionalNow` (+ confidence if available).
 - **Ticker selection**
-  - Sideways regime: apply **Filter Set A** → `tickers_to_long[]`, `tickers_to_short[]`
-  - Directional regime: apply **Filter Set B** → `tickers_to_long[]`, `tickers_to_short[]`
+  - Sideways regime: apply **Filter Set A** -> `tickers_to_long[]`, `tickers_to_short[]`
+  - Directional regime: apply **Filter Set B** -> `tickers_to_long[]`, `tickers_to_short[]`
 - **Sizing**
   - Compute total intended exposure and the **IM target**:
     - `n = len(longs) + len(shorts)`
@@ -117,8 +117,8 @@ flowchart TB
   - If **no positions**: proceed to market regime detection + ticker selection.
   - If **has positions**: still do regime + signals, but include logic to avoid duplicating exposure and to optionally prioritize management (reduce-only, de-risking).
 - **Regime now?**
-  - Sideways → Filter Set A
-  - Directional → Filter Set B
+  - Sideways -> Filter Set A
+  - Directional -> Filter Set B
 - **Risk checks**
   - Guardrails based on portfolio snapshot (IM/MM usage thresholds, max #positions, max notional, cooldowns).
 - **Execute**

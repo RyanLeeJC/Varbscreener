@@ -48,7 +48,7 @@ def im_target_pct_for_funding_pairs_multimarket(n_long: int, n_short: int) -> fl
 
     Solving for im_target_pct:
       im_target_pct = (n_long + n_short) × FUNDING_PAIR_MAX_IM_PCT / 2
-    (e.g. 5 pairs → 10 orders → 75 when FUNDING_PAIR_MAX_IM_PCT=15, so each leg is 7.5% of max IM.)
+    (e.g. 5 pairs -> 10 orders -> 75 when FUNDING_PAIR_MAX_IM_PCT=15, so each leg is 7.5% of max IM.)
     """
     n = int(n_long) + int(n_short)
     if n <= 0:

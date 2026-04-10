@@ -3,9 +3,9 @@ from __future__ import annotations
 """
 Varibot orchestrator — implements the VariBotFlowchart workflow:
 
-  Auth (validate_vr_token) → every T minutes: portfolio + TP Check →
-  if positions → TP exit and/or time-in-position exit (closeallpositions.py) →
-  if flat → listingtable → marketstate → strategy → multimarketorder
+  Auth (validate_vr_token) -> every T minutes: portfolio + TP Check ->
+  if positions -> TP exit and/or time-in-position exit (closeallpositions.py) ->
+  if flat -> listingtable -> marketstate -> strategy -> multimarketorder
   (strategy funding_pairs skips marketstate on entry; per-pair exits in funding_pairs manager; portfolio TP /
    --tp-pct can still close-all; global time-in-position is skipped for funding_pairs only.)
 
@@ -46,7 +46,7 @@ _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json"
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
 DEFAULT_TICKER_QTY: int = 10 # default ticker qty (total universe size before split; becomes half long / half short)
 DEFAULT_FUNDING_PAIRS_TOP_N: int = 60 # funding_pairs uses top-N-by-volume universe; keep separate from DEFAULT_TICKER_QTY
-_DEFAULT_CYCLE_PERIOD_MIN: int = 15 # how often to run a new cycle (wall-clock aligned by default)
+_DEFAULT_CYCLE_PERIOD_MIN: int = 5 # how often to run a new cycle (wall-clock aligned by default)
 max_time_position: int = 240 # close-all time-in-position threshold (minutes)
 _DEFAULT_TP_PCT: float = 5.0 # take profit percentage
 _COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
@@ -445,7 +445,7 @@ def _clear_position_latch(path: str = _POSITION_LATCH_PATH) -> None:
 
 def _read_position_latch_ts(path: str = _POSITION_LATCH_PATH) -> Optional[float]:
     """
-    Persisted unix time when the current position batch was first seen (flat → occupied).
+    Persisted unix time when the current position batch was first seen (flat -> occupied).
     Survives bot restarts; cleared when flat. No trade-history API required.
     """
     try:
@@ -458,7 +458,7 @@ def _read_position_latch_ts(path: str = _POSITION_LATCH_PATH) -> Optional[float]
 
 
 def _parse_fetched_at_sgt_string(s: str) -> Optional[float]:
-    """Parse marketstate.json ``fetched_at`` like '1:00pm 4 Apr 2026 SGT' → unix (Asia/Singapore)."""
+    """Parse marketstate.json ``fetched_at`` like '1:00pm 4 Apr 2026 SGT' -> unix (Asia/Singapore)."""
     m = re.match(
         r"^(\d{1,2}):(\d{2})(am|pm)\s+(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+SGT\s*$",
         (s or "").strip(),
@@ -541,7 +541,7 @@ def last_non_reduce_order_ts(orders_raw: Any) -> Optional[float]:
 
 
 def seconds_until_next_wall_interval(*, period_minutes: int) -> float:
-    """Seconds until the next wall-clock multiple of period_minutes (e.g. 15 → :00,:15,:30,:45)."""
+    """Seconds until the next wall-clock multiple of period_minutes (e.g. 15 -> :00,:15,:30,:45)."""
     if period_minutes <= 0:
         return 1.0
     t = time.localtime()
@@ -923,9 +923,9 @@ def one_cycle(
     if not has_pos:
         _clear_position_latch()
         if _strategy_key_normalized(strat_key) == "funding_pairs":
-            _log("No open positions → listingtable → strategy → multimarket (marketstate skipped for funding_pairs)")
+            _log("No open positions -> listingtable -> strategy -> multimarket (marketstate skipped for funding_pairs)")
         else:
-            _log("No open positions → listingtable → marketstate → strategy → multimarket")
+            _log("No open positions -> listingtable -> marketstate -> strategy -> multimarket")
         plan = _COINGECKO_PLAN.strip().lower()
         _log(f"step: running listingtable ({'CoinGecko Pro' if plan == 'pro' else 'CoinGecko Free'}) (may take a while)...")
         listing_json = run_listingtable_or_use_cache(timeout_s=float(args.listing_timeout_s))
@@ -1047,7 +1047,7 @@ def one_cycle(
     if age >= hold_limit_s:
         if args.live:
             _log(
-                f"Time-in-position exceeded ({src} age={age_fmt} >= limit {limit_fmt}) → close all"
+                f"Time-in-position exceeded ({src} age={age_fmt} >= limit {limit_fmt}) -> close all"
             )
             rc = run_closeallpositions(live=True)
             if rc != 0:
@@ -1083,7 +1083,7 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=_DEFAULT_TP_PCT,
         help=(
-            f"Portfolio TP threshold %% of account: tp_check Yes → closeallpositions when uPNL%% of account "
+            f"Portfolio TP threshold %% of account: tp_check Yes -> closeallpositions when uPNL%% of account "
             f"≥ this (default {_DEFAULT_TP_PCT:g}). Applies to all strategies including funding_pairs."
         ),
     )

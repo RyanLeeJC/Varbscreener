@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 def main() -> int:
     """
-    Example script showing the JSON-stdin → JSON-stdout contract.
+    Example script showing the JSON-stdin -> JSON-stdout contract.
     Replace this with your real signal generator later.
     """
     raw = sys.stdin.read()

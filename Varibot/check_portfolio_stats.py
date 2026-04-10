@@ -101,7 +101,7 @@ def _maybe_invoke_closeall_on_tp_yes(
     cmd = [sys.executable, script]
     if close_live:
         cmd.append("--live")
-    print(f"\ntp_check=Yes → running: {' '.join(cmd)}")
+    print(f"\ntp_check=Yes -> running: {' '.join(cmd)}")
     proc = subprocess.run(cmd, cwd=os.path.dirname(script))
     return True, int(proc.returncode)
 

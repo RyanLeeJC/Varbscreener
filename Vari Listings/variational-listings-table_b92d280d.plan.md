@@ -74,7 +74,7 @@ We will:
 
 1. Build the set of unique `ticker`s from Variational listings.
 2. For an initial, robust implementation:
-  - Do a `coins/markets` call for a **broad universe** (e.g. top N by market cap using no filters, or paginated) and build a local symbol→coin index.
+  - Do a `coins/markets` call for a **broad universe** (e.g. top N by market cap using no filters, or paginated) and build a local symbol->coin index.
   - Prefer "primary" matches:
     - Lowercase compare of symbol.
     - If multiple matches, keep the one with highest `market_cap`.
@@ -124,7 +124,7 @@ This should give up to ~1000 top coins, which is likely to cover almost all Vari
     - `sym = coin["symbol"].lower()`.
     - If `sym` not in index, set it.
     - If already exists, keep the entry with **higher `market_cap`** to prefer the main asset.
-  - Return dict mapping `symbol` → best-matching coin object.
+  - Return dict mapping `symbol` -> best-matching coin object.
 
 ### 5. Join Variational Listings to CoinGecko Data
 

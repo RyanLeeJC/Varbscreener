@@ -30,8 +30,8 @@ DEFAULT_RANK_BY: RankBy = "OI"
 
 # Universe size by rank metric (must be even; split is half long / half short).
 # You can set either:
-# - "40"    → take Top 40 by the rank metric
-# - "21-40" → take ranks 21..40 by the rank metric (inclusive)
+# - "40"    -> take Top 40 by the rank metric
+# - "21-40" -> take ranks 21..40 by the rank metric (inclusive)
 # Note: the final count must be even (for 50/50 long/short split).
 DEFAULT_TOP_SPEC: str = "60-100"
 

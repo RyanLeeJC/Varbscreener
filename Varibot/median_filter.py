@@ -196,8 +196,8 @@ def regime_to_median_mode(regime: str) -> MedianMode:
     """
     Maps marketstate *current* regime (… Now) to the median split style used for *expected next* regime.
 
-    - Sideways Now → expect Directional Next → momentum split: long top half 24h, short bottom (mode directional).
-    - Directional Now → expect Sideways Next → fade split: long bottom half, short top (mode sideways).
+    - Sideways Now -> expect Directional Next -> momentum split: long top half 24h, short bottom (mode directional).
+    - Directional Now -> expect Sideways Next -> fade split: long bottom half 24h, short top (mode sideways).
 
     Labels with "Next" in the name are treated the same by substring ("sideways" / "directional").
     """
@@ -213,13 +213,13 @@ def regime_to_median_mode(regime: str) -> MedianMode:
 
 
 def format_regime_now_to_next(regime: str) -> str:
-    """Human line: '<regime> → <expected Next>' for terminal output."""
+    """Human line: '<regime> -> <expected Next>' for terminal output."""
     lo = regime.strip().lower()
     if "directional" in lo:
-        return f"{regime.strip()} → Sideways Next"
+        return f"{regime.strip()} -> Sideways Next"
     if "sideways" in lo:
-        return f"{regime.strip()} → Directional Next"
-    return f"{regime.strip()} → ?"
+        return f"{regime.strip()} -> Directional Next"
+    return f"{regime.strip()} -> ?"
 
 
 def long_short_for_mode(res: MedianSplitResult, mode: MedianMode) -> Tuple[List[str], List[str]]:
@@ -285,8 +285,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Median split: top N by OI (ex BTC/ETH, blacklist, optional OI Skew cap), "
         "split universe by 24h % change. "
         "Explicit --mode: directional = long top half / short bottom; sideways = long bottom / short top. "
-        "Default --mode auto reads marketstate.json: Sideways Now → directional split (for Directional Next); "
-        "Directional Now → sideways split (for Sideways Next)."
+        "Default --mode auto reads marketstate.json: Sideways Now -> directional split (for Directional Next); "
+        "Directional Now -> sideways split (for Sideways Next)."
     )
     ap.add_argument(
         "--json-path",
@@ -302,7 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=("auto", "directional", "sideways"),
         default="auto",
-        help="auto: map regime Now → split for expected Next (Sideways Now→directional, Directional Now→sideways); "
+        help="auto: map regime Now -> split for expected Next (Sideways Now->directional, Directional Now->sideways); "
         "directional/sideways: force split style (see description).",
     )
     ap.add_argument(

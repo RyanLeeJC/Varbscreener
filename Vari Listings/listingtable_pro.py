@@ -49,7 +49,7 @@ def main() -> int:
             os.getenv("COINGECKO_MIN_SECONDS_BETWEEN_CALLS_PRO", "0.25")
         )
 
-    # One-line banner so it's obvious why this is slow (usually: missing key → Free limits).
+    # One-line banner so it's obvious why this is slow (usually: missing key -> Free limits).
     plan = "pro" if api_key else "free"
     key_hint = (api_key[:6] + "..." + api_key[-4:]) if api_key and len(api_key) >= 12 else ("set" if api_key else "missing")
     print(
