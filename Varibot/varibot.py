@@ -51,6 +51,12 @@ max_time_position: int = 240 # close-all time-in-position threshold (minutes)
 _DEFAULT_TP_PCT: float = 5.0 # take profit percentage
 _COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
 
+# funding_pairs manager: refresh listingtable before opening replacement pairs
+_FP_REFRESH_LISTINGTABLE_ENV: str = "VARIBOT_FUNDING_PAIRS_REFRESH_LISTINGTABLE_ON_ROTATE"
+_FP_REFRESH_MIN_AGE_S_ENV: str = "VARIBOT_FUNDING_PAIRS_REFRESH_LISTINGTABLE_MIN_AGE_S"
+_FP_REFRESH_DEFAULT_ON: bool = True
+_FP_REFRESH_DEFAULT_MIN_AGE_S: float = 300.0  # refresh if listingtabledata.json older than 5 minutes
+
 # User setting: which strategy to run when flat.
 # You can put a module name (preferred) or a filename:
 #   "revert_median" or "revert_median.py"
@@ -602,6 +608,40 @@ def run_listingtable_or_use_cache(*, timeout_s: float = 120.0) -> str:
     return json_path
 
 
+def _should_refresh_listingtable_for_funding_pairs_rotate() -> Tuple[bool, float]:
+    """
+    Returns (enabled, min_age_s).
+      - enabled defaults ON (can be disabled via env)
+      - min_age_s defaults to a small value to avoid stale funding/volume when rotating pairs
+    """
+    v = (os.getenv(_FP_REFRESH_LISTINGTABLE_ENV, "") or "").strip().lower()
+    if v in ("0", "false", "no", "n", "off"):
+        enabled = False
+    elif v in ("1", "true", "yes", "y", "on"):
+        enabled = True
+    else:
+        enabled = bool(_FP_REFRESH_DEFAULT_ON)
+
+    min_age_s = float(_FP_REFRESH_DEFAULT_MIN_AGE_S)
+    try:
+        s = (os.getenv(_FP_REFRESH_MIN_AGE_S_ENV, "") or "").strip()
+        if s:
+            min_age_s = max(0.0, float(s))
+    except Exception:
+        pass
+
+    return enabled, float(min_age_s)
+
+
+def _listingtable_age_s(path: str) -> Optional[float]:
+    try:
+        if not os.path.isfile(path):
+            return None
+        return max(0.0, time.time() - float(os.path.getmtime(path)))
+    except Exception:
+        return None
+
+
 def run_marketstate(*, timeout_s: float = 90.0) -> None:
     script = os.path.join(_LISTINGS_DIR, "marketstate.py")
     if not os.path.isfile(script):
@@ -825,6 +865,20 @@ def _funding_pairs_manager(
     max_slip = _resolve_max_slippage()
     listing_json = os.path.join(_LISTINGS_DIR, "listingtabledata.json")
     top_n = _top_n_for_strategy(strat_key)
+
+    # If we're rotating pairs, refresh listingtable so replacement selection isn't based on stale vol/funding.
+    refresh_on, min_age_s = _should_refresh_listingtable_for_funding_pairs_rotate()
+    if refresh_on:
+        age = _listingtable_age_s(listing_json)
+        if age is None or float(age) >= float(min_age_s):
+            age_s = "missing" if age is None else f"{age:.0f}s"
+            _log(
+                f"funding_pairs manager: refreshing listingtable before replacements (age={age_s}, min_age={min_age_s:.0f}s)..."
+            )
+            try:
+                listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
+            except Exception as e:
+                _log(f"funding_pairs manager: WARNING listingtable refresh failed; using existing cache ({type(e).__name__}: {e})")
 
     for p in pairs_to_close:
         if not isinstance(p, dict):
