@@ -15,7 +15,7 @@ from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 DEFAULT_CLOSEALL_SLIPPAGE_PERCENT: float = 0.0005
 CLOSEALL_SLIPPAGE_PERCENT_ENV: str = "CLOSEALL_SLIPPAGE_PERCENT"
 # After each failed flatten (GET /api/positions still open), add this much to slippage (0.0005 = +0.05%).
-SLIPPAGE_RETRY_INCREMENT: float = 0.0005
+SLIPPAGE_RETRY_INCREMENT: float = 0.0003
 MAX_CLOSEALL_LIVE_ATTEMPTS: int = 6
 # GET /api/positions right after close_all often lags the venue; wait then poll until stable (or best-of-poll).
 POST_CLOSE_INITIAL_DELAY_S: float = 2.0
@@ -107,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             f"Slippage as fraction of notional (default: {CLOSEALL_SLIPPAGE_PERCENT_ENV} env or "
-            f"{DEFAULT_CLOSEALL_SLIPPAGE_PERCENT} = 0.05%%). Example: 0.001 == 0.1%%."
+            f"{DEFAULT_CLOSEALL_SLIPPAGE_PERCENT} = 0.03%%). Example: 0.001 == 0.1%%."
         ),
     )
     p.add_argument(
