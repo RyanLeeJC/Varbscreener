@@ -47,7 +47,7 @@ _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json"
 CHECK_INTERVAL_MIN: int = 15
 
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
-DEFAULT_TICKER_QTY: int = 20 # default ticker qty (total universe size before split; becomes half long / half short)
+DEFAULT_TICKER_QTY: int = 40 # default ticker qty (total universe size before split; becomes half long / half short)
 _COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
 
 # funding_pairs manager: refresh listingtable before opening replacement pairs
