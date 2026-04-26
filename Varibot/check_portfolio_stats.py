@@ -13,7 +13,7 @@ from variationalbot.domain import parse_portfolio_snapshot
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 
 # Default TP threshold (% of denominator; see _apply_tp_check).
-TP_CHECK_THRESHOLD_PCT_DEFAULT: float = 5.0
+TP_CHECK_THRESHOLD_PCT_DEFAULT: float = 0.3
 
 
 def _shorten_wallet(addr: str, *, head: int = 5, tail: int = 4) -> str:
