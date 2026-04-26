@@ -12,6 +12,9 @@ from variationalbot.config import load_config
 from variationalbot.domain import parse_portfolio_snapshot
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 
+# Default TP threshold (% of denominator; see _apply_tp_check).
+TP_CHECK_THRESHOLD_PCT_DEFAULT: float = 5.0
+
 
 def _shorten_wallet(addr: str, *, head: int = 5, tail: int = 4) -> str:
     a = (addr or "").strip()
@@ -43,23 +46,31 @@ def _build_out_dict(
 
 def _apply_tp_check(out: Dict[str, Any], *, threshold_pct: float) -> None:
     """
-    Take-profit readiness: Yes when uPNL > 0 and (uPNL / portfolio_value_usd) * 100 >= threshold_pct.
+    Take-profit readiness: Yes when uPNL > 0 and (uPNL / denom) * 100 >= threshold_pct.
+
+    Denominator selection:
+    - If `positions_notional_usd` is present and > 0, use that (sum of open positions notional).
+    - Else fall back to `portfolio_value_usd` (account/equity snapshot).
     """
-    pv = out.get("portfolio_value_usd")
+    denom = out.get("positions_notional_usd")
+    if denom is None:
+        denom = out.get("portfolio_value_usd")
     upnl = out.get("unrealized_pnl_usd")
     ratio_pct: Optional[float] = None
     verdict = "No"
     try:
-        pv_f = float(pv) if pv is not None else 0.0
-        if pv_f > 0 and upnl is not None:
+        denom_f = float(denom) if denom is not None else 0.0
+        if denom_f > 0 and upnl is not None:
             upnl_f = float(upnl)
-            ratio_pct = (upnl_f / pv_f) * 100.0
+            ratio_pct = (upnl_f / denom_f) * 100.0
             if upnl_f > 0 and ratio_pct >= float(threshold_pct):
                 verdict = "Yes"
     except (TypeError, ValueError):
         pass
     out["tp_check_threshold_pct"] = float(threshold_pct)
+    # Keep backward-compatible key name (now "vs denom", which may be positions notional).
     out["tp_check_u_pnl_vs_portfolio_pct"] = ratio_pct
+    out["tp_check_u_pnl_vs_denom_pct"] = ratio_pct
     out["tp_check"] = verdict
 
 
@@ -144,8 +155,11 @@ def main() -> int:
     ap.add_argument(
         "--tp-check-pct",
         type=float,
-        default=5.0,
-        help="TP Check: Yes when uPNL>0 and uPNL/portfolio >= this %% (default 5).",
+        default=TP_CHECK_THRESHOLD_PCT_DEFAULT,
+        help=(
+            "TP Check: Yes when uPNL>0 and uPNL/denominator >= this % "
+            f"(default {TP_CHECK_THRESHOLD_PCT_DEFAULT:g})."
+        ),
     )
     ap.add_argument(
         "--tp-close-on-yes",

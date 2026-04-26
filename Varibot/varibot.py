@@ -41,18 +41,19 @@ _LISTINGS_DIR = os.path.join(_REPO_ROOT, "Vari Listings")
 _DEFAULT_MARKETSTATE_JSON = os.path.join(_LISTINGS_DIR, "marketstate.json")
 _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json")
 
+# Check interval (minutes) between cycles/sessions when --period-min is not provided.
+CHECK_INTERVAL_MIN: int = 15
+
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
-DEFAULT_TICKER_QTY: int = 10 # default ticker qty (total universe size before split; becomes half long / half short)
-DEFAULT_FUNDING_PAIRS_TOP_N: int = 60 # funding_pairs uses top-N-by-volume universe; keep separate from DEFAULT_TICKER_QTY
-_DEFAULT_CYCLE_PERIOD_MIN: int = 15 # how often to run a new cycle (wall-clock aligned by default)
-max_time_position: int = 240 # close-all time-in-position threshold (minutes)
-_DEFAULT_TP_PCT: float = 5.0 # take profit percentage
+DEFAULT_TICKER_QTY: int = 20 # default ticker qty (total universe size before split; becomes half long / half short)
 _COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
 
 # User setting: which strategy to run when flat.
 # You can put a module name (preferred) or a filename:
 #   "revert_median" or "revert_median.py"
-Strategy: str = os.getenv("VARIBOT_STRATEGY", "funding_pairs.py").strip() or "funding_pairs.py"
+Strategy: str = os.getenv("VARIBOT_STRATEGY", "revert_near_median.py").strip()
+if not Strategy:
+    Strategy = "revert_near_median.py"
 
 # Rolling log (wrapper mode): varibot.py can self-wrap to prefix lines and keep a rolling logfile,
 # so you can run just `python3 varibot.py --live` and still get the run_varibot_logged behavior.
@@ -300,6 +301,32 @@ def _position_qty(p: Dict[str, Any]) -> Optional[float]:
         except (TypeError, ValueError):
             pass
     return None
+
+
+def _positions_notional_usd(positions_raw: Any) -> float:
+    """
+    Sum absolute USD notional across open positions (best-effort across schema variants).
+    Used as TP-check denominator when present.
+    """
+    total = 0.0
+    for p in _positions_list(positions_raw):
+        # Common shapes: value / position_value / notional / usd_value, sometimes nested under position_info.
+        v = None
+        for k in ("value", "position_value", "notional", "notional_value", "usd_value"):
+            if k in p and p.get(k) is not None:
+                v = p.get(k)
+                break
+        if v is None:
+            pi = p.get("position_info")
+            if isinstance(pi, dict):
+                v = pi.get("value") if pi.get("value") is not None else pi.get("position_value")
+        try:
+            if v is None:
+                continue
+            total += abs(float(v))
+        except Exception:
+            continue
+    return float(total)
 
 
 def has_open_positions(positions_raw: Any) -> bool:
@@ -643,7 +670,7 @@ def _top_n_for_strategy(strategy_key: str) -> int:
                 return max(1, int(float(v)))
             except Exception:
                 pass
-        return int(DEFAULT_FUNDING_PAIRS_TOP_N)
+        return 60
     return int(DEFAULT_TICKER_QTY)
 
 
@@ -897,15 +924,18 @@ def one_cycle(
     raw_pf = ep.get_portfolio(compute_margin=True)
     snap = parse_portfolio_snapshot(raw_pf)
     out = _build_out_dict(cfg=cfg, snap=snap)
+
+    # TP check uses positions notional (sum abs position values) as denominator.
+    raw_pos = ep.get_positions()
+    out["positions_notional_usd"] = _positions_notional_usd(raw_pos)
     _apply_tp_check(out, threshold_pct=float(args.tp_pct))
 
     _log(
         f"Portfolio uPNL={out.get('unrealized_pnl_usd')} "
-        f"acct={out.get('portfolio_value_usd')} TP={out.get('tp_check')} "
+        f"pos_notional={out.get('positions_notional_usd')} TP={out.get('tp_check')} "
         f"({out.get('tp_check_u_pnl_vs_portfolio_pct')})"
     )
 
-    raw_pos = ep.get_positions()
     has_pos = has_open_positions(raw_pos)
 
     if not has_pos:
@@ -973,16 +1003,10 @@ def one_cycle(
             _log(f"{args.multi_script} exited {rc}")
         else:
             _log(f"step: {args.multi_script} finished OK")
-            if args.live:
-                _log_post_multimarket_positions_tally(ep=ep, longs=longs, shorts=shorts)
         return False
 
-    # --- have positions: TP exit, then time-in-position ---
+    # --- have positions: TP exit (time-in-position removed) ---
     _funding_pairs_manager(ep=ep, args=args, positions_raw=raw_pos)
-
-    if str(args.time_exit_source) in ("auto", "orders", "latch"):
-        if _read_position_latch_ts() is None:
-            _write_position_latch(time.time())
 
     if out.get("tp_check") == "Yes":
         if args.live:
@@ -992,57 +1016,6 @@ def one_cycle(
         else:
             _log("TP Check Yes — [dry-run] would run closeallpositions.py --live")
         return False
-
-    hold_limit_s = float(max_time_position) * 60.0 * max(1, int(args.time_exit_periods))
-    ms_path = str(args.marketstate_json or _DEFAULT_MARKETSTATE_JSON)
-    market_ts = read_marketstate_position_epoch_ts(ms_path)
-    order_ts = last_non_reduce_order_ts(ep.get_orders_v2())
-    latch_ts = _read_position_latch_ts()
-    if str(args.time_exit_source) == "marketstate":
-        ref_ts = market_ts
-        src = "marketstate"
-    elif str(args.time_exit_source) == "latch":
-        ref_ts = latch_ts
-        src = "latch"
-    elif str(args.time_exit_source) == "orders":
-        ref_ts = order_ts
-        src = "orders"
-    else:
-        if market_ts is not None:
-            ref_ts, src = market_ts, "marketstate"
-        elif order_ts is not None:
-            ref_ts, src = order_ts, "orders"
-        else:
-            ref_ts, src = latch_ts, "latch"
-
-    if ref_ts is None:
-        _log(
-            "Time-in-position: no reference time "
-            f"(source={args.time_exit_source}; marketstate={ms_path}); skip this exit."
-        )
-        return False
-
-    age = time.time() - ref_ts
-    age_fmt = _format_duration_s(age)
-    limit_fmt = _format_duration_s(hold_limit_s)
-    if age >= hold_limit_s:
-        if args.live:
-            _log(
-                f"Time-in-position exceeded ({src} age={age_fmt} >= limit {limit_fmt}) → close all"
-            )
-            rc = run_closeallpositions(live=True)
-            if rc != 0:
-                _log(f"closeallpositions exited {rc}")
-                return False
-            return True
-        else:
-            _log(
-                f"Time-in-position would trigger ({src} age={age_fmt} >= limit {limit_fmt}) "
-                f"[dry-run] closeall"
-            )
-            return False
-    else:
-        _log(f"Holding: time-in-position {src} age={age_fmt} / limit={limit_fmt}")
     return False
 
 
@@ -1056,20 +1029,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--period-min",
         type=int,
-        default=_DEFAULT_CYCLE_PERIOD_MIN,
-        help=f"Wall-clock cycle interval minutes (default {_DEFAULT_CYCLE_PERIOD_MIN}).",
+        default=CHECK_INTERVAL_MIN,
+        help=f"Wall-clock cycle interval minutes (default {CHECK_INTERVAL_MIN}).",
     )
     p.add_argument(
         "--tp-pct",
         type=float,
-        default=_DEFAULT_TP_PCT,
-        help=f"TP Check threshold %% of portfolio (default {_DEFAULT_TP_PCT:g}).",
+        default=5.0,
+        help="TP Check threshold % of portfolio (default 5).",
     )
     p.add_argument(
         "--time-exit-periods",
         type=int,
         default=1,
-        help=f"Close all if time-in-position exceeds max_time_position × this many periods (default 1).",
+        help="(deprecated) Previously used for time-in-position close-all; no longer used.",
     )
     p.add_argument(
         "--time-exit-source",
@@ -1135,6 +1108,84 @@ def _child_main() -> int:
         return 2
     run_auth_or_exit()
     cfg, ep = build_endpoints()
+
+    # Session mode for revert_near_median:
+    # - Enter immediately (strategy → multimarket if flat)
+    # - While holding, run TP/PnL check every CHECK_INTERVAL_MIN minutes
+    # - Close all at the next hourly wall-clock boundary (:00)
+    # - Sleep 15 seconds, then restart (enter again)
+    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
+    if _strategy_key_normalized(strat_key) == "revert_near_median":
+        session_n = 0
+        while True:
+            session_n += 1
+            _log(
+                f"=== session {session_n} (strategy=revert_near_median, "
+                f"tp_check_interval_min={int(CHECK_INTERVAL_MIN)}, live={bool(args.live)}) ==="
+            )
+            _log("session: entering now (ignoring schedule)...")
+            try:
+                one_cycle(ep=ep, cfg=cfg, args=args)
+            except Exception as e:
+                _log(f"session enter error: {type(e).__name__}: {e}")
+                return 1
+
+            # Hold loop: TP check cadence while waiting for hourly close.
+            close_delay = seconds_until_next_wall_interval(period_minutes=60)
+            close_at = time.time() + float(close_delay)
+            _log(
+                f"session: next hourly close in {_format_duration_s(close_delay)} "
+                f"at {_format_wake_at_sgt(close_delay)} SGT"
+            )
+
+            while True:
+                remaining = float(close_at - time.time())
+                if remaining <= 0:
+                    break
+
+                # If positions are already flat (e.g. TP close fired), restart quickly.
+                try:
+                    if not has_open_positions(ep.get_positions()):
+                        _log("session: positions flat before hourly close → restart in 15s")
+                        time.sleep(_TIME_IN_POSITION_POST_CLOSE_SLEEP_S)
+                        break
+                except Exception:
+                    pass
+
+                step_s = float(int(CHECK_INTERVAL_MIN) * 60)
+                sleep_s = min(step_s, remaining)
+                _log(f"session: next TP/PnL check in {_format_duration_s(sleep_s)}")
+                time.sleep(max(1.0, sleep_s))
+
+                # Run one_cycle while holding (it will only do TP check / management when positions exist).
+                try:
+                    one_cycle(ep=ep, cfg=cfg, args=args)
+                except Exception as e:
+                    _log(f"session check error: {type(e).__name__}: {e}")
+                    if not bool(args.live):
+                        return 1
+
+            # If we broke out early due to TP flatten, restart next session.
+            try:
+                if not has_open_positions(ep.get_positions()):
+                    if not bool(args.live):
+                        return 0
+                    continue
+            except Exception:
+                pass
+
+            _log(f"session: closing all at hourly boundary ({'LIVE' if args.live else 'dry-run'})...")
+            try:
+                rc = run_closeallpositions(live=bool(args.live))
+                if rc != 0:
+                    _log(f"closeallpositions exited {rc}")
+            except Exception as e:
+                _log(f"session close error: {type(e).__name__}: {e}")
+                return 1
+
+            if not bool(args.live):
+                return 0
+            time.sleep(_TIME_IN_POSITION_POST_CLOSE_SLEEP_S)
 
     cycle_n = 0
     while True:
