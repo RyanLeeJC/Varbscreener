@@ -1252,7 +1252,7 @@ def _child_main() -> int:
                 return 1
 
             # Hold loop: TP check cadence while waiting for hourly close.
-            close_delay = seconds_until_next_wall_interval(period_minutes=60)
+            close_delay = seconds_until_next_wall_interval(period_minutes=120)
             close_at = time.time() + float(close_delay)
             _log(
                 f"session: next hourly close in {_format_duration_s(close_delay)} "
