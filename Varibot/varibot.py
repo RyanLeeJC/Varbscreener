@@ -46,6 +46,11 @@ _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json"
 # Check interval (minutes) between cycles/sessions when --period-min is not provided.
 CHECK_INTERVAL_MIN: int = 15
 
+# Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
+# then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).
+STRATEGY_SESSION_CLOSEALL_KEYS: frozenset[str] = frozenset({"revert_near_median", "near_median"})
+STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN: int = 120
+
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
 DEFAULT_TICKER_QTY: int = 40 # default ticker qty (total universe size before split; becomes half long / half short)
 _COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
@@ -1230,19 +1235,22 @@ def _child_main() -> int:
     run_auth_or_exit()
     cfg, ep = build_endpoints()
 
-    # Session mode for revert_near_median:
+    # Session mode (strategies in STRATEGY_SESSION_CLOSEALL_KEYS):
     # - Enter immediately (strategy → multimarket if flat)
     # - While holding, run TP/PnL check every CHECK_INTERVAL_MIN minutes
-    # - Close all at the next hourly wall-clock boundary (:00)
+    # - Close all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN
     # - Sleep 15 seconds, then restart (enter again)
     strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
-    if _strategy_key_normalized(strat_key) == "revert_near_median":
+    strat_norm = _strategy_key_normalized(strat_key)
+    if strat_norm in STRATEGY_SESSION_CLOSEALL_KEYS:
         session_n = 0
         while True:
             session_n += 1
             _log(
-                f"=== session {session_n} (strategy=revert_near_median, "
-                f"tp_check_interval_min={int(CHECK_INTERVAL_MIN)}, live={bool(args.live)}) ==="
+                f"=== session {session_n} (strategy={strat_norm}, "
+                f"tp_check_interval_min={int(CHECK_INTERVAL_MIN)}, "
+                f"closeall_wall_interval_min={int(STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN)}, "
+                f"live={bool(args.live)}) ==="
             )
             _log("session: entering now (ignoring schedule)...")
             try:
@@ -1251,12 +1259,14 @@ def _child_main() -> int:
                 _log(f"session enter error: {type(e).__name__}: {e}")
                 return 1
 
-            # Hold loop: TP check cadence while waiting for hourly close.
-            close_delay = seconds_until_next_wall_interval(period_minutes=120)
+            # Hold loop: TP check cadence while waiting for wall-clock close-all.
+            close_delay = seconds_until_next_wall_interval(
+                period_minutes=int(STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN)
+            )
             close_at = time.time() + float(close_delay)
             _log(
-                f"session: next hourly close in {_format_duration_s(close_delay)} "
-                f"at {_format_wake_at_sgt(close_delay)} SGT"
+                f"session: next close-all (wall {int(STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN)}m) in "
+                f"{_format_duration_s(close_delay)} at {_format_wake_at_sgt(close_delay)} SGT"
             )
 
             while True:
@@ -1267,7 +1277,7 @@ def _child_main() -> int:
                 # If positions are already flat (e.g. TP close fired), restart quickly.
                 try:
                     if not has_open_positions(ep.get_positions()):
-                        _log("session: positions flat before hourly close → restart in 15s")
+                        _log("session: positions flat before scheduled close-all → restart in 15s")
                         time.sleep(_TIME_IN_POSITION_POST_CLOSE_SLEEP_S)
                         break
                 except Exception:
@@ -1295,7 +1305,10 @@ def _child_main() -> int:
             except Exception:
                 pass
 
-            _log(f"session: closing all at hourly boundary ({'LIVE' if args.live else 'dry-run'})...")
+            _log(
+                f"session: closing all at {int(STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN)}m wall boundary "
+                f"({'LIVE' if args.live else 'dry-run'})..."
+            )
             try:
                 rc = run_closeallpositions(live=bool(args.live))
                 if rc != 0:
