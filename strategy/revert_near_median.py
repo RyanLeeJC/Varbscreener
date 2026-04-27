@@ -34,10 +34,10 @@ DEFAULT_RANK_BY: RankBy = "market_cap"
 # - "40"    → take Top 40 by the rank metric
 # - "21-40" → take ranks 21..40 by the rank metric (inclusive)
 # Note: the final count must be even (for 50/50 long/short split).
-DEFAULT_TOP_SPEC: str = "20"
+DEFAULT_TOP_SPEC: str = "40"
 
 # Number of tickers to trade (total, before 50/50 split). Must be even.
-DEFAULT_MAX_TICKER_ENTRIES: int = 10
+DEFAULT_MAX_TICKER_ENTRIES: int = 20
 
 # Default exclude list (unioned with `TICKER_BLACKLIST`).
 DEFAULT_EXCLUDE_CSV: str = "BTC,ETH"
@@ -74,6 +74,9 @@ TICKER_BLACKLIST: frozenset[str] = frozenset(
         "KITE",
         "M",
         "JST",
+        "BNB",
+        "CRO",
+        "LTC",
     }
 )
 
