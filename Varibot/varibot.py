@@ -1,4 +1,4 @@
-from __future__ import annotations
+=from __future__ import annotations
 
 """
 Varibot orchestrator — implements the VariBotFlowchart workflow:
@@ -49,7 +49,7 @@ CHECK_INTERVAL_MIN: int = 15
 # Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
 # then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).
 STRATEGY_SESSION_CLOSEALL_KEYS: frozenset[str] = frozenset({"revert_near_median", "near_median"})
-STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN: int = 120
+STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN: int = 240
 
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
 DEFAULT_TICKER_QTY: int = 40 # default ticker qty (total universe size before split; becomes half long / half short)
@@ -64,7 +64,7 @@ _FP_REFRESH_DEFAULT_MIN_AGE_S: float = 300.0  # refresh if listingtabledata.json
 # User setting: which strategy to run when flat.
 # You can put a module name (preferred) or a filename:
 #   "revert_median" or "revert_median.py"
-Strategy: str = os.getenv("VARIBOT_STRATEGY", "revert_near_median.py").strip()
+Strategy: str = os.getenv("VARIBOT_STRATEGY", "near_median.py").strip()
 if not Strategy:
     Strategy = "revert_near_median.py"
 
