@@ -49,7 +49,7 @@ CHECK_INTERVAL_MIN: int = 15
 # Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
 # then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).
 STRATEGY_SESSION_CLOSEALL_KEYS: frozenset[str] = frozenset({"revert_near_median", "near_median"})
-STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN: int = 240
+STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN: int = 360
 
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
 DEFAULT_TICKER_QTY: int = 40 # default ticker qty (total universe size before split; becomes half long / half short)
