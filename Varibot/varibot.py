@@ -1143,6 +1143,20 @@ def _near_median_pm_manager(
     if n_pairs <= 0:
         return
 
+    # After closes, re-check IM usage on a fresh portfolio snapshot: do not refill when already over cap.
+    try:
+        raw_pf_after = ep.get_portfolio(compute_margin=True)
+        snap_after = parse_portfolio_snapshot(raw_pf_after)
+        im_usage_after = getattr(snap_after, "im_usage", None)
+        if im_usage_after is not None and float(im_usage_after) * 100.0 >= float(DEFAULT_IM_TARGET_PCT):
+            _log(
+                f"PM(near_median): skip refill — post-close IM usage {float(im_usage_after)*100.0:.2f}% "
+                f">= DEFAULT_IM_TARGET_PCT {float(DEFAULT_IM_TARGET_PCT):g}%"
+            )
+            return
+    except Exception:
+        _log("PM(near_median): skip refill — could not parse post-close IM usage.")
+
     # Refresh listing cache (pro) and ensure marketstate exists (strategy runner requires it for non-funding_pairs).
     _log("PM(near_median): refreshing listingtable (pro) for replacements...")
     listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
