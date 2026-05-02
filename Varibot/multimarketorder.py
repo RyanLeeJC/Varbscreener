@@ -21,7 +21,7 @@ from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 from variationalbot.vari.endpoints import Instrument
 
 # Used when neither --usd nor --im-target-pct is passed (change here to retarget default sizing).
-DEFAULT_IM_TARGET_PCT: float = 100.0
+DEFAULT_IM_TARGET_PCT: float = 50.0
 # IM-target per-order notional is rounded up to this USD step (e.g. 241.04 -> 250).
 USD_NOTIONAL_ROUND_STEP: float = 10.0
 # Default max slippage when --max-slippage and MAX_SLIPPAGE env are unset (fraction of notional).
@@ -239,7 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--leverage",
         type=int,
-        default=20,
+        default=50,
         help="Leverage when using --set-leverage (default: 20).",
     )
     p.add_argument(
