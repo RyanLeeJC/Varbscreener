@@ -33,7 +33,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 
 # Imports assume sibling scripts + variationalbot live under this directory.
@@ -46,13 +46,23 @@ _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json"
 # Check interval (minutes) between cycles/sessions when --period-min is not provided.
 CHECK_INTERVAL_MIN: int = 15
 
+# --- User-tunable settings (surface here for quick edits) ---
+#
+# Portfolio Manager (PM) for strategy near_median:
+# - Each CHECK_INTERVAL_MIN, PM can close (long,short) pairs when combined uPnL% clears a threshold.
+# - Optionally refill closed slots by refreshing listingtable (pro) and opening replacements.
+PM_PAIR_TP_THRESHOLD_PCT_DEFAULT: float = 0.5
+PM_REFILL_DEFAULT_ON: bool = True
+
 # Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
 # then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).
-STRATEGY_SESSION_CLOSEALL_KEYS: frozenset[str] = frozenset({"revert_near_median", "near_median"})
+#
+# NOTE (this branch): `near_median` no longer uses wall-clock close-all; exits are driven by the portfolio manager.
+STRATEGY_SESSION_CLOSEALL_KEYS: frozenset[str] = frozenset({"revert_near_median"})
 STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN: int = 360
 
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
-DEFAULT_TICKER_QTY: int = 40 # default ticker qty (total universe size before split; becomes half long / half short)
+DEFAULT_TICKER_QTY: int = 60 # default ticker qty (total universe size before split; becomes half long / half short)
 _COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
 
 # funding_pairs manager: refresh listingtable before opening replacement pairs
@@ -107,9 +117,16 @@ from variationalbot.config import load_config  # noqa: E402
 from variationalbot.domain import parse_portfolio_snapshot  # noqa: E402
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints  # noqa: E402
 
-from multimarketorder import DEFAULT_IM_TARGET_PCT  # noqa: E402
+from multimarketorder import DEFAULT_IM_TARGET_PCT, IM_TARGET_MM_NOTIONAL_SCALE  # noqa: E402
 from strategy import strategies as strategies_mod  # noqa: E402
 from strategy import funding_pairs as funding_pairs_mod  # noqa: E402
+from strategy.near_median import DEFAULT_MAX_TICKER_ENTRIES as NEAR_MEDIAN_MAX_TICKER_ENTRIES  # noqa: E402
+from portfolio_manager_pairs import (
+    PairCandidate,
+    filter_replacements,
+    positions_to_rows,
+    select_pairs_greedy_grid,
+)  # noqa: E402
 
 
 def _strategy_key_normalized(strategy: str) -> str:
@@ -843,6 +860,64 @@ def _extract_quote_id(resp: Any) -> Optional[str]:
     return None
 
 
+def _close_reduce_only_with_slippage_steps(
+    *,
+    ep: VariEndpoints,
+    sym: str,
+    qty_abs: float,
+    close_side: str,
+    max_slip: float,
+    max_attempts: int = 7,
+) -> None:
+    from variationalbot.vari.endpoints import Instrument  # local import
+
+    sym_u = str(sym).strip().upper()
+    instrument = Instrument(instrument_type="perpetual_future", underlying=sym_u)
+
+    last_err: Optional[Exception] = None
+    for attempt in range(1, int(max_attempts) + 1):
+        slip = float(max_slip) + float(attempt - 1) * 0.0005
+        try:
+            qresp = ep.quote_indicative_simple(instrument=instrument, qty=float(qty_abs))
+            if isinstance(qresp, dict):
+                qresp["_close_side_override"] = str(close_side)
+                qresp["_attempt"] = attempt
+                qresp["_max_slippage"] = float(slip)
+            quote_id = _extract_quote_id(qresp)
+            if not quote_id:
+                raise ValueError(f"indicative quote missing quote_id for {sym_u} qty={qty_abs}")
+            ep.place_order_market(
+                quote_id=str(quote_id),
+                side=str(close_side),
+                max_slippage=float(slip),
+                is_reduce_only=True,
+            )
+
+            # confirm close by polling positions a few times
+            time.sleep(1.0)
+            ok = False
+            for _ in range(8):
+                cur_q = _current_qty_for_sym(ep, sym_u)
+                if cur_q is not None and abs(float(cur_q)) <= 1e-12:
+                    ok = True
+                    break
+                time.sleep(1.0)
+            if not ok:
+                _log(f"WARNING: close submitted but {sym_u} still open after polling.")
+            return
+        except Exception as e:
+            last_err = e
+            if not _looks_like_slippage_reject(str(e)):
+                raise
+            if attempt < int(max_attempts):
+                _log(
+                    f"close {sym_u} rejected for slippage; retry {attempt+1}/{int(max_attempts)} with higher max_slippage..."
+                )
+                time.sleep(0.25)
+    if last_err is not None:
+        raise last_err
+
+
 def _funding_pairs_manager(
     *,
     ep: VariEndpoints,
@@ -933,54 +1008,14 @@ def _funding_pairs_manager(
             close_side = "sell" if float(q) > 0 else "buy"
             qty_abs = abs(float(q))
             _log(f"funding_pairs manager: closing {sym} qty={qty_abs:g} side={close_side} reduce-only...")
-            from variationalbot.vari.endpoints import Instrument  # local import
-
-            instrument = Instrument(instrument_type="perpetual_future", underlying=sym)
-
-            # Retry on slippage rejection (stepped), and verify via GET /api/positions that qty moved toward flat.
-            last_err: Optional[Exception] = None
-            for attempt in range(1, 7):
-                slip = float(max_slip) + float(attempt - 1) * 0.0005
-                try:
-                    qresp = ep.quote_indicative_simple(instrument=instrument, qty=qty_abs)
-                    if isinstance(qresp, dict):
-                        qresp["_close_side_override"] = close_side
-                        qresp["_attempt"] = attempt
-                        qresp["_max_slippage"] = float(slip)
-                    quote_id = _extract_quote_id(qresp)
-                    if not quote_id:
-                        raise ValueError(f"indicative quote missing quote_id for {sym} qty={qty_abs}")
-                    ep.place_order_market(
-                        quote_id=str(quote_id),
-                        side=close_side,
-                        max_slippage=float(slip),
-                        is_reduce_only=True,
-                    )
-
-                    # confirm close by polling positions a few times
-                    time.sleep(1.0)
-                    ok = False
-                    for _ in range(8):
-                        cur_q = _current_qty_for_sym(ep, sym)
-                        if cur_q is not None and abs(float(cur_q)) <= 1e-12:
-                            ok = True
-                            break
-                        time.sleep(1.0)
-                    if not ok:
-                        _log(f"funding_pairs manager: WARNING close submitted but {sym} still open after polling.")
-                    break
-                except Exception as e:
-                    last_err = e
-                    if not _looks_like_slippage_reject(str(e)):
-                        raise
-                    if attempt < 7:
-                        _log(
-                            f"funding_pairs manager: close {sym} rejected for slippage; retry {attempt+1}/7 with higher max_slippage..."
-                        )
-                        time.sleep(0.25)
-            else:
-                if last_err is not None:
-                    raise last_err
+            _close_reduce_only_with_slippage_steps(
+                ep=ep,
+                sym=sym,
+                qty_abs=float(qty_abs),
+                close_side=str(close_side),
+                max_slip=float(max_slip),
+                max_attempts=7,
+            )
 
         # Open a replacement pair for that slot (best-effort).
         try:
@@ -1030,6 +1065,262 @@ def _funding_pairs_manager(
                     _log(f"funding_pairs manager: WARNING could not update state slot {slot_i}: {e}")
         except Exception as e:
             _log(f"funding_pairs manager: replacement open skipped (error: {type(e).__name__}: {e})")
+
+
+def _near_median_pm_manager(
+    *,
+    ep: VariEndpoints,
+    cfg: Any,
+    args: argparse.Namespace,
+    positions_raw: Any,
+) -> None:
+    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
+    strat_norm = _strategy_key_normalized(strat_key)
+    if strat_norm != "near_median":
+        return
+
+    rows = positions_to_rows(positions_raw)
+    if not rows:
+        return
+
+    threshold_pct = float(getattr(args, "pm_pair_tp_pct", PM_PAIR_TP_THRESHOLD_PCT_DEFAULT))
+    pairs = select_pairs_greedy_grid(rows=rows, threshold_pct=threshold_pct)
+    if not pairs:
+        _log(f"PM(near_median): no eligible close pairs (threshold={threshold_pct:g}%).")
+        return
+
+    _log(f"PM(near_median): {len(pairs)} eligible pair(s) to close (threshold={threshold_pct:g}%).")
+    for p in pairs:
+        _log(
+            f"  close_if_live: LONG {p.long_ticker} + SHORT {p.short_ticker} "
+            f"combined_uPNL%={p.combined_upnl_pct:.3f}% "
+            f"(${p.combined_upnl_usd:,.2f} / ${p.combined_value_usd:,.2f})"
+        )
+
+    if not bool(args.live):
+        _log("PM(near_median): dry-run (not live) — would close pairs and (optionally) refill.")
+        return
+
+    # Build qty lookup once.
+    by_sym: Dict[str, float] = {}
+    for pos in _positions_list(positions_raw):
+        sym = _instrument_label(pos).strip().upper()
+        q = _position_qty(pos)
+        if sym and q is not None and abs(float(q)) > 1e-12:
+            by_sym[sym] = float(q)
+
+    max_slip = _resolve_max_slippage()
+    closed_syms: Set[str] = set()
+
+    for p in pairs:
+        for sym in (p.long_ticker, p.short_ticker):
+            q = by_sym.get(sym)
+            if q is None or abs(float(q)) <= 1e-12:
+                _log(f"PM(near_median): skip close {sym} (no open qty found).")
+                continue
+            close_side = "sell" if float(q) > 0 else "buy"
+            qty_abs = abs(float(q))
+            _log(f"PM(near_median): closing {sym} qty={qty_abs:g} side={close_side} reduce-only...")
+            _close_reduce_only_with_slippage_steps(
+                ep=ep,
+                sym=sym,
+                qty_abs=float(qty_abs),
+                close_side=str(close_side),
+                max_slip=float(max_slip),
+                max_attempts=7,
+            )
+            closed_syms.add(str(sym).strip().upper())
+
+    # Refill: refresh listingtable_pro then open replacements (same strategy logic), excluding closed + open.
+    refill_on = bool(getattr(args, "pm_refill", False)) and not bool(getattr(args, "pm_no_refill", False))
+    if not refill_on:
+        # Default behavior for this branch: refill unless explicitly disabled.
+        refill_on = bool(PM_REFILL_DEFAULT_ON) and not bool(getattr(args, "pm_no_refill", False))
+    if not refill_on:
+        return
+
+    n_pairs = len(pairs)
+    if n_pairs <= 0:
+        return
+
+    # Refresh listing cache (pro) and ensure marketstate exists (strategy runner requires it for non-funding_pairs).
+    _log("PM(near_median): refreshing listingtable (pro) for replacements...")
+    listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
+    ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
+    if not os.path.isfile(ms_path):
+        _log("PM(near_median): marketstate.json missing; running marketstate.py...")
+        run_marketstate(timeout_s=float(getattr(args, "marketstate_timeout_s", 90.0)))
+
+    # Disallow: closed this cycle + currently open positions (post-close).
+    open_after = ep.get_positions()
+    open_syms: Set[str] = set()
+    for pos in _positions_list(open_after):
+        sym = _instrument_label(pos).strip().upper()
+        q = _position_qty(pos)
+        if sym and q is not None and abs(float(q)) > 1e-12:
+            open_syms.add(sym)
+    disallow = set(open_syms) | set(closed_syms)
+
+    top_n = _top_n_for_strategy(strat_key)
+    longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
+    need_each_side = int(n_pairs)
+    repl_l, repl_s = filter_replacements(
+        longs=longs,
+        shorts=shorts,
+        disallow=disallow,
+        need_each_side=need_each_side,
+    )
+    if len(repl_l) < need_each_side or len(repl_s) < need_each_side:
+        _log(
+            f"PM(near_median): WARNING insufficient replacements after disallow filter "
+            f"(need {need_each_side}L/{need_each_side}S, got {len(repl_l)}L/{len(repl_s)}S). Skip refill."
+        )
+        return
+
+    _log(
+        f"PM(near_median): opening replacements (strategy={meta.get('strategy')}) "
+        f"longs={len(repl_l)} shorts={len(repl_s)}..."
+    )
+    if args.usd is not None:
+        run_multimarket(
+            multi_script=str(args.multi_script),
+            longs=repl_l,
+            shorts=repl_s,
+            usd=float(args.usd),
+            live=True,
+        )
+    else:
+        pct = _resolve_im_target_pct_for_multimarket(
+            strategy_key=strat_key,
+            n_long=len(repl_l),
+            n_short=len(repl_s),
+            args_im_target_pct=float(args.im_target_pct) if args.im_target_pct is not None else None,
+        )
+        run_multimarket(
+            multi_script=str(args.multi_script),
+            longs=repl_l,
+            shorts=repl_s,
+            im_target_pct=pct,
+            live=True,
+        )
+
+
+def _near_median_topup_if_needed(
+    *,
+    ep: VariEndpoints,
+    args: argparse.Namespace,
+    snap: Any,
+    positions_raw: Any,
+) -> None:
+    """
+    Branch behavior: if already holding positions, optionally top up the book to the strategy target
+    (near_median.DEFAULT_MAX_TICKER_ENTRIES) by adding long/short pairs, but only when IM usage is
+    not already above the sizing default (multimarketorder.DEFAULT_IM_TARGET_PCT).
+
+    If IM usage is high, skip top-ups and proceed to PM close checks.
+    """
+    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
+    strat_norm = _strategy_key_normalized(strat_key)
+    if strat_norm != "near_median":
+        return
+
+    # Gate on IM usage: if we're already above the sizing default, don't add more risk.
+    try:
+        im_usage = getattr(snap, "im_usage", None)
+        if im_usage is not None and float(im_usage) * 100.0 >= float(DEFAULT_IM_TARGET_PCT):
+            _log(
+                f"PM(near_median): skip top-up — IM usage {float(im_usage)*100.0:.2f}% "
+                f">= DEFAULT_IM_TARGET_PCT {float(DEFAULT_IM_TARGET_PCT):g}%"
+            )
+            return
+    except Exception:
+        # If parsing fails, be conservative: don't top up.
+        _log("PM(near_median): skip top-up — could not parse IM usage.")
+        return
+
+    rows = positions_to_rows(positions_raw)
+    if not rows:
+        return
+
+    target_total = int(NEAR_MEDIAN_MAX_TICKER_ENTRIES)
+    if target_total <= 0:
+        return
+    cur_total = len(rows)
+    if cur_total >= target_total:
+        return
+
+    target_per_side = target_total // 2
+    cur_long = sum(1 for r in rows if r.side == "L")
+    cur_short = sum(1 for r in rows if r.side == "S")
+    need_long = max(0, int(target_per_side) - int(cur_long))
+    need_short = max(0, int(target_per_side) - int(cur_short))
+
+    # If still short on total due to oddities, allocate remaining to the smaller side.
+    remaining = max(0, int(target_total) - int(cur_total) - int(need_long) - int(need_short))
+    if remaining > 0:
+        if cur_long <= cur_short:
+            need_long += remaining
+        else:
+            need_short += remaining
+
+    # Only top up in pairs when possible (one long + one short).
+    n_pairs = min(int(need_long), int(need_short))
+    if n_pairs <= 0:
+        return
+    need_long = n_pairs
+    need_short = n_pairs
+
+    open_syms: Set[str] = {r.ticker.strip().upper() for r in rows if r.ticker}
+    _log(
+        f"PM(near_median): top-up plan — current={cur_total}/{target_total} "
+        f"(L={cur_long}, S={cur_short}); add {n_pairs} pair(s)."
+    )
+
+    if not bool(args.live):
+        _log("PM(near_median): dry-run (not live) — would top up missing pairs.")
+        return
+
+    listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
+    ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
+    if not os.path.isfile(ms_path):
+        run_marketstate(timeout_s=float(getattr(args, "marketstate_timeout_s", 90.0)))
+
+    top_n = _top_n_for_strategy(strat_key)
+    longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
+    add_l, add_s = filter_replacements(longs=longs, shorts=shorts, disallow=set(open_syms), need_each_side=int(n_pairs))
+    if len(add_l) < n_pairs or len(add_s) < n_pairs:
+        _log(
+            f"PM(near_median): top-up skipped — insufficient new tickers "
+            f"(need {n_pairs}L/{n_pairs}S, got {len(add_l)}L/{len(add_s)}S)."
+        )
+        return
+
+    _log(
+        f"PM(near_median): topping up with {n_pairs} pair(s) "
+        f"(strategy={meta.get('strategy')}) longs={add_l} shorts={add_s}"
+    )
+    if args.usd is not None:
+        run_multimarket(
+            multi_script=str(args.multi_script),
+            longs=add_l,
+            shorts=add_s,
+            usd=float(args.usd),
+            live=True,
+        )
+    else:
+        pct = _resolve_im_target_pct_for_multimarket(
+            strategy_key=strat_key,
+            n_long=len(add_l),
+            n_short=len(add_s),
+            args_im_target_pct=float(args.im_target_pct) if args.im_target_pct is not None else None,
+        )
+        run_multimarket(
+            multi_script=str(args.multi_script),
+            longs=add_l,
+            shorts=add_s,
+            im_target_pct=pct,
+            live=True,
+        )
 
 
 def one_cycle(
@@ -1131,10 +1422,13 @@ def one_cycle(
             _log(f"step: {args.multi_script} finished OK")
         return False
 
-    # --- have positions: funding_pairs per-slot manager, then portfolio TP ---
+    # --- have positions: optional top-up, then per-strategy managers, then optional portfolio TP close-all ---
+    _near_median_topup_if_needed(ep=ep, args=args, snap=snap, positions_raw=raw_pos)
     _funding_pairs_manager(ep=ep, args=args, positions_raw=raw_pos)
+    _near_median_pm_manager(ep=ep, cfg=cfg, args=args, positions_raw=raw_pos)
 
-    if out.get("tp_check") == "Yes":
+    # This branch: near_median exits are PM-driven; do not flatten the whole book on TP.
+    if _strategy_key_normalized(strat_key) != "near_median" and out.get("tp_check") == "Yes":
         if args.live:
             rc = run_closeallpositions(live=True)
             if rc != 0:
@@ -1163,6 +1457,25 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=5.0,
         help="TP Check threshold % of portfolio (default 5).",
+    )
+    p.add_argument(
+        "--pm-pair-tp-pct",
+        type=float,
+        default=PM_PAIR_TP_THRESHOLD_PCT_DEFAULT,
+        help=(
+            "Portfolio Manager: combined uPnL% threshold vs combined value for pair closes "
+            f"(default {PM_PAIR_TP_THRESHOLD_PCT_DEFAULT:g})."
+        ),
+    )
+    p.add_argument(
+        "--pm-refill",
+        action="store_true",
+        help="Portfolio Manager: after closing eligible pairs, refresh listingtable_pro and open replacements.",
+    )
+    p.add_argument(
+        "--pm-no-refill",
+        action="store_true",
+        help="Portfolio Manager: disable replacements refill (overrides --pm-refill).",
     )
     p.add_argument(
         "--time-exit-periods",
@@ -1198,7 +1511,8 @@ def parse_args() -> argparse.Namespace:
         dest="im_target_pct",
         metavar="PCT",
         help=(
-            "Multimarket IM%% sizing: per-order USD = (portfolio_value_usd × leverage × PCT/100) / n_orders. "
+            "Multimarket sizing: per-order USD = (portfolio_value_usd × leverage × PCT/100 × "
+            f"{IM_TARGET_MM_NOTIONAL_SCALE:g}) / n_orders (Omni MM≈IM/2 scale; see multimarketorder). "
             f"If --usd is omitted and this is omitted, defaults to {DEFAULT_IM_TARGET_PCT:g}%% "
             "(non-funding_pairs strategies). "
             "For strategy funding_pairs, this flag is ignored unless you use --usd; "

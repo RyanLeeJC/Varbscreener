@@ -31,10 +31,10 @@ DEFAULT_RANK_BY: RankBy = "market_cap"
 
 # Universe size by rank metric (must be even; split is half long / half short).
 # You can set either:
-# - "40"    → take Top 40 by the rank metric
-# - "21-40" → take ranks 21..40 by the rank metric (inclusive)
+# - "60"    → take Top 60 by the rank metric
+# - "21-60" → take ranks 21..60 by the rank metric (inclusive)
 # Note: the final count must be even (for 50/50 long/short split).
-DEFAULT_TOP_SPEC: str = "40"
+DEFAULT_TOP_SPEC: str = "60"
 
 # Number of tickers to trade (total, before 50/50 split). Must be even.
 DEFAULT_MAX_TICKER_ENTRIES: int = 20

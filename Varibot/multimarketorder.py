@@ -22,6 +22,11 @@ from variationalbot.vari.endpoints import Instrument
 
 # Used when neither --usd nor --im-target-pct is passed (change here to retarget default sizing).
 DEFAULT_IM_TARGET_PCT: float = 50.0
+# Omni UI: for the same book, MM usage is ~half of IM usage (MM requirement ≈ ½ × IM requirement).
+# User PCT is interpreted on that MM-style budget; scale notional by ½ vs naive (pv×lev×pct) IM math.
+IM_TARGET_MM_NOTIONAL_SCALE: float = 0.5
+# Default --leverage: IM-target sizing multiplies (portfolio × this × PCT); optional --set-leverage API uses the same value.
+DEFAULT_LEVERAGE: int = 50
 # IM-target per-order notional is rounded up to this USD step (e.g. 241.04 -> 250).
 USD_NOTIONAL_ROUND_STEP: float = 10.0
 # Default max slippage when --max-slippage and MAX_SLIPPAGE env are unset (fraction of notional).
@@ -231,16 +236,18 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PCT",
         dest="im_target_pct",
         help=(
-            f"Size each order as (portfolio_value_usd × --leverage × PCT/100) / number_of_orders "
-            f"(GET /api/portfolio?compute_margin=true). If --usd is omitted and this is omitted, "
-            f"defaults to {DEFAULT_IM_TARGET_PCT:g}%%. Do not pass both --usd and --im-target-pct."
+            f"Size each order as (portfolio_value_usd × --leverage × PCT/100 × {IM_TARGET_MM_NOTIONAL_SCALE:g}) "
+            f"/ number_of_orders (GET /api/portfolio?compute_margin=true). The ×{IM_TARGET_MM_NOTIONAL_SCALE:g} "
+            f"term maps user PCT to MM-style utilization on Omni (MM ≈ IM/2 for the same exposure). "
+            f"If --usd is omitted and this is omitted, defaults to {DEFAULT_IM_TARGET_PCT:g}%%. "
+            "Do not pass both --usd and --im-target-pct."
         ),
     )
     p.add_argument(
         "--leverage",
         type=int,
-        default=50,
-        help="Leverage when using --set-leverage (default: 20).",
+        default=DEFAULT_LEVERAGE,
+        help=f"Leverage when using --set-leverage (default: {DEFAULT_LEVERAGE}).",
     )
     p.add_argument(
         "--set-leverage",
@@ -464,13 +471,18 @@ def main() -> int:
         portfolio_value_for_sizing = float(pv)
         lev = int(args.leverage)
         n_jobs = len(jobs)
-        raw_usd = (portfolio_value_for_sizing * float(lev) * (pct / 100.0)) / float(n_jobs)
+        raw_usd = (
+            portfolio_value_for_sizing
+            * float(lev)
+            * (pct / 100.0)
+            * float(IM_TARGET_MM_NOTIONAL_SCALE)
+        ) / float(n_jobs)
         step = float(USD_NOTIONAL_ROUND_STEP)
         usd_per_order = math.ceil(raw_usd / step) * step
         print(
             f"Sizing: portfolio_value_usd={portfolio_value_for_sizing} leverage={lev}x im_target_pct={pct}% "
-            f"jobs={n_jobs} -> ${raw_usd:.2f} raw -> ${usd_per_order:.0f} per order "
-            f"(ceil to nearest ${step:g})"
+            f"mm_notional_scale={IM_TARGET_MM_NOTIONAL_SCALE} jobs={n_jobs} -> ${raw_usd:.2f} raw -> "
+            f"${usd_per_order:.0f} per order (ceil to nearest ${step:g})"
         )
     else:
         usd_per_order = float(args.usd)
@@ -505,6 +517,7 @@ def main() -> int:
     }
     if args.usd is None:
         out["im_target_pct"] = float(args.im_target_pct)  # type: ignore[arg-type]
+        out["im_target_mm_notional_scale"] = float(IM_TARGET_MM_NOTIONAL_SCALE)
         out["portfolio_value_usd_for_sizing"] = portfolio_value_for_sizing
 
     orders_out: List[Dict[str, Any]] = []
