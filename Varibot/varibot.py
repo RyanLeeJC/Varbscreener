@@ -215,6 +215,20 @@ def _near_median_max_pairs_from_available_position_value(
     return int(available_position_value_usd // cost)
 
 
+def _near_median_align_pair_candidates(
+    longs: List[str],
+    shorts: List[str],
+    *,
+    wanted_pairs: int,
+) -> Tuple[List[str], List[str], int]:
+    """
+    Pair long/short candidate lists to equal length (min of sides and budget). Used after
+    filter_replacements when one side has fewer fresh symbols than the planned pair count.
+    """
+    n = min(len(longs), len(shorts), int(wanted_pairs))
+    return longs[:n], shorts[:n], n
+
+
 def _near_median_slot_usd_per_leg(*, portfolio_value_usd: float, leverage: int) -> float:
     raw = (
         float(portfolio_value_usd) * float(leverage) * float(IM_TARGET_MM_NOTIONAL_SCALE)
@@ -1258,16 +1272,25 @@ def _near_median_pm_dry_run_refill_preview(
             disallow=disallow,
             need_each_side=need_each_side,
         )
-        if len(repl_l) < need_each_side or len(repl_s) < need_each_side:
+        got_l, got_s = len(repl_l), len(repl_s)
+        repl_l, repl_s, n_do = _near_median_align_pair_candidates(
+            repl_l, repl_s, wanted_pairs=need_each_side
+        )
+        if n_do <= 0:
             _log(
                 f"PM(near_median): dry-run preview — insufficient replacements "
-                f"(need {need_each_side}L/{need_each_side}S, got {len(repl_l)}L/{len(repl_s)}S)."
+                f"(wanted {need_each_side} pair(s); got {got_l}L/{got_s}S after filter)."
             )
             return
+        if n_do < need_each_side:
+            _log(
+                f"PM(near_median): dry-run preview — partial replacements "
+                f"(wanted {need_each_side} pair(s), simulating {n_do}; candidates {got_l}L/{got_s}S)."
+            )
 
         _log(
             f"PM(near_median): dry-run preview — multimarketorder (no --live) for sizing — "
-            f"strategy={meta.get('strategy')} pairs={need_each_side}"
+            f"strategy={meta.get('strategy')} pairs={n_do}"
         )
         pos_n = _positions_notional_usd(positions_raw)
         usd_run = _near_median_pm_usd_for_multimarket(
@@ -1466,16 +1489,23 @@ def _near_median_pm_manager(
         disallow=disallow,
         need_each_side=need_each_side,
     )
-    if len(repl_l) < need_each_side or len(repl_s) < need_each_side:
+    got_l, got_s = len(repl_l), len(repl_s)
+    repl_l, repl_s, n_do = _near_median_align_pair_candidates(repl_l, repl_s, wanted_pairs=need_each_side)
+    if n_do <= 0:
         _log(
             f"PM(near_median): WARNING insufficient replacements after disallow filter "
-            f"(need {need_each_side}L/{need_each_side}S, got {len(repl_l)}L/{len(repl_s)}S). Skip refill."
+            f"(wanted {need_each_side} pair(s); got {got_l}L/{got_s}S). Skip refill."
         )
         return
+    if n_do < need_each_side:
+        _log(
+            f"PM(near_median): refill partial — wanted {need_each_side} pair(s), opening {n_do} "
+            f"(candidates {got_l}L/{got_s}S)."
+        )
 
     _log(
         f"PM(near_median): opening replacements (strategy={meta.get('strategy')}) "
-        f"longs={len(repl_l)} shorts={len(repl_s)}..."
+        f"pairs={n_do} longs={len(repl_l)} shorts={len(repl_s)}..."
     )
     run_multimarket(
         multi_script=str(args.multi_script),
@@ -1625,15 +1655,22 @@ def _near_median_topup_if_needed(
     top_n = _top_n_for_strategy(strat_key)
     longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
     add_l, add_s = filter_replacements(longs=longs, shorts=shorts, disallow=set(open_syms), need_each_side=int(n_pairs))
-    if len(add_l) < n_pairs or len(add_s) < n_pairs:
+    got_l, got_s = len(add_l), len(add_s)
+    add_l, add_s, n_open = _near_median_align_pair_candidates(add_l, add_s, wanted_pairs=n_pairs)
+    if n_open <= 0:
         _log(
             f"PM(near_median): top-up skipped — insufficient new tickers "
-            f"(need {n_pairs}L/{n_pairs}S, got {len(add_l)}L/{len(add_s)}S)."
+            f"(wanted {n_pairs} pair(s); got {got_l}L/{got_s}S after filter)."
         )
         return
+    if n_open < n_pairs:
+        _log(
+            f"PM(near_median): top-up partial — wanted {n_pairs} pair(s), opening {n_open} "
+            f"(candidates {got_l}L/{got_s}S)."
+        )
 
     _log(
-        f"PM(near_median): topping up with {n_pairs} pair(s) "
+        f"PM(near_median): topping up with {n_open} pair(s) "
         f"(strategy={meta.get('strategy')}) longs={add_l} shorts={add_s}"
     )
     usd_run = _near_median_pm_usd_for_multimarket(

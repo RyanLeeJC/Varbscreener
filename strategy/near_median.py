@@ -13,9 +13,9 @@ STRATEGY_NAME: str = "near_median"
 
 # Trade thesis (printed to strategy/strategy_output.txt when run via the strategy loader).
 TRADE_THESIS: str = (
-    "Core thesis: In a market-cap-ranked universe (excluding BTC/ETH), focus on tickers whose 24h return is closest "
-    "to the cross-sectional median (low-volatility/low-dispersion names), then split by 24h return: "
-    "long the stronger half and short the weaker half (inverse of mean-reversion on that axis)."
+    "Core thesis: In a market-cap-ranked universe (excluding BTC/ETH), after liquidity filters, split the window "
+    "by 24h return: long the stronger half and short the weaker half. "
+    "max_ticker_entries caps portfolio entry count / sizing targets, not the candidate lists passed to the orchestrator."
 )
 
 # When running this strategy standalone, also write a human-readable table to Varibot/strategy_output.txt.
@@ -36,7 +36,8 @@ DEFAULT_RANK_BY: RankBy = "market_cap"
 # Note: the final count must be even (for 50/50 long/short split).
 DEFAULT_TOP_SPEC: str = "80"
 
-# Number of tickers to trade (total, before 50/50 split). Must be even.
+# Max tickers to target for entries / portfolio sizing (even total before 50/50 split).
+# Does not trim long/short candidate lists returned from pick_tickers (those include the full rank window).
 DEFAULT_MAX_TICKER_ENTRIES: int = 20
 
 # Default exclude list (unioned with `TICKER_BLACKLIST`).
@@ -328,7 +329,7 @@ def _split_long_short_by_24h_change(universe: Sequence[ListingRow]) -> Tuple[flo
 def _near_median_subset(universe: Sequence[ListingRow], *, k: int) -> List[ListingRow]:
     """
     Pick the k tickers closest to the cross-sectional median 24h change.
-    This matches the "pick_mode: near_median" behavior from backtests.
+    Used for research/backtest parity; pick_tickers uses the full filtered rank window for long/short lists.
     """
     kk = int(k)
     if kk <= 0:
@@ -348,16 +349,20 @@ def pick_tickers(
     marketstate_json: Optional[str] = None,  # unused for now (kept for interface compatibility)
     top_n: Optional[int] = None,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
+    """
+    Rank window comes from DEFAULT_TOP_SPEC only (and CLI overrides of module-level settings).
+    The orchestrator's numeric `top_n` is ignored — it used to shrink the rank window (e.g. to 60)
+    and the portfolio manager's replacement pool.
+    """
+    _ = top_n
+
     exclude_set = {s.strip().upper() for s in _split_csv(DEFAULT_EXCLUDE_CSV) if s and str(s).strip()}
     exclude_set |= set(TICKER_BLACKLIST)
 
     with open(str(listing_json), "r", encoding="utf-8") as f:
         payload = json.load(f)
     rows = _load_listing_rows(payload)
-    if top_n is not None:
-        start_rank, end_rank = (1, int(top_n))
-    else:
-        start_rank, end_rank = _parse_top_spec(DEFAULT_TOP_SPEC)
+    start_rank, end_rank = _parse_top_spec(DEFAULT_TOP_SPEC)
     start_rank, end_rank, adjusted = _normalize_even_count(start_rank, end_rank)
 
     ranked = _ranked_universe(rows, rank_by=DEFAULT_RANK_BY)
@@ -397,8 +402,9 @@ def pick_tickers(
 
     universe = filtered
 
-    picked = _near_median_subset(universe, k=int(DEFAULT_MAX_TICKER_ENTRIES))
-    median_24h_chg_pct, longs, shorts = _split_long_short_by_24h_change(picked)
+    # Full filtered rank window: longs = stronger half by 24h chg, shorts = weaker half (same rule as before,
+    # but without trimming to DEFAULT_MAX_TICKER_ENTRIES first — that cap is for entry targets only).
+    median_24h_chg_pct, longs, shorts = _split_long_short_by_24h_change(universe)
 
     meta: Dict[str, Any] = {
         "strategy": STRATEGY_NAME,
@@ -420,6 +426,7 @@ def pick_tickers(
         "min_oi": DEFAULT_MIN_OI,
         "long_count": len(longs),
         "short_count": len(shorts),
+        "orchestrator_top_n_ignored": True,
     }
     return longs, shorts, meta
 
