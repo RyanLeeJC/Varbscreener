@@ -3,11 +3,10 @@ from __future__ import annotations
 """
 Varibot orchestrator — implements the VariBotFlowchart workflow:
 
-  Auth (validate_vr_token) -> every T minutes: portfolio + TP Check ->
-  if positions -> TP exit and/or time-in-position exit (closeallpositions.py) ->
+  Auth (validate_vr_token) -> every T minutes: portfolio snapshot ->
+  if positions -> PM / managers (see strategy); portfolio-wide TP close-all removed ->
   if flat -> listingtable -> marketstate -> strategy -> multimarketorder
-  (strategy funding_pairs skips marketstate on entry; per-pair exits in funding_pairs manager; portfolio TP /
-   --tp-pct can still close-all; global time-in-position is skipped for funding_pairs only.)
+  (strategy funding_pairs skips marketstate on entry; per-pair exits in funding_pairs manager.)
 
 Run from the Varibot directory (or any cwd; this file fixes imports):
 
@@ -51,8 +50,8 @@ CHECK_INTERVAL_MIN: int = 15
 #
 # Portfolio Manager (PM) for strategy near_median:
 # - Each CHECK_INTERVAL_MIN, PM can close (long,short) pairs when combined uPnL% clears a threshold.
+# - Default threshold: portfolio_manager_pairs.PAIR_TP_THRESHOLD_PCT_DEFAULT (imported below as PM_PAIR_...).
 # - Optionally refill closed slots by refreshing listingtable (pro) and opening replacements.
-PM_PAIR_TP_THRESHOLD_PCT_DEFAULT: float = 0.5
 PM_REFILL_DEFAULT_ON: bool = True
 
 # Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
@@ -108,7 +107,7 @@ if _REPO_ROOT not in sys.path:
 if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
-from check_portfolio_stats import _apply_tp_check, _build_out_dict  # noqa: E402
+from check_portfolio_stats import _build_out_dict  # noqa: E402
 from positions import _instrument_label  # noqa: E402
 from validate_vr_token import validate_vr_token  # noqa: E402
 from variationalbot.config import load_config  # noqa: E402
@@ -125,9 +124,11 @@ from strategy import strategies as strategies_mod  # noqa: E402
 from strategy import funding_pairs as funding_pairs_mod  # noqa: E402
 from strategy.near_median import DEFAULT_MAX_TICKER_ENTRIES as NEAR_MEDIAN_MAX_TICKER_ENTRIES  # noqa: E402
 from portfolio_manager_pairs import (
+    PAIR_TP_THRESHOLD_PCT_DEFAULT as PM_PAIR_TP_THRESHOLD_PCT_DEFAULT,
     PairCandidate,
     filter_replacements,
     positions_to_rows,
+    scan_best_winner_opposite_pair,
     select_pairs_greedy_grid,
 )  # noqa: E402
 
@@ -301,6 +302,26 @@ def _near_median_pm_usd_for_multimarket(
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def _fmt_portfolio_snapshot_line(out: Dict[str, Any]) -> str:
+    """Port Value, uPNL, IM%, MM% — two decimals (keys from _build_out_dict)."""
+
+    def f2(key: str) -> str:
+        v = out.get(key)
+        if v is None:
+            return "—"
+        try:
+            return f"{float(v):.2f}"
+        except (TypeError, ValueError):
+            return "—"
+
+    return (
+        f"Port Value={f2('portfolio_value_usd')} "
+        f"Port uPNL={f2('unrealized_pnl_usd')} "
+        f"IM%={f2('im_usage_pct')} "
+        f"MM%={f2('mm_usage_pct')}"
+    )
 
 
 def _should_write_strategy_output() -> bool:
@@ -1332,7 +1353,19 @@ def _near_median_pm_manager(
     threshold_pct = float(getattr(args, "pm_pair_tp_pct", PM_PAIR_TP_THRESHOLD_PCT_DEFAULT))
     pairs = select_pairs_greedy_grid(rows=rows, threshold_pct=threshold_pct)
     if not pairs:
-        _log(f"PM(near_median): no eligible close pairs (threshold={threshold_pct:g}%).")
+        nearest = scan_best_winner_opposite_pair(rows=rows)
+        if nearest is None:
+            _log(
+                f"PM(near_median): no eligible close pairs (threshold={threshold_pct:g}%) — "
+                "no winner×opposite pairing evaluated (no positive-uPnL leg or missing L/S side)."
+            )
+        else:
+            _log(
+                f"PM(near_median): no eligible close pairs (threshold={threshold_pct:g}%) — "
+                f"nearest: LONG {nearest.long_ticker} + SHORT {nearest.short_ticker} "
+                f"combined_uPNL%={nearest.combined_upnl_pct:.3f}% "
+                f"(${nearest.combined_upnl_usd:,.2f} / ${nearest.combined_value_usd:,.2f})."
+            )
         return
 
     _log(f"PM(near_median): {len(pairs)} eligible pair(s) to close (threshold={threshold_pct:g}%).")
@@ -1522,6 +1555,7 @@ def _near_median_topup_if_needed(
     args: argparse.Namespace,
     snap: Any,
     positions_raw: Any,
+    cycle_index: int = 0,
 ) -> None:
     """
     Top-up adds paired long/short slots toward DEFAULT_MAX_TICKER_ENTRIES when affordable.
@@ -1529,6 +1563,9 @@ def _near_median_topup_if_needed(
     IM% (book) = sum(abs position value) / (portfolio_value_usd × leverage).
     Gap vs DEFAULT_IM_TARGET_PCT × pv × lev = available position value → caps how many new pairs fit
     (~2×usd_per_leg per pair). Need not reach 20 tickers if budget is smaller.
+
+    Book / positions are evaluated before IM gap (cycle 1 logs an explicit init inventory so startup
+    does not look like a blind IM-only no-op).
     """
     strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
     strat_norm = _strategy_key_normalized(strat_key)
@@ -1539,6 +1576,47 @@ def _near_median_topup_if_needed(
     if pv is None or float(pv) <= 0:
         _log("PM(near_median): skip top-up — portfolio_value_usd missing or non-positive.")
         return
+
+    rows = positions_to_rows(positions_raw)
+    if not rows:
+        return
+
+    target_total = int(NEAR_MEDIAN_MAX_TICKER_ENTRIES)
+    if target_total <= 0:
+        return
+    cur_total = len(rows)
+    target_per_side = target_total // 2
+    cur_long = sum(1 for r in rows if r.side == "L")
+    cur_short = sum(1 for r in rows if r.side == "S")
+    need_long = max(0, int(target_per_side) - int(cur_long))
+    need_short = max(0, int(target_per_side) - int(cur_short))
+
+    # If still short on total due to oddities, allocate remaining to the smaller side.
+    remaining = max(0, int(target_total) - int(cur_total) - int(need_long) - int(need_short))
+    if remaining > 0:
+        if cur_long <= cur_short:
+            need_long += remaining
+        else:
+            need_short += remaining
+
+    # Structural pairs toward 20 tickers; IM budget may allow fewer (or zero).
+    n_pairs_struct = min(int(need_long), int(need_short))
+
+    if int(cycle_index) == 1:
+        syms = sorted({str(r.ticker).strip().upper() for r in rows if r.ticker})
+        preview = ", ".join(syms[:24])
+        if len(syms) > 24:
+            preview += f", … (+{len(syms) - 24} more)"
+        _log(
+            f"PM(near_median): init — loaded open book tickers={cur_total} "
+            f"(L={cur_long}, S={cur_short}): {preview}"
+        )
+
+    _log(
+        f"PM(near_median): book snapshot — tickers={cur_total}/{target_total} "
+        f"L={cur_long} S={cur_short}; structural top-up need≈{n_pairs_struct} pair(s) "
+        f"(need_long={need_long}, need_short={need_short})."
+    )
 
     lev_m = _multimarket_effective_leverage()
     pos_notional = float(_positions_notional_usd(positions_raw))
@@ -1575,20 +1653,18 @@ def _near_median_topup_if_needed(
         )
 
     if gap_ratio <= 0.0:
-        _log(
-            "PM(near_median): skip top-up — no IM gap "
-            f"(IM% vs DEFAULT_IM_TARGET_PCT {float(DEFAULT_IM_TARGET_PCT):g}%)."
-        )
+        if int(cycle_index) == 1:
+            _log(
+                "PM(near_median): init — no top-up: IM at or above portfolio target "
+                f"({float(DEFAULT_IM_TARGET_PCT):g}%); book snapshot above. Next cycles same checks apply."
+            )
+        else:
+            _log(
+                "PM(near_median): skip top-up — no IM gap "
+                f"(IM% vs DEFAULT_IM_TARGET_PCT {float(DEFAULT_IM_TARGET_PCT):g}%)."
+            )
         return
 
-    rows = positions_to_rows(positions_raw)
-    if not rows:
-        return
-
-    target_total = int(NEAR_MEDIAN_MAX_TICKER_ENTRIES)
-    if target_total <= 0:
-        return
-    cur_total = len(rows)
     if cur_total >= target_total:
         _log(
             f"PM(near_median): skip top-up — book at max tickers ({cur_total}/{target_total}; "
@@ -1596,22 +1672,6 @@ def _near_median_topup_if_needed(
         )
         return
 
-    target_per_side = target_total // 2
-    cur_long = sum(1 for r in rows if r.side == "L")
-    cur_short = sum(1 for r in rows if r.side == "S")
-    need_long = max(0, int(target_per_side) - int(cur_long))
-    need_short = max(0, int(target_per_side) - int(cur_short))
-
-    # If still short on total due to oddities, allocate remaining to the smaller side.
-    remaining = max(0, int(target_total) - int(cur_total) - int(need_long) - int(need_short))
-    if remaining > 0:
-        if cur_long <= cur_short:
-            need_long += remaining
-        else:
-            need_short += remaining
-
-    # Structural pairs toward 20 tickers; IM budget may allow fewer (or zero).
-    n_pairs_struct = min(int(need_long), int(need_short))
     if n_pairs_struct <= 0:
         _log(
             f"PM(near_median): skip top-up — no paired slots (cur L/S={cur_long}/{cur_short}, "
@@ -1695,26 +1755,21 @@ def one_cycle(
     ep: VariEndpoints,
     cfg: Any,
     args: argparse.Namespace,
+    cycle_index: int = 0,
 ) -> bool:
     """
     Returns True when a live time-in-position close-all just succeeded; main() should
     use a short cooldown then run the next cycle instead of sleeping to the wall clock.
+
+    cycle_index is the 1-based cycle counter from the main loop (used for near_median init logging).
     """
     strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
     raw_pf = ep.get_portfolio(compute_margin=True)
     snap = parse_portfolio_snapshot(raw_pf)
     out = _build_out_dict(cfg=cfg, snap=snap)
 
-    # TP check uses positions notional (sum abs position values) as denominator.
     raw_pos = ep.get_positions()
-    out["positions_notional_usd"] = _positions_notional_usd(raw_pos)
-    _apply_tp_check(out, threshold_pct=float(args.tp_pct))
-
-    _log(
-        f"Portfolio uPNL={out.get('unrealized_pnl_usd')} "
-        f"pos_notional={out.get('positions_notional_usd')} TP={out.get('tp_check')} "
-        f"({out.get('tp_check_u_pnl_vs_portfolio_pct')})"
-    )
+    _log(_fmt_portfolio_snapshot_line(out))
 
     has_pos = has_open_positions(raw_pos)
 
@@ -1793,21 +1848,12 @@ def one_cycle(
         return False
 
     # --- have positions ---
-    # 1) Portfolio TP: close-all when threshold hit (non-near_median only; near_median uses PM pair exits).
     strat_norm = _strategy_key_normalized(strat_key)
-    if strat_norm != "near_median" and out.get("tp_check") == "Yes":
-        if args.live:
-            rc = run_closeallpositions(live=True)
-            if rc != 0:
-                _log(f"closeallpositions exited {rc}")
-        else:
-            _log("TP Check Yes — [dry-run] would run closeallpositions.py --live")
-        return False
 
-    # 2) PM(near_median): per-pair threshold exits / refill (before top-up IM checks).
+    # 1) PM(near_median): per-pair threshold exits / refill (before top-up IM checks).
     _near_median_pm_manager(ep=ep, cfg=cfg, args=args, positions_raw=raw_pos, snap=snap)
 
-    # 3) Live PM closes change the book — refresh snapshot before top-up / other managers.
+    # 2) Live PM closes change the book — refresh snapshot before top-up / other managers.
     if strat_norm == "near_median" and bool(args.live):
         try:
             raw_pf = ep.get_portfolio(compute_margin=True)
@@ -1818,8 +1864,10 @@ def one_cycle(
 
     _funding_pairs_manager(ep=ep, args=args, positions_raw=raw_pos)
 
-    # 4) Top-up only after PM(pair-threshold) step above (uses refreshed snap when live).
-    _near_median_topup_if_needed(ep=ep, args=args, snap=snap, positions_raw=raw_pos)
+    # 3) Top-up only after PM(pair-threshold) step above (uses refreshed snap when live).
+    _near_median_topup_if_needed(
+        ep=ep, args=args, snap=snap, positions_raw=raw_pos, cycle_index=int(cycle_index)
+    )
 
     return False
 
@@ -1836,12 +1884,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=CHECK_INTERVAL_MIN,
         help=f"Wall-clock cycle interval minutes (default {CHECK_INTERVAL_MIN}).",
-    )
-    p.add_argument(
-        "--tp-pct",
-        type=float,
-        default=5.0,
-        help="TP Check threshold % of portfolio (default 5).",
     )
     p.add_argument(
         "--pm-pair-tp-pct",
@@ -2025,7 +2067,7 @@ def _child_main() -> int:
         cycle_n += 1
         _log(f"=== cycle {cycle_n} ===")
         try:
-            ti_just_closed = one_cycle(ep=ep, cfg=cfg, args=args)
+            ti_just_closed = one_cycle(ep=ep, cfg=cfg, args=args, cycle_index=cycle_n)
         except Exception as e:
             _log(f"cycle error: {type(e).__name__}: {e}")
             if args.once:

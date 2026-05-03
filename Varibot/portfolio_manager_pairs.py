@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, 
 
 Side = Literal["L", "S"]
 
-PAIR_TP_THRESHOLD_PCT_DEFAULT: float = 0.5
+PAIR_TP_THRESHOLD_PCT_DEFAULT: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -239,6 +239,77 @@ def select_pairs_greedy_grid(
             )
         )
     return out
+
+
+def scan_best_winner_opposite_pair(
+    *,
+    rows: Sequence[PositionRow],
+    disallow: Optional[Set[str]] = None,
+) -> Optional[PairCandidate]:
+    """
+    Among every winner×opposite-side pairing (same pools as ``select_pairs_greedy_grid``),
+    return the pair with the highest combined uPnL%, regardless of threshold.
+
+    Used when no pair clears the threshold: shows how close the book was to an exit.
+    Returns None if there is no positive-uPnL leg or no both-side liquidity to pair.
+    """
+    dis = {t.strip().upper() for t in (disallow or set()) if isinstance(t, str)}
+    eligible = [r for r in rows if r.ticker not in dis]
+    winners = [r for r in eligible if float(r.upnl_usd) > 0]
+    if not winners:
+        return None
+
+    longs_all = [r for r in eligible if r.side == "L"]
+    shorts_all = [r for r in eligible if r.side == "S"]
+    if not longs_all or not shorts_all:
+        return None
+
+    best: Optional[PairCandidate] = None
+    for w in winners:
+        opp_rows = shorts_all if w.side == "L" else longs_all
+        for cand in opp_rows:
+            p = _pair_upnl_pct(
+                upnl_a=w.upnl_usd,
+                value_a=w.value_usd,
+                upnl_b=cand.upnl_usd,
+                value_b=cand.value_usd,
+            )
+            if p is None:
+                continue
+            pf = float(p)
+            comb_u = float(w.upnl_usd) + float(cand.upnl_usd)
+            comb_v = float(w.value_usd) + float(cand.value_usd)
+            if w.side == "L":
+                long_t, short_t = w.ticker, cand.ticker
+            else:
+                long_t, short_t = cand.ticker, w.ticker
+
+            if best is None:
+                best = PairCandidate(
+                    long_ticker=long_t,
+                    short_ticker=short_t,
+                    combined_upnl_usd=comb_u,
+                    combined_value_usd=comb_v,
+                    combined_upnl_pct=pf,
+                )
+                continue
+            if pf > float(best.combined_upnl_pct) + 1e-12:
+                best = PairCandidate(
+                    long_ticker=long_t,
+                    short_ticker=short_t,
+                    combined_upnl_usd=comb_u,
+                    combined_value_usd=comb_v,
+                    combined_upnl_pct=pf,
+                )
+            elif abs(pf - float(best.combined_upnl_pct)) <= 1e-12 and comb_u > float(best.combined_upnl_usd):
+                best = PairCandidate(
+                    long_ticker=long_t,
+                    short_ticker=short_t,
+                    combined_upnl_usd=comb_u,
+                    combined_value_usd=comb_v,
+                    combined_upnl_pct=pf,
+                )
+    return best
 
 
 def filter_replacements(
