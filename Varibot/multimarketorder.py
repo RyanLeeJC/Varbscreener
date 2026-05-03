@@ -20,6 +20,37 @@ from variationalbot.domain import parse_portfolio_snapshot
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 from variationalbot.vari.endpoints import Instrument
 
+# Varibot reads this after each run to substitute tickers on OI-skew / risk-cap rejects (near_median).
+MULTIMARKET_LAST_RESULT_JSON: str = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".multimarket_last_result.json"
+)
+
+
+def _write_multimarket_last_result(
+    orders_out: List[Dict[str, Any]],
+    *,
+    skew_extra: Optional[List[Dict[str, str]]] = None,
+) -> None:
+    """Persist skew-risk rejects so varibot can pick alternate symbols from the strategy lists."""
+    skew: List[Dict[str, str]] = []
+    for o in orders_out:
+        err = o.get("error") if isinstance(o, dict) else None
+        if isinstance(err, dict) and err.get("type") == "OiSkewRiskCapReject":
+            skew.append(
+                {
+                    "asset": str(o.get("asset") or "").strip().upper(),
+                    "side": str(o.get("side") or "").strip().lower(),
+                }
+            )
+    if skew_extra:
+        skew.extend(skew_extra)
+    try:
+        with open(MULTIMARKET_LAST_RESULT_JSON, "w", encoding="utf-8") as f:
+            json.dump({"skew_rejected": skew, "ts": time.time()}, f, indent=2)
+    except OSError:
+        pass
+
+
 # Used when neither --usd nor --im-target-pct is passed (change here to retarget default sizing).
 DEFAULT_IM_TARGET_PCT: float = 50.0
 # Omni UI: for the same book, MM usage is ~half of IM usage (MM requirement ≈ ½ × IM requirement).
@@ -426,6 +457,40 @@ def _fmt_slippage_pct(x: float) -> str:
     return f"{float(x) * 100.0:.2f}%"
 
 
+def _flatten_resp_text(obj: Any, *, max_len: int = 6000) -> str:
+    """Join string-like fields from nested dict/list for keyword checks."""
+    parts: List[str] = []
+
+    def walk(x: Any) -> None:
+        if isinstance(x, str):
+            parts.append(x)
+        elif isinstance(x, dict):
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(obj)
+    return " ".join(parts)[:max_len]
+
+
+def _order_reject_is_skew_or_risk_cap(resp: Any) -> bool:
+    """
+    Venue risk: OI skew / FDV cap (SkewAsPercentOfFdvLimit). Retrying with higher max_slippage does not help.
+    """
+    blob = _flatten_resp_text(resp).lower()
+    if "risk checks have failed" in blob:
+        return True
+    if "skewaspercentoffdv" in blob or "skew as percent" in blob:
+        return True
+    if "skew" in blob and "too large" in blob and ("oi" in blob or "open interest" in blob):
+        return True
+    if "fully diluted" in blob and "skew" in blob:
+        return True
+    return False
+
+
 def _order_response_rejected(resp: Any) -> bool:
     """
     Vari may return HTTP 200 with an order payload whose status is "Rejected" (e.g. max slippage exceeded).
@@ -648,6 +713,28 @@ def main() -> int:
                             is_reduce_only=bool(args.reduce_only),
                         )
                         if _order_response_rejected(resp):
+                            if _order_reject_is_skew_or_risk_cap(resp):
+                                item["steps"]["order_response"] = resp
+                                item["steps"]["slippage_retry_stopped"] = "oi_skew_or_risk_cap"
+                                snippet = _flatten_resp_text(resp)
+                                snippet = (snippet[:280] + "…") if len(snippet) > 280 else snippet
+                                print(
+                                    f"STOP retrying {asset}: OI skew / risk cap — "
+                                    f"higher slippage will not help. {snippet}"
+                                )
+                                attempts.append(
+                                    {
+                                        "attempt": attempt,
+                                        "max_slippage": float(slip),
+                                        "ok": False,
+                                        "stopped": "oi_skew_or_risk_cap",
+                                    }
+                                )
+                                item["error"] = {
+                                    "type": "OiSkewRiskCapReject",
+                                    "message": snippet or "Venue risk: OI skew / FDV skew limit",
+                                }
+                                break
                             raise RuntimeError(f"order rejected (status={resp.get('status')})")
                         item["steps"]["order_response"] = resp
                         item["steps"]["rfq_id"] = _extract_rfq_id(resp)
@@ -693,15 +780,20 @@ def main() -> int:
         out["note"] = "Dry-run only. Re-run with --live to actually place the orders."
         if args.print_json:
             print(json.dumps(out, indent=2, default=str))
+            _write_multimarket_last_result(orders_out, skew_extra=None)
             return 0
         # Final summary only (table already streamed during entry).
         n_ok = sum(1 for o in orders_out if not isinstance(o.get("error"), dict))
         print(f"Positions entered: {n_ok} (dry-run)")
+        _write_multimarket_last_result(orders_out, skew_extra=None)
         return 0
 
     if args.print_json:
         print(json.dumps(out, indent=2, default=str))
+        _write_multimarket_last_result(orders_out, skew_extra=None)
         return 0
+
+    skew_extra_from_reattempt: List[Dict[str, str]] = []
 
     # Compact live confirmation (best-effort).
     # Also reconcile against /api/positions to detect any missing tickers after entry.
@@ -732,13 +824,15 @@ def main() -> int:
         # Best-effort reattempt rounds: step slippage each round (base + k*increment).
         # Continue until all missing tickers show up in /api/positions, or we hit max rounds.
         missing2: set[str] = set(missing)
+        risk_skip_syms: set[str] = set()
         for round_i in range(1, int(_MAX_LIVE_ATTEMPTS) + 1):
-            if not missing2:
+            to_retry = missing2 - risk_skip_syms
+            if not to_retry:
                 break
             slip_round = float(max_slippage) + float(round_i) * float(_SLIPPAGE_RETRY_INCREMENT)
             print(f"Reattempting failed tickers with higher slippage {_fmt_slippage_pct(float(slip_round))}...")
 
-            for sym in sorted(missing2):
+            for sym in sorted(to_retry):
                 # Find original side from jobs (fall back to buy).
                 side = "buy"
                 for j in jobs:
@@ -764,6 +858,17 @@ def main() -> int:
                         is_reduce_only=bool(args.reduce_only),
                     )
                     if _order_response_rejected(resp2):
+                        if _order_reject_is_skew_or_risk_cap(resp2):
+                            risk_skip_syms.add(sym)
+                            sn = _flatten_resp_text(resp2)
+                            sn = (sn[:240] + "…") if len(sn) > 240 else sn
+                            print(
+                                f"STOP reattempt {sym}: OI skew / risk cap (no further slippage retries). {sn}"
+                            )
+                            skew_extra_from_reattempt.append(
+                                {"asset": str(sym).strip().upper(), "side": str(side).strip().lower()}
+                            )
+                            continue
                         raise RuntimeError("order rejected")
                 except Exception:
                     # Keep it missing; we will try again next round with higher slippage.
@@ -787,6 +892,12 @@ def main() -> int:
             print(f"Positions entered: {verified2}")
             if missing2:
                 print(f"WARNING: missing position(s) after reattempt: {', '.join(sorted(missing2))}")
+        if risk_skip_syms:
+            print(
+                "NOTE: venue OI skew / risk cap (no slippage fix): "
+                f"{', '.join(sorted(risk_skip_syms))}"
+            )
+    _write_multimarket_last_result(orders_out, skew_extra=skew_extra_from_reattempt or None)
     return 0
 
 

@@ -33,7 +33,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from zoneinfo import ZoneInfo
 
 # Imports assume sibling scripts + variationalbot live under this directory.
@@ -127,6 +127,7 @@ from multimarketorder import (  # noqa: E402
     DEFAULT_IM_TARGET_PCT,
     DEFAULT_LEVERAGE as MULTIMARKET_DEFAULT_LEVERAGE,
     IM_TARGET_MM_NOTIONAL_SCALE,
+    MULTIMARKET_LAST_RESULT_JSON,
     USD_NOTIONAL_ROUND_STEP,
     _order_response_rejected,
 )
@@ -216,11 +217,16 @@ def _near_median_im_gap_metrics(
     return 0.0, 0.0, 0.0, "none"
 
 
+def _near_median_usd_per_pair_budget(*, usd_per_leg: float) -> float:
+    """$/pair = 2 × usd_per_leg (paired long + short at multimarket leg size)."""
+    return 2.0 * float(usd_per_leg)
+
+
 def _near_median_max_pairs_from_available_position_value(
-    *, available_position_value_usd: float, usd_per_leg: float
+    *, available_position_value_usd: float, usd_per_pair: float
 ) -> int:
-    """Each new pair = 2 legs at usd_per_leg → consume ~2×usd_per_leg of position-value budget."""
-    cost = 2.0 * float(usd_per_leg)
+    """How many new pairs fit at $/pair = 2 × usd_per_leg."""
+    cost = float(usd_per_pair)
     if cost <= 1e-12 or available_position_value_usd <= 0:
         return 0
     return int(available_position_value_usd // cost)
@@ -258,6 +264,7 @@ def _near_median_pm_usd_for_multimarket(
     """
     near_median PM refill / top-up: per-leg USD = (pv × leverage × mm_notional_scale) / DEFAULT_MAX_TICKER_ENTRIES.
     IM gap uses snap.im_usage when present; else pos_notional / (pv × leverage).
+    Pair-count vs IM budget: $/pair = 2 × usd_per_leg; max_new_pairs ≈ avail / $/pair.
     """
     if args.usd is not None:
         return float(args.usd)
@@ -269,6 +276,7 @@ def _near_median_pm_usd_for_multimarket(
 
     lev = _multimarket_effective_leverage()
     slot = _near_median_slot_usd_per_leg(portfolio_value_usd=float(pv), leverage=int(lev))
+    pair_budget = _near_median_usd_per_pair_budget(usd_per_leg=float(slot))
     im_ratio, gap_ratio, avail_pv, src = _near_median_im_gap_metrics(
         snap=snap,
         portfolio_value_usd=float(pv),
@@ -290,7 +298,7 @@ def _near_median_pm_usd_for_multimarket(
         return None
 
     max_pairs = _near_median_max_pairs_from_available_position_value(
-        available_position_value_usd=avail_pv, usd_per_leg=slot
+        available_position_value_usd=avail_pv, usd_per_pair=pair_budget
     )
     im_line = (
         f"IM%={im_ratio * 100.0:.2f}% (im_usage from /api/portfolio)"
@@ -304,8 +312,9 @@ def _near_median_pm_usd_for_multimarket(
         f"PM(near_median): {jobs_tag} sizing — {im_line}; "
         f"gap={(gap_ratio * 100.0):.2f}% vs target {float(DEFAULT_IM_TARGET_PCT):g}% "
         f"→ available_position_value=${avail_pv:,.2f}; "
+        f"$/pair=${pair_budget:,.2f} (2×usd_per_leg); "
         f"usd_per_leg={slot:g} (pv×lev×mm_scale/{NEAR_MEDIAN_MAX_TICKER_ENTRIES}); "
-        f"max_new_pairs≈{max_pairs} (avail / 2×leg)."
+        f"max_new_pairs≈{max_pairs} (avail / $/pair)."
     )
     return float(slot)
 
@@ -983,6 +992,143 @@ def run_multimarket(
     return _run_script(script, cwd=_VARIBOT_DIR, args=cmd_args, timeout_s=None)
 
 
+def _read_multimarket_skew_rejected() -> List[Dict[str, str]]:
+    """skew_rejected rows written by multimarketorder._write_multimarket_last_result."""
+    try:
+        with open(MULTIMARKET_LAST_RESULT_JSON, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw = d.get("skew_rejected")
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, str]] = []
+    for x in raw:
+        if isinstance(x, dict) and x.get("asset"):
+            out.append(
+                {
+                    "asset": str(x.get("asset") or "").strip().upper(),
+                    "side": str(x.get("side") or "buy").strip().lower(),
+                }
+            )
+    return out
+
+
+def _take_side_candidates(candidates: Sequence[str], disallow: Set[str], need: int) -> List[str]:
+    if need <= 0:
+        return []
+    out: List[str] = []
+    for t in candidates:
+        sym = str(t).strip().upper()
+        if not sym or sym in disallow:
+            continue
+        if sym not in out:
+            out.append(sym)
+        if len(out) >= need:
+            break
+    return out
+
+
+def _near_median_substitute_skew_rejected_multimarket(
+    *,
+    ep: VariEndpoints,
+    args: argparse.Namespace,
+    strat_key: str,
+    listing_json: str,
+    jobs_tag: str,
+    usd: Optional[float],
+) -> None:
+    """
+    After multimarketorder records OI-skew / risk-cap rejects, open alternate tickers from the same
+    strategy ranked lists (excluding open book + failed symbols). Controlled by VARIBOT_SKEW_REPLACE_MAX_ROUNDS (default 1).
+    """
+    if _strategy_key_normalized(strat_key) != "near_median":
+        return
+    if not bool(args.live):
+        return
+    try:
+        max_rounds = max(1, int(os.getenv("VARIBOT_SKEW_REPLACE_MAX_ROUNDS", "1")))
+    except Exception:
+        max_rounds = 1
+
+    skew_symbols_failed: Set[str] = set()
+
+    for _ in range(max_rounds):
+        skew = _read_multimarket_skew_rejected()
+        if not skew:
+            return
+
+        try:
+            raw_pos = ep.get_positions()
+        except Exception as e:
+            _log(f"PM(near_median): skew substitution ({jobs_tag}) skipped — positions fetch failed ({e}).")
+            return
+
+        open_syms = {str(r.ticker).strip().upper() for r in positions_to_rows(raw_pos) if r.ticker}
+        for x in skew:
+            a = str(x.get("asset") or "").strip().upper()
+            if a:
+                skew_symbols_failed.add(a)
+        disallow = set(open_syms) | set(skew_symbols_failed)
+
+        n_buy = sum(1 for x in skew if str(x.get("side") or "").lower() in ("buy", "b"))
+        n_sell = sum(1 for x in skew if str(x.get("side") or "").lower() in ("sell", "s"))
+
+        top_n = _top_n_for_strategy(strat_key)
+        try:
+            longs, shorts, meta = run_strategy_pick_tickers(
+                strategy_key=strat_key,
+                listing_json=listing_json,
+                top_n=top_n,
+            )
+        except Exception as e:
+            _log(f"PM(near_median): skew substitution ({jobs_tag}) — strategy refresh failed ({type(e).__name__}: {e}).")
+            return
+
+        new_l = _take_side_candidates(longs, disallow, n_buy)
+        new_s = _take_side_candidates(shorts, disallow, n_sell)
+
+        if not new_l and not new_s:
+            _log(
+                f"PM(near_median): skew substitution ({jobs_tag}) — no alternate tickers "
+                f"(need buy×{n_buy} sell×{n_sell}; strategy={meta.get('strategy')})."
+            )
+            return
+
+        _log(
+            f"PM(near_median): skew substitution ({jobs_tag}) — venue blocked {skew}; "
+            f"retry longs={new_l} shorts={new_s} (same sizing mode as parent multimarket)."
+        )
+
+        if usd is not None:
+            rc2 = run_multimarket(
+                multi_script=str(args.multi_script),
+                longs=new_l,
+                shorts=new_s,
+                usd=float(usd),
+                live=True,
+            )
+        else:
+            pct = _resolve_im_target_pct_for_multimarket(
+                strategy_key=strat_key,
+                n_long=len(new_l),
+                n_short=len(new_s),
+                args_im_target_pct=(
+                    float(args.im_target_pct) if args.im_target_pct is not None else None
+                ),
+            )
+            rc2 = run_multimarket(
+                multi_script=str(args.multi_script),
+                longs=new_l,
+                shorts=new_s,
+                im_target_pct=pct,
+                live=True,
+            )
+
+        if int(rc2) == 0:
+            _log_post_multimarket_positions_tally(ep=ep, longs=new_l, shorts=new_s)
+
+
 def build_endpoints() -> Tuple[Any, VariEndpoints]:
     cfg = load_config()
     ep = VariEndpoints(
@@ -1227,7 +1373,7 @@ def _funding_pairs_manager(
             if new_long and new_short:
                 _log(f"funding_pairs manager: opening replacement for slot {slot_i}: LONG {new_long} / SHORT {new_short}")
                 if args.usd is not None:
-                    run_multimarket(
+                    rc_mm = run_multimarket(
                         multi_script=str(args.multi_script),
                         longs=[new_long],
                         shorts=[new_short],
@@ -1243,13 +1389,15 @@ def _funding_pairs_manager(
                             float(args.im_target_pct) if args.im_target_pct is not None else None
                         ),
                     )
-                    run_multimarket(
+                    rc_mm = run_multimarket(
                         multi_script=str(args.multi_script),
                         longs=[new_long],
                         shorts=[new_short],
                         im_target_pct=pct,
                         live=True,
                     )
+                if int(rc_mm) == 0:
+                    _log_post_multimarket_positions_tally(ep=ep, longs=[new_long], shorts=[new_short])
                 try:
                     funding_pairs_mod.replace_state_pair_slot(
                         state_json_path=None,
@@ -1478,7 +1626,7 @@ def _near_median_pm_manager(
         return
 
     lev_m = _multimarket_effective_leverage()
-    leg_for_budget = (
+    leg_refill = (
         float(args.usd)
         if args.usd is not None
         else _near_median_slot_usd_per_leg(
@@ -1486,6 +1634,7 @@ def _near_median_pm_manager(
             leverage=int(lev_m),
         )
     )
+    pair_budget_refill = _near_median_usd_per_pair_budget(usd_per_leg=float(leg_refill))
 
     _im_r, gap_r, avail_pv, _im_src = _near_median_im_gap_metrics(
         snap=snap_after,
@@ -1495,13 +1644,13 @@ def _near_median_pm_manager(
     )
     max_pairs_budget = _near_median_max_pairs_from_available_position_value(
         available_position_value_usd=float(avail_pv),
-        usd_per_leg=float(leg_for_budget),
+        usd_per_pair=float(pair_budget_refill),
     )
     need_pairs = min(int(n_pairs), int(max_pairs_budget))
     if need_pairs <= 0:
         _log(
             f"PM(near_median): skip refill — IM%={_im_r * 100.0:.2f}% leaves "
-            f"available_position_value=${avail_pv:,.2f} (< 2×leg for one pair at ${leg_for_budget:g})."
+            f"available_position_value=${avail_pv:,.2f} (< $/pair for one pair at ${pair_budget_refill:,.2f})."
         )
         return
     if need_pairs < int(n_pairs):
@@ -1573,13 +1722,24 @@ def _near_median_pm_manager(
         f"PM(near_median): opening replacements (strategy={meta.get('strategy')}) "
         f"pairs={n_do} longs={len(repl_l)} shorts={len(repl_s)}..."
     )
-    run_multimarket(
+    rc_mm = run_multimarket(
         multi_script=str(args.multi_script),
         longs=repl_l,
         shorts=repl_s,
         usd=float(usd_run),
         live=bool(args.live),
     )
+    if bool(args.live) and int(rc_mm) == 0:
+        _log_post_multimarket_positions_tally(ep=ep, longs=repl_l, shorts=repl_s)
+    if bool(args.live):
+        _near_median_substitute_skew_rejected_multimarket(
+            ep=ep,
+            args=args,
+            strat_key=strat_key,
+            listing_json=listing_json,
+            jobs_tag="PM refill",
+            usd=float(usd_run),
+        )
 
 
 def _near_median_topup_if_needed(
@@ -1593,9 +1753,9 @@ def _near_median_topup_if_needed(
     """
     Top-up adds paired long/short slots toward DEFAULT_MAX_TICKER_ENTRIES when affordable.
 
-    IM% (book) = sum(abs position value) / (portfolio_value_usd × leverage).
-    Gap vs DEFAULT_IM_TARGET_PCT × pv × lev = available position value → caps how many new pairs fit
-    (~2×usd_per_leg per pair). Need not reach 20 tickers if budget is smaller.
+    IM gap uses snap.im_usage when present; else pos_notional / (pv × leverage).
+    available_position_value → max_new_pairs ≈ avail / $/pair with
+    $/pair = 2 × usd_per_leg (same leg size as pv×lev×mm_scale/N or --usd). Need not reach target tickers if budget is smaller.
 
     Book / positions are evaluated before IM gap (cycle 1 logs an explicit init inventory so startup
     does not look like a blind IM-only no-op).
@@ -1664,9 +1824,10 @@ def _near_median_topup_if_needed(
         if args.usd is not None
         else _near_median_slot_usd_per_leg(portfolio_value_usd=float(pv), leverage=int(lev_m))
     )
+    pair_budget_top = _near_median_usd_per_pair_budget(usd_per_leg=float(slot_pre))
     max_pairs_budget = _near_median_max_pairs_from_available_position_value(
         available_position_value_usd=float(avail_pv),
-        usd_per_leg=float(slot_pre),
+        usd_per_pair=float(pair_budget_top),
     )
 
     if _im_src == "im_usage":
@@ -1674,7 +1835,8 @@ def _near_median_topup_if_needed(
             f"PM(near_median): IM%={im_ratio * 100.0:.2f}% (im_usage from /api/portfolio); "
             f"gap={(gap_ratio * 100.0):.2f}% vs target {float(DEFAULT_IM_TARGET_PCT):g}% "
             f"→ available_position_value=${avail_pv:,.2f}; "
-            f"max_new_pairs≈{max_pairs_budget} at ~2×${slot_pre:g}/pair."
+            f"max_new_pairs≈{max_pairs_budget} at ${pair_budget_top:,.2f}/pair "
+            f"(2×usd_per_leg={slot_pre:g})."
         )
     else:
         _log(
@@ -1682,7 +1844,8 @@ def _near_median_topup_if_needed(
             f"(fallback pos_notional ${pos_notional:,.2f} / (pv×lev)="
             f"${float(pv) * float(lev_m):,.2f}); gap={(gap_ratio * 100.0):.2f}% vs target "
             f"{float(DEFAULT_IM_TARGET_PCT):g}% → available_position_value=${avail_pv:,.2f}; "
-            f"max_new_pairs≈{max_pairs_budget} at ~2×${slot_pre:g}/pair."
+            f"max_new_pairs≈{max_pairs_budget} at ${pair_budget_top:,.2f}/pair "
+            f"(2×usd_per_leg={slot_pre:g})."
         )
 
     if gap_ratio <= 0.0:
@@ -1774,13 +1937,24 @@ def _near_median_topup_if_needed(
     )
     if usd_run is None:
         return
-    run_multimarket(
+    rc_mm = run_multimarket(
         multi_script=str(args.multi_script),
         longs=add_l,
         shorts=add_s,
         usd=float(usd_run),
         live=bool(args.live),
     )
+    if bool(args.live) and int(rc_mm) == 0:
+        _log_post_multimarket_positions_tally(ep=ep, longs=add_l, shorts=add_s)
+    if bool(args.live):
+        _near_median_substitute_skew_rejected_multimarket(
+            ep=ep,
+            args=args,
+            strat_key=strat_key,
+            listing_json=listing_json,
+            jobs_tag="PM top-up",
+            usd=float(usd_run),
+        )
 
 
 def one_cycle(
@@ -1878,6 +2052,17 @@ def one_cycle(
             _log(f"{args.multi_script} exited {rc}")
         else:
             _log(f"step: {args.multi_script} finished OK")
+            if bool(args.live):
+                _log_post_multimarket_positions_tally(ep=ep, longs=longs, shorts=shorts)
+        if _strategy_key_normalized(strat_key) == "near_median" and bool(args.live):
+            _near_median_substitute_skew_rejected_multimarket(
+                ep=ep,
+                args=args,
+                strat_key=strat_key,
+                listing_json=listing_json,
+                jobs_tag="flat entry",
+                usd=float(args.usd) if args.usd is not None else None,
+            )
         return False
 
     # --- have positions ---
@@ -2110,6 +2295,7 @@ def _child_main() -> int:
         if args.once:
             return 0
 
+        _log("cycle: complete.")
         if ti_just_closed:
             delay = _TIME_IN_POSITION_POST_CLOSE_SLEEP_S
             _log(
