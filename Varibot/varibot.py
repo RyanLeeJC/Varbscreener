@@ -1014,6 +1014,28 @@ def _read_multimarket_skew_rejected() -> List[Dict[str, str]]:
     return out
 
 
+def _read_multimarket_slippage_exhausted() -> List[Dict[str, str]]:
+    """slippage_exhausted rows written by multimarketorder._write_multimarket_last_result."""
+    try:
+        with open(MULTIMARKET_LAST_RESULT_JSON, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw = d.get("slippage_exhausted")
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, str]] = []
+    for x in raw:
+        if isinstance(x, dict) and x.get("asset"):
+            out.append(
+                {
+                    "asset": str(x.get("asset") or "").strip().upper(),
+                    "side": str(x.get("side") or "buy").strip().lower(),
+                }
+            )
+    return out
+
+
 def _take_side_candidates(candidates: Sequence[str], disallow: Set[str], need: int) -> List[str]:
     if need <= 0:
         return []
@@ -1039,8 +1061,9 @@ def _near_median_substitute_skew_rejected_multimarket(
     usd: Optional[float],
 ) -> None:
     """
-    After multimarketorder records OI-skew / risk-cap rejects, open alternate tickers from the same
-    strategy ranked lists (excluding open book + failed symbols). Controlled by VARIBOT_SKEW_REPLACE_MAX_ROUNDS (default 1).
+    After multimarketorder records OI-skew / risk-cap rejects or SlippageExhausted (all slippage retries
+    failed), open alternate tickers from the same strategy ranked lists (excluding open book + failed
+    symbols). Controlled by VARIBOT_SKEW_REPLACE_MAX_ROUNDS (default 1).
     """
     if _strategy_key_normalized(strat_key) != "near_median":
         return
@@ -1051,28 +1074,32 @@ def _near_median_substitute_skew_rejected_multimarket(
     except Exception:
         max_rounds = 1
 
-    skew_symbols_failed: Set[str] = set()
+    symbols_failed: Set[str] = set()
 
     for _ in range(max_rounds):
         skew = _read_multimarket_skew_rejected()
-        if not skew:
+        slip = _read_multimarket_slippage_exhausted()
+        rejects: List[Dict[str, str]] = list(skew) + list(slip)
+        if not rejects:
             return
 
         try:
             raw_pos = ep.get_positions()
         except Exception as e:
-            _log(f"PM(near_median): skew substitution ({jobs_tag}) skipped — positions fetch failed ({e}).")
+            _log(
+                f"PM(near_median): reject substitution ({jobs_tag}) skipped — positions fetch failed ({e})."
+            )
             return
 
         open_syms = {str(r.ticker).strip().upper() for r in positions_to_rows(raw_pos) if r.ticker}
-        for x in skew:
+        for x in rejects:
             a = str(x.get("asset") or "").strip().upper()
             if a:
-                skew_symbols_failed.add(a)
-        disallow = set(open_syms) | set(skew_symbols_failed)
+                symbols_failed.add(a)
+        disallow = set(open_syms) | set(symbols_failed)
 
-        n_buy = sum(1 for x in skew if str(x.get("side") or "").lower() in ("buy", "b"))
-        n_sell = sum(1 for x in skew if str(x.get("side") or "").lower() in ("sell", "s"))
+        n_buy = sum(1 for x in rejects if str(x.get("side") or "").lower() in ("buy", "b"))
+        n_sell = sum(1 for x in rejects if str(x.get("side") or "").lower() in ("sell", "s"))
 
         top_n = _top_n_for_strategy(strat_key)
         try:
@@ -1082,7 +1109,10 @@ def _near_median_substitute_skew_rejected_multimarket(
                 top_n=top_n,
             )
         except Exception as e:
-            _log(f"PM(near_median): skew substitution ({jobs_tag}) — strategy refresh failed ({type(e).__name__}: {e}).")
+            _log(
+                f"PM(near_median): reject substitution ({jobs_tag}) — strategy refresh failed "
+                f"({type(e).__name__}: {e})."
+            )
             return
 
         new_l = _take_side_candidates(longs, disallow, n_buy)
@@ -1090,13 +1120,14 @@ def _near_median_substitute_skew_rejected_multimarket(
 
         if not new_l and not new_s:
             _log(
-                f"PM(near_median): skew substitution ({jobs_tag}) — no alternate tickers "
+                f"PM(near_median): reject substitution ({jobs_tag}) — no alternate tickers "
                 f"(need buy×{n_buy} sell×{n_sell}; strategy={meta.get('strategy')})."
             )
             return
 
         _log(
-            f"PM(near_median): skew substitution ({jobs_tag}) — venue blocked {skew}; "
+            f"PM(near_median): reject substitution ({jobs_tag}) — venue blocked skew={skew} "
+            f"slippage_exhausted={slip}; "
             f"retry longs={new_l} shorts={new_s} (same sizing mode as parent multimarket)."
         )
 

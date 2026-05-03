@@ -30,23 +30,41 @@ def _write_multimarket_last_result(
     orders_out: List[Dict[str, Any]],
     *,
     skew_extra: Optional[List[Dict[str, str]]] = None,
+    slippage_extra: Optional[List[Dict[str, str]]] = None,
 ) -> None:
-    """Persist skew-risk rejects so varibot can pick alternate symbols from the strategy lists."""
+    """Persist venue rejects so varibot can substitute tickers (OI skew / slippage exhausted)."""
     skew: List[Dict[str, str]] = []
+    slip: List[Dict[str, str]] = []
     for o in orders_out:
         err = o.get("error") if isinstance(o, dict) else None
-        if isinstance(err, dict) and err.get("type") == "OiSkewRiskCapReject":
+        if not isinstance(err, dict):
+            continue
+        et = err.get("type")
+        if et == "OiSkewRiskCapReject":
             skew.append(
                 {
                     "asset": str(o.get("asset") or "").strip().upper(),
                     "side": str(o.get("side") or "").strip().lower(),
                 }
             )
+        elif et == "SlippageExhausted":
+            slip.append(
+                {
+                    "asset": str(err.get("asset") or o.get("asset") or "").strip().upper(),
+                    "side": str(err.get("side") or o.get("side") or "").strip().lower(),
+                }
+            )
     if skew_extra:
         skew.extend(skew_extra)
+    if slippage_extra:
+        slip.extend(slippage_extra)
     try:
         with open(MULTIMARKET_LAST_RESULT_JSON, "w", encoding="utf-8") as f:
-            json.dump({"skew_rejected": skew, "ts": time.time()}, f, indent=2)
+            json.dump(
+                {"skew_rejected": skew, "slippage_exhausted": slip, "ts": time.time()},
+                f,
+                indent=2,
+            )
     except OSError:
         pass
 
@@ -735,6 +753,35 @@ def main() -> int:
                                     "message": snippet or "Venue risk: OI skew / FDV skew limit",
                                 }
                                 break
+                            blob = _flatten_resp_text(resp)
+                            if attempt >= int(_MAX_LIVE_ATTEMPTS):
+                                item["steps"]["order_response"] = resp
+                                attempts.append(
+                                    {
+                                        "attempt": attempt,
+                                        "max_slippage": float(slip),
+                                        "ok": False,
+                                        "error": {"message": (blob[:400] + "…") if len(blob) > 400 else blob},
+                                    }
+                                )
+                                if _looks_like_slippage_reject(blob):
+                                    msg = (blob[:500] + "…") if len(blob) > 500 else blob
+                                    item["error"] = {
+                                        "type": "SlippageExhausted",
+                                        "asset": str(asset).strip().upper(),
+                                        "side": str(side).strip().lower(),
+                                        "message": msg,
+                                    }
+                                    print(
+                                        f"Slippage cap exhausted for {asset} ({side}) after "
+                                        f"{int(_MAX_LIVE_ATTEMPTS)} attempts; use alternate ticker."
+                                    )
+                                    break
+                                item["error"] = {
+                                    "type": "OrderRejected",
+                                    "message": f"order rejected after {attempt} attempts (status={resp.get('status')})",
+                                }
+                                break
                             raise RuntimeError(f"order rejected (status={resp.get('status')})")
                         item["steps"]["order_response"] = resp
                         item["steps"]["rfq_id"] = _extract_rfq_id(resp)
@@ -752,6 +799,19 @@ def main() -> int:
                             }
                         )
                         if attempt >= int(_MAX_LIVE_ATTEMPTS):
+                            em = str(e)
+                            if _looks_like_slippage_reject(em):
+                                item["error"] = {
+                                    "type": "SlippageExhausted",
+                                    "asset": str(asset).strip().upper(),
+                                    "side": str(side).strip().lower(),
+                                    "message": em[:500],
+                                }
+                                print(
+                                    f"Slippage cap exhausted for {asset} ({side}) after "
+                                    f"{int(_MAX_LIVE_ATTEMPTS)} attempts; use alternate ticker."
+                                )
+                                break
                             raise
                         time.sleep(0.5)
 
