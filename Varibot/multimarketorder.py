@@ -854,6 +854,7 @@ def main() -> int:
         return 0
 
     skew_extra_from_reattempt: List[Dict[str, str]] = []
+    slippage_extra_from_reattempt: List[Dict[str, str]] = []
 
     # Compact live confirmation (best-effort).
     # Also reconcile against /api/positions to detect any missing tickers after entry.
@@ -957,7 +958,36 @@ def main() -> int:
                 "NOTE: venue OI skew / risk cap (no slippage fix): "
                 f"{', '.join(sorted(risk_skip_syms))}"
             )
-    _write_multimarket_last_result(orders_out, skew_extra=skew_extra_from_reattempt or None)
+
+        # Still missing after all slippage rounds → same substitute path as SlippageExhausted (Varibot reads JSON).
+        # Skew-only failures are already in skew_extra_from_reattempt; do not duplicate those here.
+        try:
+            seen_final = _fetch_positions_underlyings(ep)
+            still_missing = set(expected_syms) - set(seen_final)
+        except Exception:
+            still_missing = set(missing2)
+        for sym in sorted(still_missing):
+            if sym in risk_skip_syms:
+                continue
+            side_fm = "buy"
+            for j in jobs:
+                if str(j.get("asset") or "").strip().upper() == sym:
+                    side_fm = str(j.get("side") or "buy").strip().lower()
+                    break
+            slippage_extra_from_reattempt.append(
+                {"asset": str(sym).strip().upper(), "side": str(side_fm).strip().lower()}
+            )
+        if slippage_extra_from_reattempt:
+            print(
+                "NOTE: position(s) still missing after slippage reattempts — "
+                "will try alternate tickers (Varibot): "
+                f"{', '.join(sorted(x['asset'] for x in slippage_extra_from_reattempt))}"
+            )
+    _write_multimarket_last_result(
+        orders_out,
+        skew_extra=skew_extra_from_reattempt or None,
+        slippage_extra=slippage_extra_from_reattempt or None,
+    )
     return 0
 
 
