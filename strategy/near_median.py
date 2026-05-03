@@ -34,11 +34,11 @@ DEFAULT_RANK_BY: RankBy = "market_cap"
 # - "60"    → take Top 60 by the rank metric
 # - "21-60" → take ranks 21..60 by the rank metric (inclusive)
 # Note: the final count must be even (for 50/50 long/short split).
-DEFAULT_TOP_SPEC: str = "80"
+DEFAULT_TOP_SPEC: str = "120"
 
 # Max tickers to target for entries / portfolio sizing (even total before 50/50 split).
 # Does not trim long/short candidate lists returned from pick_tickers (those include the full rank window).
-DEFAULT_MAX_TICKER_ENTRIES: int = 20
+DEFAULT_MAX_TICKER_ENTRIES: int = 40
 
 # Default exclude list (unioned with `TICKER_BLACKLIST`).
 DEFAULT_EXCLUDE_CSV: str = "BTC,ETH"
