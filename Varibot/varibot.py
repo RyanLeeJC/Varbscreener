@@ -84,6 +84,15 @@ _VARIBOT_WRAPPED_ENV: str = "VARIBOT_WRAPPED"
 POST_MULTIMARKET_POSITIONS_MAX_WAIT_S: float = 2.0
 POST_MULTIMARKET_POSITIONS_POLL_S: float = 0.5
 
+# Reduce-only pair closes (PM near_median, funding_pairs; _close_reduce_only_with_slippage_steps).
+# Same defaults as multimarketorder.py (_DEFAULT_MAX_SLIPPAGE / _SLIPPAGE_RETRY_INCREMENT / _MAX_LIVE_ATTEMPTS).
+# Default max slippage when MAX_SLIPPAGE env is unset (fraction of notional).
+_DEFAULT_MAX_SLIPPAGE: float = 0.0005
+
+# Retry behavior for reduce-only closes (same values as multimarketorder.py).
+_SLIPPAGE_RETRY_INCREMENT: float = 0.0005
+_MAX_LIVE_ATTEMPTS: int = 6
+
 # Local debugging: write the strategy output we *actually used* to Varibot/strategy_output.json
 # Set VARIBOT_WRITE_STRATEGY_OUTPUT=1 to enable (local only; ignored on Railway).
 _VARIBOT_WRITE_STRATEGY_OUTPUT_ENV: str = "VARIBOT_WRITE_STRATEGY_OUTPUT"
@@ -991,7 +1000,7 @@ def _resolve_max_slippage() -> float:
             return float(v)
     except Exception:
         pass
-    return 0.0025
+    return float(_DEFAULT_MAX_SLIPPAGE)
 
 
 def _looks_like_slippage_reject(msg: str) -> bool:
@@ -1030,7 +1039,7 @@ def _close_reduce_only_with_slippage_steps(
     qty_abs: float,
     close_side: str,
     max_slip: float,
-    max_attempts: int = 7,
+    max_attempts: int = _MAX_LIVE_ATTEMPTS,
 ) -> None:
     from variationalbot.vari.endpoints import Instrument  # local import
 
@@ -1039,7 +1048,7 @@ def _close_reduce_only_with_slippage_steps(
 
     last_err: Optional[Exception] = None
     for attempt in range(1, int(max_attempts) + 1):
-        slip = float(max_slip) + float(attempt - 1) * 0.0005
+        slip = float(max_slip) + float(attempt - 1) * float(_SLIPPAGE_RETRY_INCREMENT)
         try:
             qresp = ep.quote_indicative_simple(instrument=instrument, qty=float(qty_abs))
             if isinstance(qresp, dict):
@@ -1177,7 +1186,6 @@ def _funding_pairs_manager(
                 qty_abs=float(qty_abs),
                 close_side=str(close_side),
                 max_slip=float(max_slip),
-                max_attempts=7,
             )
 
         # Open a replacement pair for that slot (best-effort).
@@ -1414,7 +1422,6 @@ def _near_median_pm_manager(
                 qty_abs=float(qty_abs),
                 close_side=str(close_side),
                 max_slip=float(max_slip),
-                max_attempts=7,
             )
             closed_syms.add(str(sym).strip().upper())
 

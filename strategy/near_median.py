@@ -15,7 +15,8 @@ STRATEGY_NAME: str = "near_median"
 TRADE_THESIS: str = (
     "Core thesis: In a market-cap-ranked universe (excluding BTC/ETH), after liquidity filters, split the window "
     "by 24h return: long the stronger half and short the weaker half. "
-    "max_ticker_entries caps portfolio entry count / sizing targets, not the candidate lists passed to the orchestrator."
+    "If more names pass filters than max_ticker_entries, keep those closest to the cross-sectional median 24h change "
+    "and drop the rest before the split."
 )
 
 # When running this strategy standalone, also write a human-readable table to Varibot/strategy_output.txt.
@@ -36,8 +37,8 @@ DEFAULT_RANK_BY: RankBy = "market_cap"
 # Note: the final count must be even (for 50/50 long/short split).
 DEFAULT_TOP_SPEC: str = "120"
 
-# Max tickers to target for entries / portfolio sizing (even total before 50/50 split).
-# Does not trim long/short candidate lists returned from pick_tickers (those include the full rank window).
+# Max tickers returned from pick_tickers (even total before 50/50 split). When the filtered rank window is larger,
+# names farthest from cross-sectional median 24h change are dropped first (see _near_median_subset).
 DEFAULT_MAX_TICKER_ENTRIES: int = 40
 
 # Default exclude list (unioned with `TICKER_BLACKLIST`).
@@ -328,8 +329,8 @@ def _split_long_short_by_24h_change(universe: Sequence[ListingRow]) -> Tuple[flo
 
 def _near_median_subset(universe: Sequence[ListingRow], *, k: int) -> List[ListingRow]:
     """
-    Pick the k tickers closest to the cross-sectional median 24h change.
-    Used for research/backtest parity; pick_tickers uses the full filtered rank window for long/short lists.
+    Pick the k tickers closest to the cross-sectional median 24h change (drops the farthest first).
+    Used when capping pick_tickers to DEFAULT_MAX_TICKER_ENTRIES and for research/backtest parity.
     """
     kk = int(k)
     if kk <= 0:
@@ -389,6 +390,18 @@ def pick_tickers(
                 continue
         filtered.append(r)
 
+    max_k = int(DEFAULT_MAX_TICKER_ENTRIES)
+    if max_k < 2:
+        raise ValueError("DEFAULT_MAX_TICKER_ENTRIES must be >= 2")
+    if max_k % 2 != 0:
+        max_k -= 1
+
+    filtered_count_before_cap = len(filtered)
+    capped_to_max_entries = False
+    if len(filtered) > max_k:
+        filtered = _near_median_subset(filtered, k=max_k)
+        capped_to_max_entries = True
+
     # Ensure even count for 50/50 split by dropping the last element (Option A) if needed.
     filtered_adjusted = False
     if len(filtered) % 2 != 0:
@@ -402,8 +415,6 @@ def pick_tickers(
 
     universe = filtered
 
-    # Full filtered rank window: longs = stronger half by 24h chg, shorts = weaker half (same rule as before,
-    # but without trimming to DEFAULT_MAX_TICKER_ENTRIES first — that cap is for entry targets only).
     median_24h_chg_pct, longs, shorts = _split_long_short_by_24h_change(universe)
 
     meta: Dict[str, Any] = {
@@ -414,6 +425,9 @@ def pick_tickers(
         "mode": "near_median",
         "pick_mode": "near_median",
         "max_ticker_entries": int(DEFAULT_MAX_TICKER_ENTRIES),
+        "max_entry_cap_effective": int(max_k),
+        "filtered_count_before_cap": int(filtered_count_before_cap),
+        "capped_to_max_entries": bool(capped_to_max_entries),
         "median_24h_chg_pct": median_24h_chg_pct,
         "top_spec": (f"{start_rank}-{end_rank}" if start_rank != 1 else str(end_rank)),
         "top_n": len(universe),
@@ -450,7 +464,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-ticker-entries",
         type=int,
         default=DEFAULT_MAX_TICKER_ENTRIES,
-        help=f"Total tickers to trade (default {DEFAULT_MAX_TICKER_ENTRIES}); must be even.",
+        help=(
+            f"Max tickers returned (default {DEFAULT_MAX_TICKER_ENTRIES}). "
+            f"If the filter set is larger, names farthest from median 24h change are dropped; odd values use cap−1."
+        ),
     )
     ap.add_argument(
         "--exclude",

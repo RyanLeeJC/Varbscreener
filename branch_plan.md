@@ -1,5 +1,16 @@
 # Branch plan (feature/bot-function-redesign)
 
+prompts for live/ dry test
+
+Dry-run (no real orders):
+cd /Users/ryanlee/Documents/Dev/Vari/Varibot && python3 varibot.py
+
+Live trading:
+cd /Users/ryanlee/Documents/Dev/Vari/Varibot && python3 varibot.py --live
+
+One cycle then exit (handy for testing):
+cd /Users/ryanlee/Documents/Dev/Vari/Varibot && python3 varibot.py --once
+
 ## Goal
 
 In this branch, the bot becomes **more involved and active in closing pairs of tickers** during the interval portfolio check (aligned to `CHECK_INTERVAL_MIN`), instead of relying on a scheduled session close-all at `STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN` (and instead of only using a whole-portfolio PnL trigger to flatten everything).

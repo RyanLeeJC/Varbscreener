@@ -21,7 +21,7 @@ from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 from variationalbot.vari.endpoints import Instrument
 
 # Used when neither --usd nor --im-target-pct is passed (change here to retarget default sizing).
-DEFAULT_IM_TARGET_PCT: float = 75.0
+DEFAULT_IM_TARGET_PCT: float = 50.0
 # Omni UI: for the same book, MM usage is ~half of IM usage (MM requirement ≈ ½ × IM requirement).
 # User PCT is interpreted on that MM-style budget; scale notional by ½ vs naive (pv×lev×pct) IM math.
 IM_TARGET_MM_NOTIONAL_SCALE: float = 0.5
@@ -50,7 +50,7 @@ _POST_ENTRY_POSITIONS_MAX_WAIT_S: float = 2.0
 _POST_ENTRY_POSITIONS_POLL_S: float = 0.5
 
 # Retry behavior for *this* script only (intentionally independent from closeallpositions.py).
-_SLIPPAGE_RETRY_INCREMENT: float = 0.0003
+_SLIPPAGE_RETRY_INCREMENT: float = 0.0005
 _MAX_LIVE_ATTEMPTS: int = 6
 
 # If you re-enable/extend position-verification helpers, these defaults are used for polling.
