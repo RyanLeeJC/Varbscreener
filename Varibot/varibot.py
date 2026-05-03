@@ -126,7 +126,6 @@ from variationalbot.vari import VariAuth, VariClient, VariEndpoints  # noqa: E40
 from multimarketorder import (  # noqa: E402
     DEFAULT_IM_TARGET_PCT,
     DEFAULT_LEVERAGE as MULTIMARKET_DEFAULT_LEVERAGE,
-    IM_TARGET_MM_NOTIONAL_SCALE,
     MULTIMARKET_LAST_RESULT_JSON,
     USD_NOTIONAL_ROUND_STEP,
     _order_response_rejected,
@@ -247,9 +246,9 @@ def _near_median_align_pair_candidates(
 
 
 def _near_median_slot_usd_per_leg(*, portfolio_value_usd: float, leverage: int) -> float:
-    raw = (
-        float(portfolio_value_usd) * float(leverage) * float(IM_TARGET_MM_NOTIONAL_SCALE)
-    ) / float(NEAR_MEDIAN_MAX_TICKER_ENTRIES)
+    """Per-leg USD slot: pv × leverage × (DEFAULT_IM_TARGET_PCT/100) / NEAR_MEDIAN_MAX_TICKER_ENTRIES (50 → 0.5)."""
+    im_frac = float(DEFAULT_IM_TARGET_PCT) / 100.0
+    raw = (float(portfolio_value_usd) * float(leverage) * im_frac) / float(NEAR_MEDIAN_MAX_TICKER_ENTRIES)
     step = float(USD_NOTIONAL_ROUND_STEP)
     return float(math.ceil(raw / step) * step)
 
@@ -262,7 +261,7 @@ def _near_median_pm_usd_for_multimarket(
     book_pos_notional_usd: Optional[float] = None,
 ) -> Optional[float]:
     """
-    near_median PM refill / top-up: per-leg USD = (pv × leverage × mm_notional_scale) / DEFAULT_MAX_TICKER_ENTRIES.
+    near_median PM refill / top-up: per-leg USD = (pv × leverage × DEFAULT_IM_TARGET_PCT/100) / DEFAULT_MAX_TICKER_ENTRIES.
     IM gap uses snap.im_usage when present; else pos_notional / (pv × leverage).
     Pair-count vs IM budget: $/pair = 2 × usd_per_leg; max_new_pairs ≈ avail / $/pair.
     """
@@ -313,7 +312,7 @@ def _near_median_pm_usd_for_multimarket(
         f"gap={(gap_ratio * 100.0):.2f}% vs target {float(DEFAULT_IM_TARGET_PCT):g}% "
         f"→ available_position_value=${avail_pv:,.2f}; "
         f"$/pair=${pair_budget:,.2f} (2×usd_per_leg); "
-        f"usd_per_leg={slot:g} (pv×lev×mm_scale/{NEAR_MEDIAN_MAX_TICKER_ENTRIES}); "
+        f"usd_per_leg={slot:g} (pv×lev×({DEFAULT_IM_TARGET_PCT:g}%/100)/{NEAR_MEDIAN_MAX_TICKER_ENTRIES}); "
         f"max_new_pairs≈{max_pairs} (avail / $/pair)."
     )
     return float(slot)
@@ -1786,7 +1785,7 @@ def _near_median_topup_if_needed(
 
     IM gap uses snap.im_usage when present; else pos_notional / (pv × leverage).
     available_position_value → max_new_pairs ≈ avail / $/pair with
-    $/pair = 2 × usd_per_leg (same leg size as pv×lev×mm_scale/N or --usd). Need not reach target tickers if budget is smaller.
+    $/pair = 2 × usd_per_leg (same leg size as pv×lev×(DEFAULT_IM_TARGET_PCT/100)/N or --usd). Need not reach target tickers if budget is smaller.
 
     Book / positions are evaluated before IM gap (cycle 1 logs an explicit init inventory so startup
     does not look like a blind IM-only no-op).
@@ -2187,8 +2186,8 @@ def parse_args() -> argparse.Namespace:
         dest="im_target_pct",
         metavar="PCT",
         help=(
-            "Multimarket sizing: per-order USD = (portfolio_value_usd × leverage × PCT/100 × "
-            f"{IM_TARGET_MM_NOTIONAL_SCALE:g}) / n_orders (Omni MM≈IM/2 scale; see multimarketorder). "
+            "Multimarket sizing (multimarketorder --im-target-pct): per-order USD = "
+            "(portfolio_value_usd × leverage × PCT/100) / n_orders (see multimarketorder). "
             f"If --usd is omitted and this is omitted, defaults to {DEFAULT_IM_TARGET_PCT:g}%% "
             "(non-funding_pairs strategies). "
             "For strategy funding_pairs, this flag is ignored unless you use --usd; "

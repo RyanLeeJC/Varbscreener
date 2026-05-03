@@ -71,9 +71,6 @@ def _write_multimarket_last_result(
 
 # Used when neither --usd nor --im-target-pct is passed (change here to retarget default sizing).
 DEFAULT_IM_TARGET_PCT: float = 50.0
-# Omni UI: for the same book, MM usage is ~half of IM usage (MM requirement ≈ ½ × IM requirement).
-# User PCT is interpreted on that MM-style budget; scale notional by ½ vs naive (pv×lev×pct) IM math.
-IM_TARGET_MM_NOTIONAL_SCALE: float = 0.5
 # Default --leverage: IM-target sizing (portfolio × this × PCT) and set_leverage API before each live order.
 # Same-named env overrides this (aligned with varibot._multimarket_effective_leverage).
 # If pool leverage stays below this while notionals are sized for higher leverage, IM usage rises faster than gap math.
@@ -298,9 +295,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PCT",
         dest="im_target_pct",
         help=(
-            f"Size each order as (portfolio_value_usd × --leverage × PCT/100 × {IM_TARGET_MM_NOTIONAL_SCALE:g}) "
-            f"/ number_of_orders (GET /api/portfolio?compute_margin=true). The ×{IM_TARGET_MM_NOTIONAL_SCALE:g} "
-            f"term maps user PCT to MM-style utilization on Omni (MM ≈ IM/2 for the same exposure). "
+            "Size each order as (portfolio_value_usd × --leverage × PCT/100) / number_of_orders "
+            "(GET /api/portfolio?compute_margin=true). "
             f"If --usd is omitted and this is omitted, defaults to {DEFAULT_IM_TARGET_PCT:g}%%. "
             "Do not pass both --usd and --im-target-pct."
         ),
@@ -578,16 +574,13 @@ def main() -> int:
         lev = int(args.leverage)
         n_jobs = len(jobs)
         raw_usd = (
-            portfolio_value_for_sizing
-            * float(lev)
-            * (pct / 100.0)
-            * float(IM_TARGET_MM_NOTIONAL_SCALE)
+            portfolio_value_for_sizing * float(lev) * (pct / 100.0)
         ) / float(n_jobs)
         step = float(USD_NOTIONAL_ROUND_STEP)
         usd_per_order = math.ceil(raw_usd / step) * step
         print(
             f"Sizing: portfolio_value_usd={portfolio_value_for_sizing} leverage={lev}x im_target_pct={pct}% "
-            f"mm_notional_scale={IM_TARGET_MM_NOTIONAL_SCALE} jobs={n_jobs} -> ${raw_usd:.2f} raw -> "
+            f"jobs={n_jobs} -> ${raw_usd:.2f} raw -> "
             f"${usd_per_order:.0f} per order (ceil to nearest ${step:g})"
         )
     else:
@@ -623,7 +616,7 @@ def main() -> int:
     }
     if args.usd is None:
         out["im_target_pct"] = float(args.im_target_pct)  # type: ignore[arg-type]
-        out["im_target_mm_notional_scale"] = float(IM_TARGET_MM_NOTIONAL_SCALE)
+        out["im_target_mm_notional_scale"] = 1.0  # applied factor on (pv×lev×pct) per order in this script
         out["portfolio_value_usd_for_sizing"] = portfolio_value_for_sizing
 
     orders_out: List[Dict[str, Any]] = []
