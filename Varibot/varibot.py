@@ -128,6 +128,7 @@ from multimarketorder import (  # noqa: E402
     DEFAULT_LEVERAGE as MULTIMARKET_DEFAULT_LEVERAGE,
     IM_TARGET_MM_NOTIONAL_SCALE,
     USD_NOTIONAL_ROUND_STEP,
+    _order_response_rejected,
 )
 from strategy import strategies as strategies_mod  # noqa: E402
 from strategy import funding_pairs as funding_pairs_mod  # noqa: E402
@@ -1058,12 +1059,23 @@ def _close_reduce_only_with_slippage_steps(
             quote_id = _extract_quote_id(qresp)
             if not quote_id:
                 raise ValueError(f"indicative quote missing quote_id for {sym_u} qty={qty_abs}")
-            ep.place_order_market(
+            resp = ep.place_order_market(
                 quote_id=str(quote_id),
                 side=str(close_side),
                 max_slippage=float(slip),
                 is_reduce_only=True,
             )
+            # HTTP 200 with status=Rejected does not raise; treat like slippage failure and retry.
+            if _order_response_rejected(resp):
+                last_err = RuntimeError(
+                    f"close {sym_u} order rejected in API response (attempt {attempt}/{int(max_attempts)})"
+                )
+                if attempt < int(max_attempts):
+                    _log(f"{last_err}; retry with higher max_slippage...")
+                    time.sleep(0.25)
+                    continue
+                _log(f"ERROR: {last_err}; giving up this leg.")
+                return
 
             # confirm close by polling positions a few times
             time.sleep(1.0)
@@ -1075,7 +1087,21 @@ def _close_reduce_only_with_slippage_steps(
                     break
                 time.sleep(1.0)
             if not ok:
-                _log(f"WARNING: close submitted but {sym_u} still open after polling.")
+                last_err = RuntimeError(
+                    f"close submitted but {sym_u} still open after polling (attempt {attempt}/{int(max_attempts)})"
+                )
+                if attempt < int(max_attempts):
+                    _log(
+                        f"WARNING: close submitted but {sym_u} still open after polling; "
+                        f"retry {attempt + 1}/{int(max_attempts)} with higher max_slippage..."
+                    )
+                    time.sleep(0.25)
+                    continue
+                _log(
+                    f"ERROR: close submitted but {sym_u} still open after {int(max_attempts)} attempt(s); "
+                    "giving up this leg."
+                )
+                return
             return
         except Exception as e:
             last_err = e
