@@ -133,19 +133,19 @@ td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--text)}
   <div class="metric"><div class="metric-label">Total PnL</div><div class="metric-value __CLS_TOTAL__">__TOTAL_PNL__</div></div>
   <div class="metric"><div class="metric-label">Win rate</div><div class="metric-value neu">__WIN_RATE__</div></div>
   <div class="metric"><div class="metric-label">Wins / losses</div><div class="metric-value neu">__WINS_LOSSES__</div></div>
-  <div class="metric"><div class="metric-label">Active days</div><div class="metric-value neu">__ACTIVE_DAYS__</div></div>
+  <div class="metric"><div class="metric-label">__LBL_ACTIVE__</div><div class="metric-value neu">__ACTIVE_DAYS__</div></div>
   <div class="metric"><div class="metric-label">Sharpe Ratio</div><div class="metric-value neu">__SHARPE__</div></div>
-  <div class="metric"><div class="metric-label">Avg daily PnL</div><div class="metric-value __CLS_AVG__">__AVG_DAILY__</div></div>
+  <div class="metric"><div class="metric-label">__LBL_AVG_PNL__</div><div class="metric-value __CLS_AVG__">__AVG_DAILY__</div></div>
   <div class="metric"><div class="metric-label">Max drawdown</div><div class="metric-value neg">__MAX_DD__</div></div>
-  <div class="metric"><div class="metric-label">Worst day</div><div class="metric-value neg">__WORST_DAY__</div></div>
-  <div class="metric"><div class="metric-label">Best day</div><div class="metric-value pos">__BEST_DAY__</div></div>
+  <div class="metric"><div class="metric-label">__LBL_WORST__</div><div class="metric-value neg">__WORST_DAY__</div></div>
+  <div class="metric"><div class="metric-label">__LBL_BEST__</div><div class="metric-value pos">__BEST_DAY__</div></div>
 </div>
 
 <div class="section">
   <div class="section-title">Equity curve</div>
   <div class="legend">
     <span><span class="dot" style="background:#1D9E75"></span>Cumulative PnL</span>
-    <span><span class="dot" style="background:var(--dot-skip)"></span>BTC-filtered / skipped day</span>
+    <span><span class="dot" style="background:var(--dot-skip)"></span>__EQUITY_LEGEND_SKIP__</span>
   </div>
   <div class="chart-wrap" style="height:220px"><canvas id="equityChart"></canvas></div>
 </div>
@@ -220,6 +220,7 @@ const DATA = __DATA_JSON__;
 const THEME_KEY='vari_dashboard_theme';
 
 function fmtPnl(v){const a=Math.abs(v).toFixed(2);if(v>0)return'+$'+a;if(v<0)return'-$'+a;return'$'+a;}
+function fmtUsdAbs(v){const a=Math.abs(v).toFixed(2);return'$'+a;}
 function fmtPct(v){return (v>=0?'+':'')+v.toFixed(2)+'%'}
 
 function currentTheme(){
@@ -274,45 +275,61 @@ document.getElementById('themeToggle').addEventListener('click',function(){
 
 Chart.defaults.color=chartPalette().tick;
 
-window.__eqChart=new Chart(document.getElementById('equityChart'),{
-  type:'line',
-  data:{
-    labels:DATA.equity.map(function(d){return d.date.slice(5);}),
-    datasets:[{
-      label:'Equity',
-      data:DATA.equity.map(function(d){return d.equity;}),
-      borderColor:'#1D9E75',
-      borderWidth:2,
-      pointRadius:DATA.equity.map(function(d){return d.skipped?0:2;}),
-      pointBackgroundColor:'#1D9E75',
-      fill:true,
-      backgroundColor:chartPalette().eqFill,
-      tension:0.3,
-      segment:{
-        borderColor:function(ctx){
-          var sk=DATA.equity[ctx.p0DataIndex]&&DATA.equity[ctx.p0DataIndex].skipped;
-          return sk?chartPalette().skipSeg:'#1D9E75';
-        },
-        borderDash:function(ctx){
-          return DATA.equity[ctx.p0DataIndex]&&DATA.equity[ctx.p0DataIndex].skipped?[4,4]:[];
-        }
-      }
-    }]
-  },
-  options:{
-    responsive:true,maintainAspectRatio:false,
-    plugins:{legend:{display:false},tooltip:{callbacks:{
-      label:function(ctx){
-        var d=DATA.equity[ctx.dataIndex];
-        return (d.skipped?'[skipped] ':'')+fmtPnl(ctx.parsed.y);
-      }
-    }}},
-    scales:{
-      x:{ticks:{maxTicksLimit:10,color:chartPalette().tick},grid:{color:chartPalette().grid}},
-      y:{ticks:{color:chartPalette().tick,callback:function(v){return '$'+v.toFixed(0);}},grid:{color:chartPalette().grid}}
-    }
+(function(){
+  var eqStep=(DATA.meta&&DATA.meta.params&&DATA.meta.params.equity_curve_step)||'day';
+  var nEq=DATA.equity.length;
+  function eqXLabel(d){
+    if(d&&d.label)return d.label;
+    return d&&d.date?d.date.slice(5):'';
   }
-});
+  var xTickLimit=(eqStep==='session')?Math.min(Math.max(nEq,12),64):10;
+  var xMaxRot=(eqStep==='session')?55:0;
+  window.__eqChart=new Chart(document.getElementById('equityChart'),{
+    type:'line',
+    data:{
+      labels:DATA.equity.map(eqXLabel),
+      datasets:[{
+        label:'Equity',
+        data:DATA.equity.map(function(d){return d.equity;}),
+        borderColor:'#1D9E75',
+        borderWidth:2,
+        pointRadius:DATA.equity.map(function(d){return d.skipped?0:2;}),
+        pointBackgroundColor:'#1D9E75',
+        fill:true,
+        backgroundColor:chartPalette().eqFill,
+        tension:0.3,
+        segment:{
+          borderColor:function(ctx){
+            var sk=DATA.equity[ctx.p0DataIndex]&&DATA.equity[ctx.p0DataIndex].skipped;
+            return sk?chartPalette().skipSeg:'#1D9E75';
+          },
+          borderDash:function(ctx){
+            return DATA.equity[ctx.p0DataIndex]&&DATA.equity[ctx.p0DataIndex].skipped?[4,4]:[];
+          }
+        }
+      }]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{
+        title:function(items){
+          var d=DATA.equity[items[0].dataIndex];
+          if(!d)return '';
+          if(d.label&&d.date)return d.date+' · '+d.label;
+          return d.date||'';
+        },
+        label:function(ctx){
+          var d=DATA.equity[ctx.dataIndex];
+          return (d.skipped?'[skipped] ':'')+fmtPnl(ctx.parsed.y);
+        }
+      }}},
+      scales:{
+        x:{ticks:{maxTicksLimit:xTickLimit,maxRotation:xMaxRot,color:chartPalette().tick},grid:{color:chartPalette().grid}},
+        y:{ticks:{color:chartPalette().tick,callback:function(v){return '$'+v.toFixed(0);}},grid:{color:chartPalette().grid}}
+      }
+    }
+  });
+})();
 
 window.__dayChart=new Chart(document.getElementById('dailyChart'),{
   type:'bar',
@@ -672,6 +689,7 @@ function buildSessionTradeHistory(){
               '<thead><tr>'+
                 '<th class="sortable" data-key="ticker">Ticker<span class="sort-ind"></span></th>'+
                 '<th class="sortable" data-key="side">Side<span class="sort-ind"></span></th>'+
+                '<th class="sortable" data-key="notional">Notional<span class="sort-ind"></span></th>'+
                 '<th class="sortable" data-key="entryTime">Entry Time<span class="sort-ind"></span></th>'+
                 '<th class="sortable" data-key="entryPrice">Entry Price<span class="sort-ind"></span></th>'+
                 '<th class="sortable" data-key="exitTime">Exit Time<span class="sort-ind"></span></th>'+
@@ -691,10 +709,12 @@ function buildSessionTradeHistory(){
       var px=(typeof t.exit==='number')?t.exit:null;
       var chg=(pe&&px)?((px/pe-1)*100):null;
       var posLeg=(typeof t.pnl==='number')?t.pnl>=0:true;
+      var notional=(typeof t.notional==='number')?t.notional:null;
       var d=(t.date||'');
       return {
         ticker:(t.coin||t.coin_id||''),
         side:(t.side||''),
+        notional:notional,
         entryTime:(t.entry_label|| (times.entry? (d+' '+times.entry):d)),
         exitTime:(t.exit_label|| (times.exit? (d+' '+times.exit):d)),
         entryPrice:pe,
@@ -708,7 +728,7 @@ function buildSessionTradeHistory(){
     function renderRows(rows){
       subTbody.innerHTML='';
       if(!rows || rows.length===0){
-        subTbody.innerHTML='<tr><td colspan="8" class="td-muted">No trades for this session.</td></tr>';
+        subTbody.innerHTML='<tr><td colspan="9" class="td-muted">No trades for this session.</td></tr>';
         return;
       }
       rows.forEach(function(r){
@@ -716,6 +736,7 @@ function buildSessionTradeHistory(){
         tr.innerHTML=
           '<td><span class="pill trade">'+toStr(r.ticker)+'</span></td>'+
           '<td><span class="pill '+toStr(r.side)+'">'+toStr(r.side)+'</span></td>'+
+          '<td>'+(r.notional===null?'':fmtUsdAbs(r.notional))+'</td>'+
           '<td class="td-muted">'+toStr(r.entryTime)+'</td>'+
           '<td>'+(r.entryPrice===null?'':r.entryPrice.toPrecision(6))+'</td>'+
           '<td class="td-muted">'+toStr(r.exitTime)+'</td>'+
@@ -731,7 +752,7 @@ function buildSessionTradeHistory(){
       var out = rowData.slice();
       out.sort(function(a,b){
         var av=a[key], bv=b[key];
-        if(key==='entryPrice'||key==='exitPrice'||key==='chgPct'||key==='pnl'){
+        if(key==='notional'||key==='entryPrice'||key==='exitPrice'||key==='chgPct'||key==='pnl'){
           av = (typeof av==='number'&&isFinite(av))?av: (key==='pnl'?0: -Infinity);
           bv = (typeof bv==='number'&&isFinite(bv))?bv: (key==='pnl'?0: -Infinity);
           return mul*(av-bv);
@@ -895,17 +916,29 @@ def _meta_cli_subtitle_parts(meta: Dict[str, Any]) -> Dict[str, str]:
     mx = pr.get("max_ticker_entries")
     if mx is not None:
         out["cli_max_tickers"] = f"--max-ticker-entries {int(mx)}"
+    pm = pr.get("pick_mode")
+    if isinstance(pm, str) and pm.strip():
+        out["cli_pick_mode"] = f"--pick-mode {pm.strip()}"
+    rv = pr.get("revert")
+    if isinstance(rv, bool):
+        out["cli_revert"] = f"--revert {'yes' if rv else 'no'}"
     c24, c7 = pr.get("chg_24h_max_cap_pct"), pr.get("chg_7d_max_cap_pct")
     if c24 is not None and c7 is not None:
         out["cli_chg_caps"] = (
             f"--chg-24h-max-cap {_fmt_cli_num(c24)} --chg-7d-max-cap {_fmt_cli_num(c7)}"
         )
-    if pr.get("ctrlpossize"):
-        out["cli_ctrlpossize"] = "--ctrlpossize yes"
-    if pr.get("skipsmallqty"):
-        out["cli_skipsmallqty"] = "--skipsmallqty yes"
-    if pr.get("reverse"):
-        out["cli_reverse"] = "--reverse yes"
+    cps = pr.get("ctrlpossize")
+    if isinstance(cps, bool):
+        out["cli_ctrlpossize"] = f"--ctrlpossize {'yes' if cps else 'no'}"
+    smq = pr.get("skipsmallqty")
+    if isinstance(smq, bool):
+        out["cli_skipsmallqty"] = f"--skipsmallqty {'yes' if smq else 'no'}"
+    rev = pr.get("reverse")
+    if isinstance(rev, bool):
+        out["cli_reverse"] = f"--reverse {'yes' if rev else 'no'}"
+    vto = pr.get("vari_tickers_only")
+    if isinstance(vto, bool):
+        out["cli_vari_tickers_only"] = f"--vari-tickers-only {'yes' if vto else 'no'}"
     return out
 
 
@@ -918,10 +951,13 @@ _SUBTITLE_CLI_KEYS = (
     "cli_mcap_rank",
     "cli_max_tickers",
     "cli_chg_caps",
+    "cli_pick_mode",
+    "cli_revert",
     "cli_ctrlpossize",
     "cli_skipsmallqty",
     "cli_blacklist",
     "cli_reverse",
+    "cli_vari_tickers_only",
 )
 
 
@@ -939,19 +975,13 @@ def _build_subtitle(meta: Dict[str, Any]) -> str:
         notional = f"${n:,.0f} notional per side" if isinstance(n, (int, float)) else ""
     filt = parts.get("volatility_skipper", "")
     bits = [rng, session, notional, filt]
-    explicit = [
-        parts[k]
-        for k in _SUBTITLE_CLI_KEYS
-        if isinstance(parts.get(k), str) and str(parts.get(k)).strip()
-    ]
-    if explicit:
-        bits.extend(explicit)
-    else:
-        cli_map = _meta_cli_subtitle_parts(meta)
-        for k in _SUBTITLE_CLI_KEYS:
+    cli_map = _meta_cli_subtitle_parts(meta)
+    for k in _SUBTITLE_CLI_KEYS:
+        v = parts.get(k)
+        if not (isinstance(v, str) and v.strip()):
             v = cli_map.get(k)
-            if isinstance(v, str) and v.strip():
-                bits.append(v)
+        if isinstance(v, str) and v.strip():
+            bits.append(v)
     sep = " \u00a0\u00b7\u00a0 "  # nbsp middot nbsp, like sample
     return sep.join(b for b in bits if b)
 
@@ -1241,6 +1271,52 @@ def _daily_pnls_from_doc(doc: Dict[str, Any]) -> List[float]:
     return out
 
 
+def _interval_metrics_from_doc(
+    doc: Dict[str, Any], total_pnl: float
+) -> Optional[Dict[str, Any]]:
+    """Per-session stats from daily_overview when summary interval fields are absent."""
+    overview = doc.get("daily_overview")
+    if not isinstance(overview, list) or not overview:
+        return None
+    if not any(isinstance(r, dict) and r.get("session_label") for r in overview):
+        return None
+    pnls_traded: List[float] = []
+    for r in overview:
+        if not isinstance(r, dict):
+            continue
+        if r.get("traded") and r.get("pnl_usd") is not None:
+            try:
+                pnls_traded.append(float(r["pnl_usd"]))
+            except (TypeError, ValueError):
+                pass
+    total_slots = len(overview)
+    traded = len(pnls_traded)
+    wins_iv = sum(1 for p in pnls_traded if p > 0.0)
+    losses_iv = sum(1 for p in pnls_traded if p < 0.0)
+    wr_iv = (wins_iv / float(traded)) if traded else 0.0
+    if traded == 0:
+        return {
+            "avg_interval_pnl_usd": 0.0,
+            "best_interval_pnl_usd": 0.0,
+            "worst_interval_pnl_usd": 0.0,
+            "active_intervals": 0,
+            "total_intervals": total_slots,
+            "win_intervals": 0,
+            "loss_intervals": 0,
+            "win_rate_interval": 0.0,
+        }
+    return {
+        "avg_interval_pnl_usd": total_pnl / float(traded),
+        "best_interval_pnl_usd": max(pnls_traded),
+        "worst_interval_pnl_usd": min(pnls_traded),
+        "active_intervals": traded,
+        "total_intervals": total_slots,
+        "win_intervals": wins_iv,
+        "loss_intervals": losses_iv,
+        "win_rate_interval": wr_iv,
+    }
+
+
 def _sharpe_annual_from_pnls(
     pnls: List[float], *, periods_per_year: float = 365.0
 ) -> Optional[float]:
@@ -1259,11 +1335,15 @@ def render_html(doc: Dict[str, Any], *, title: str) -> str:
     """Fill HTML_TEMPLATE. ``title`` is the main heading, <title> text, and first segment of the subtitle (before meta)."""
     meta = doc.get("meta") or {}
     summ = meta.get("summary") or {}
+    params = meta.get("params")
+    interval_session_labels = (
+        isinstance(params, dict) and str(params.get("equity_curve_step")) == "session"
+    )
 
     total = float(summ.get("total_pnl_usd", 0.0))
     win_rate = float(summ.get("win_rate", 0.0))
-    active = int(summ.get("active_days", 0))
-    cal = int(summ.get("calendar_days", 0))
+    active_disp = int(summ.get("active_days", 0))
+    cal_disp = int(summ.get("calendar_days", 0))
     mdd = float(summ.get("max_drawdown_usd", 0.0))
     avg_d = float(summ.get("avg_daily_pnl_usd", 0.0))
     best = float(summ.get("best_day_pnl_usd", 0.0))
@@ -1313,16 +1393,59 @@ def render_html(doc: Dict[str, Any], *, title: str) -> str:
     ):
         session_section = session_section + _sessions_summary_table_html(overview)
 
+    if interval_session_labels:
+        lbl_active = "Active intervals"
+        lbl_avg_pnl = "Avg interval PnL"
+        lbl_worst = "Worst interval"
+        lbl_best = "Best interval"
+        equity_legend_skip = "BTC-filtered / skipped interval"
+        tp_sum = float(summ.get("total_pnl_usd", total))
+        fb_sess = _interval_metrics_from_doc(doc, tp_sum)
+        if summ.get("avg_interval_pnl_usd") is not None:
+            avg_d = float(summ["avg_interval_pnl_usd"])
+            best = float(summ.get("best_interval_pnl_usd") or 0.0)
+            worst = float(summ.get("worst_interval_pnl_usd") or 0.0)
+            active_disp = int(summ.get("active_intervals", 0))
+            cal_disp = int(summ.get("total_intervals", 0))
+        elif fb_sess is not None:
+            avg_d = float(fb_sess["avg_interval_pnl_usd"])
+            best = float(fb_sess["best_interval_pnl_usd"])
+            worst = float(fb_sess["worst_interval_pnl_usd"])
+            active_disp = int(fb_sess["active_intervals"])
+            cal_disp = int(fb_sess["total_intervals"])
+        if summ.get("win_rate_interval") is not None:
+            win_rate = float(summ["win_rate_interval"])
+            wins_losses = (
+                f"{int(summ.get('win_intervals', 0))}W / "
+                f"{int(summ.get('loss_intervals', 0))}L"
+            )
+        elif fb_sess is not None:
+            win_rate = float(fb_sess["win_rate_interval"])
+            wins_losses = (
+                f"{int(fb_sess['win_intervals'])}W / {int(fb_sess['loss_intervals'])}L"
+            )
+    else:
+        lbl_active = "Active days"
+        lbl_avg_pnl = "Avg daily PnL"
+        lbl_worst = "Worst day"
+        lbl_best = "Best day"
+        equity_legend_skip = "BTC-filtered / skipped day"
+
     html = HTML_TEMPLATE
     reps = {
         "__HTML_TITLE__": _html_escape(html_title),
         "__TITLE__": esc_name,
         "__SUBTITLE__": subtitle,
+        "__LBL_ACTIVE__": lbl_active,
+        "__LBL_AVG_PNL__": lbl_avg_pnl,
+        "__LBL_WORST__": lbl_worst,
+        "__LBL_BEST__": lbl_best,
+        "__EQUITY_LEGEND_SKIP__": equity_legend_skip,
         "__CLS_TOTAL__": _pnl_class(total),
         "__TOTAL_PNL__": _fmt_money_signed(total, 0),
         "__WIN_RATE__": f"{win_rate * 100:.1f}%",
         "__WINS_LOSSES__": wins_losses,
-        "__ACTIVE_DAYS__": f"{active} / {cal}",
+        "__ACTIVE_DAYS__": f"{active_disp} / {cal_disp}",
         "__MAX_DD__": _fmt_money_signed(mdd, 0),
         "__CLS_AVG__": _pnl_class(avg_d),
         "__AVG_DAILY__": _fmt_money_signed(avg_d, 2),

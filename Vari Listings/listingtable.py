@@ -44,6 +44,11 @@ COINGECKO_MIN_SECONDS_BETWEEN_CALLS: float = 2.0
 
 OUTPUT_JSON_FILENAME: str = "listingtabledata.json"
 
+# Optional output filters (wired by listingtable_pro.py CLI flags)
+FILTER_TOP_N_BY_MCAP_ENV: str = "LISTINGTABLE_TOP_N_BY_MCAP"  # integer
+FILTER_MIN_VOL_24H_ENV: str = "LISTINGTABLE_MIN_VOL_24H"  # float (USDC)
+FILTER_BLACKLIST_ENV: str = "LISTINGTABLE_BLACKLIST"  # comma-separated tickers (e.g. "BTC,ETH")
+
 # Hardcoded mapping: Variational ticker -> CoinGecko coin id.
 # Generated from listingtabledata_ref.csv (canonical mapping).
 COINGECKO_TICKER_TO_ID: Dict[str, str] = {
@@ -937,6 +942,33 @@ def main() -> None:
         return (2, -mcap_num, ticker)
 
     ordered_rows = sorted(enriched, key=_sort_key)
+
+    # Optional filters (apply after we have market caps and volumes).
+    blacklist_raw = os.getenv(FILTER_BLACKLIST_ENV, "").strip()
+    if blacklist_raw:
+        blacklist = {t.strip().upper() for t in blacklist_raw.split(",") if t.strip()}
+        ordered_rows = [r for r in ordered_rows if str(r.get("vari_ticker", "")).upper() not in blacklist]
+
+    min_vol_raw = os.getenv(FILTER_MIN_VOL_24H_ENV, "").strip()
+    if min_vol_raw:
+        try:
+            min_vol = float(min_vol_raw)
+            ordered_rows = [
+                r
+                for r in ordered_rows
+                if (lambda v: (float(v) if v not in (None, "") else 0.0))(r.get("vol_24h")) >= min_vol
+            ]
+        except Exception:
+            pass
+
+    top_n_raw = os.getenv(FILTER_TOP_N_BY_MCAP_ENV, "").strip()
+    if top_n_raw:
+        try:
+            top_n = int(float(top_n_raw))
+            if top_n > 0:
+                ordered_rows = ordered_rows[:top_n]
+        except Exception:
+            pass
 
     # Build JSON rows in the canonical format for the bot.
     json_rows: List[Dict[str, Any]] = []

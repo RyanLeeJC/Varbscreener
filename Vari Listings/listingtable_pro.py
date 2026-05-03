@@ -12,6 +12,7 @@ Run:
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -25,12 +26,46 @@ import listingtable as lt
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="listingtable_pro.py",
+        description="Run listingtable.py with optional CoinGecko Pro settings and output filters.",
+    )
+    parser.add_argument(
+        "--mcap",
+        type=int,
+        default=None,
+        help="Keep only the top N tickers by market cap (after BTC/ETH ordering). Example: --mcap 60",
+    )
+    parser.add_argument(
+        "--vol",
+        type=float,
+        default=None,
+        help="Filter out listings with 24h volume below this minimum (USDC). Example: --vol 100000",
+    )
+    parser.add_argument(
+        "--blacklist",
+        nargs="*",
+        default=None,
+        help='Tickers to exclude (space-separated or comma-separated). Example: --blacklist BTC ETH  (or --blacklist "BTC,ETH")',
+    )
+    args = parser.parse_args()
+
     if load_dotenv is not None:
         # Local convenience: load ../Varibot/.env if present. (Railway uses service Variables instead.)
         here = os.path.dirname(os.path.abspath(__file__))
         maybe_env = os.path.abspath(os.path.join(here, "..", "Varibot", ".env"))
         if os.path.isfile(maybe_env):
             load_dotenv(maybe_env)
+
+    # Wire CLI filters into listingtable.py via env vars (so we don't duplicate logic).
+    if args.mcap is not None:
+        os.environ[lt.FILTER_TOP_N_BY_MCAP_ENV] = str(args.mcap)
+    if args.vol is not None:
+        os.environ[lt.FILTER_MIN_VOL_24H_ENV] = str(args.vol)
+    if args.blacklist is not None:
+        # Accept either: --blacklist BTC ETH  OR  --blacklist "BTC,ETH"
+        raw = ",".join(args.blacklist) if isinstance(args.blacklist, list) else str(args.blacklist)
+        os.environ[lt.FILTER_BLACKLIST_ENV] = raw
 
     api_key = os.getenv(lt.COINGECKO_API_KEY_ENV, "").strip()
     if api_key:

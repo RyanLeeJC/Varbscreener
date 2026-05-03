@@ -138,6 +138,7 @@ class TradeLeg:
     exit_price: float
     ret_fraction: float
     pnl_usd: float
+    notional_usd: float
 
 
 @dataclass
@@ -680,7 +681,16 @@ def run_backtest(
                 pnl = leg_notional * r_long
                 legs.append(
                     TradeLeg(
-                        entry_date_str, cid, "long", ts_e, ts_x, pe, px, r_long, pnl
+                        entry_date_str,
+                        cid,
+                        "long",
+                        ts_e,
+                        ts_x,
+                        pe,
+                        px,
+                        r_long,
+                        pnl,
+                        leg_notional,
                     )
                 )
                 sess_pnl += pnl
@@ -709,6 +719,7 @@ def run_backtest(
                         px,
                         r_short,
                         pnl,
+                        leg_notional,
                     )
                 )
                 sess_pnl += pnl
@@ -774,14 +785,36 @@ def run_backtest(
 
         equity_cum = 0.0
         equity_rows: List[dict] = []
-        for d in daterange_inclusive(start_date, end_date):
-            ds = d.isoformat()
-            pnl_day = by_day_pnl.get(ds, 0.0)
-            equity_cum += pnl_day
-            skipped_chart = not by_day_traded.get(ds)
-            equity_rows.append(
-                {"date": ds, "equity": round(equity_cum, 2), "skipped": skipped_chart}
-            )
+        use_session_equity = float(interval_hours) < 12.0
+        if use_session_equity:
+            for sr in sessions:
+                equity_cum += sr.portfolio_pnl_usd
+                traded = (not sr.skipped) and sr.n_positions > 0
+                dt = datetime.fromtimestamp(
+                    sr.target_entry_wall_ms / 1000.0, tz=tz
+                )
+                label = f"{dt.strftime('%m-%d')} {dt.strftime('%H:%M')}"
+                equity_rows.append(
+                    {
+                        "date": sr.entry_local_date,
+                        "label": label,
+                        "equity": round(equity_cum, 2),
+                        "skipped": not traded,
+                    }
+                )
+        else:
+            for d in daterange_inclusive(start_date, end_date):
+                ds = d.isoformat()
+                pnl_day = by_day_pnl.get(ds, 0.0)
+                equity_cum += pnl_day
+                skipped_chart = not by_day_traded.get(ds)
+                equity_rows.append(
+                    {
+                        "date": ds,
+                        "equity": round(equity_cum, 2),
+                        "skipped": skipped_chart,
+                    }
+                )
 
         daily_overview: List[dict] = []
         for sr in sessions:
@@ -863,6 +896,7 @@ def run_backtest(
                     "exit": t.exit_price,
                     "ret": round(t.ret_fraction * 100.0, 4),
                     "pnl": round(t.pnl_usd, 2),
+                    "notional": round(t.notional_usd, 2),
                 }
                 for t in all_trades
             ),
@@ -893,6 +927,29 @@ def run_backtest(
         avg_daily = total_pnl / active_days if active_days else 0.0
         eq_series = [r["equity"] for r in equity_rows]
         mdd = max_drawdown_usd(eq_series)
+
+        if use_session_equity:
+            traded_intervals = sum(
+                1 for s in sessions if (not s.skipped) and s.n_positions > 0
+            )
+            total_intervals = len(sessions)
+            interval_pnls = [
+                float(s.portfolio_pnl_usd)
+                for s in sessions
+                if (not s.skipped) and s.n_positions > 0
+            ]
+            avg_interval_pnl = (
+                (total_pnl / float(traded_intervals)) if traded_intervals else 0.0
+            )
+            best_interval_pnl = max(interval_pnls) if interval_pnls else 0.0
+            worst_interval_pnl = min(interval_pnls) if interval_pnls else 0.0
+            interval_wins = sum(1 for p in interval_pnls if p > 0.0)
+            interval_losses = sum(1 for p in interval_pnls if p < 0.0)
+            win_rate_interval = (
+                (float(interval_wins) / float(traded_intervals))
+                if traded_intervals
+                else 0.0
+            )
 
         def _fmt_hm(h: int, m: int) -> str:
             if m != 0:
@@ -938,14 +995,13 @@ def run_backtest(
             subtitle_parts["cli_max_tickers"] = (
                 f"--max-ticker-entries {int(max_ticker_entries)}"
             )
-        if pick_mode != "extreme":
-            subtitle_parts["cli_pick_mode"] = f"--pick-mode {pick_mode}"
-        if revert:
-            subtitle_parts["cli_revert"] = "--revert yes"
-        if ctrlpossize:
-            subtitle_parts["cli_ctrlpossize"] = "--ctrlpossize yes"
-        if skipsmallqty:
-            subtitle_parts["cli_skipsmallqty"] = "--skipsmallqty yes"
+        subtitle_parts["cli_pick_mode"] = f"--pick-mode {pick_mode}"
+        subtitle_parts["cli_revert"] = f"--revert {'yes' if revert else 'no'}"
+        subtitle_parts["cli_ctrlpossize"] = f"--ctrlpossize {'yes' if ctrlpossize else 'no'}"
+        subtitle_parts["cli_skipsmallqty"] = f"--skipsmallqty {'yes' if skipsmallqty else 'no'}"
+        subtitle_parts["cli_vari_tickers_only"] = (
+            f"--vari-tickers-only {'yes' if vari_tickers_only else 'no'}"
+        )
         if blacklist_ids:
             if isinstance(blacklist, (list, tuple)):
                 bl_text = " ".join(str(t).strip() for t in blacklist if str(t).strip())
@@ -963,6 +1019,7 @@ def run_backtest(
             "subtitle_parts": subtitle_parts,
             "params": {
                 "interval_hours": float(interval_hours),
+                "equity_curve_step": "session" if use_session_equity else "day",
                 "price_basis": "ohlc_bars.open (open-to-open)",
                 "median_basis": "alts only; exclude BTC/ETH",
                 "notional_mode": "split_total_per_session",
@@ -990,6 +1047,20 @@ def run_backtest(
                 "avg_daily_pnl_usd": round(avg_daily, 2),
                 "best_day_pnl_usd": round(best_day, 2),
                 "worst_day_pnl_usd": round(worst_day, 2),
+                **(
+                    {
+                        "avg_interval_pnl_usd": round(avg_interval_pnl, 2),
+                        "best_interval_pnl_usd": round(best_interval_pnl, 2),
+                        "worst_interval_pnl_usd": round(worst_interval_pnl, 2),
+                        "active_intervals": traded_intervals,
+                        "total_intervals": total_intervals,
+                        "win_intervals": interval_wins,
+                        "loss_intervals": interval_losses,
+                        "win_rate_interval": round(win_rate_interval, 4),
+                    }
+                    if use_session_equity
+                    else {}
+                ),
                 "return_on_notional": round(return_on_notional, 6),
                 "sharpe_ratio": round(sharpe_ratio, 4)
                 if sharpe_ratio is not None
@@ -1194,7 +1265,7 @@ def run_backtest(
                 continue
             r_long = px / pe - 1.0
             pnl = leg_notional * r_long
-            legs.append(TradeLeg(ds, cid, "long", ts_e, ts_x, pe, px, r_long, pnl))
+            legs.append(TradeLeg(ds, cid, "long", ts_e, ts_x, pe, px, r_long, pnl, leg_notional))
             day_pnl += pnl
 
         for cid, _ in picks_short:
@@ -1210,7 +1281,7 @@ def run_backtest(
             r_long = px / pe - 1.0
             r_short = -r_long
             pnl = leg_notional * r_short
-            legs.append(TradeLeg(ds, cid, "short", ts_e, ts_x, pe, px, r_short, pnl))
+            legs.append(TradeLeg(ds, cid, "short", ts_e, ts_x, pe, px, r_short, pnl, leg_notional))
             day_pnl += pnl
 
         if len(legs) != total_legs:
@@ -1318,6 +1389,7 @@ def run_backtest(
                 "exit": t.exit_price,
                 "ret": round(t.ret_fraction * 100.0, 4),
                 "pnl": round(t.pnl_usd, 2),
+                "notional": round(t.notional_usd, 2),
             }
             for t in all_trades
         ),
@@ -1386,14 +1458,13 @@ def run_backtest(
         subtitle_parts["cli_mcap_rank"] = f"--mcap-rank {int(mcap_rank_max)}"
     if max_ticker_entries is not None:
         subtitle_parts["cli_max_tickers"] = f"--max-ticker-entries {int(max_ticker_entries)}"
-    if pick_mode != "extreme":
-        subtitle_parts["cli_pick_mode"] = f"--pick-mode {pick_mode}"
-    if revert:
-        subtitle_parts["cli_revert"] = "--revert yes"
-    if ctrlpossize:
-        subtitle_parts["cli_ctrlpossize"] = "--ctrlpossize yes"
-    if skipsmallqty:
-        subtitle_parts["cli_skipsmallqty"] = "--skipsmallqty yes"
+    subtitle_parts["cli_pick_mode"] = f"--pick-mode {pick_mode}"
+    subtitle_parts["cli_revert"] = f"--revert {'yes' if revert else 'no'}"
+    subtitle_parts["cli_ctrlpossize"] = f"--ctrlpossize {'yes' if ctrlpossize else 'no'}"
+    subtitle_parts["cli_skipsmallqty"] = f"--skipsmallqty {'yes' if skipsmallqty else 'no'}"
+    subtitle_parts["cli_vari_tickers_only"] = (
+        f"--vari-tickers-only {'yes' if vari_tickers_only else 'no'}"
+    )
     if blacklist_ids:
         # Store tokens for reproducibility; keep it compact in subtitle.
         if isinstance(blacklist, (list, tuple)):
@@ -1513,7 +1584,8 @@ def parse_args() -> argparse.Namespace:
             "If set, ignore --trade-exit and instead chain sessions every N hours: "
             "exit wall = entry wall + interval, then immediately re-enter at that exit wall "
             "with a newly computed median. Example: --trade-entry 9am --interval 12 "
-            "creates 9am→9pm→9am→… sessions."
+            "creates 9am→9pm→9am→… sessions. If N < 12, the dashboard equity curve uses "
+            "one point per session; N ≥ 12 uses one point per calendar day."
         ),
     )
     p.add_argument(
