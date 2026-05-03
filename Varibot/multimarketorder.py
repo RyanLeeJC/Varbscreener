@@ -25,8 +25,21 @@ DEFAULT_IM_TARGET_PCT: float = 75.0
 # Omni UI: for the same book, MM usage is ~half of IM usage (MM requirement ≈ ½ × IM requirement).
 # User PCT is interpreted on that MM-style budget; scale notional by ½ vs naive (pv×lev×pct) IM math.
 IM_TARGET_MM_NOTIONAL_SCALE: float = 0.5
-# Default --leverage: IM-target sizing multiplies (portfolio × this × PCT); optional --set-leverage API uses the same value.
+# Default --leverage: IM-target sizing (portfolio × this × PCT) and set_leverage API before each live order.
+# Same-named env overrides this (aligned with varibot._multimarket_effective_leverage).
+# If pool leverage stays below this while notionals are sized for higher leverage, IM usage rises faster than gap math.
 DEFAULT_LEVERAGE: int = 50
+
+
+def default_leverage_from_env() -> int:
+    """Prefer DEFAULT_LEVERAGE env (digits only), then DEFAULT_LEVERAGE constant."""
+    v = (os.environ.get("DEFAULT_LEVERAGE", "") or "").strip()
+    if v:
+        try:
+            return max(1, int(float(v)))
+        except Exception:
+            pass
+    return int(DEFAULT_LEVERAGE)
 # IM-target per-order notional is rounded up to this USD step (e.g. 241.04 -> 250).
 USD_NOTIONAL_ROUND_STEP: float = 10.0
 # Default max slippage when --max-slippage and MAX_SLIPPAGE env are unset (fraction of notional).
@@ -246,13 +259,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--leverage",
         type=int,
-        default=DEFAULT_LEVERAGE,
-        help=f"Leverage when using --set-leverage (default: {DEFAULT_LEVERAGE}).",
+        default=default_leverage_from_env(),
+        help=(
+            "Cross leverage for POST /api/settlement_pools/set_leverage before each order "
+            f"(default: DEFAULT_LEVERAGE env if set, else {DEFAULT_LEVERAGE}). "
+            "Use --skip-set-leverage to leave pool leverage unchanged."
+        ),
     )
     p.add_argument(
-        "--set-leverage",
+        "--skip-set-leverage",
         action="store_true",
-        help="Call POST /api/settlement_pools/set_leverage before each order. Default: skip (saves 1 request per ticker).",
+        help=(
+            "Do not call set_leverage before each order (previous default; saves one API request per ticker). "
+            "Otherwise each instrument is set to --leverage (default from DEFAULT_LEVERAGE env or constant). "
+            "Skipping set_leverage can leave low cross leverage → higher IM per $ notional vs PM sizing."
+        ),
     )
     p.add_argument(
         "--max-slippage",
@@ -425,6 +446,8 @@ def _order_response_rejected(resp: Any) -> bool:
 
 def main() -> int:
     args = build_parser().parse_args()
+    # Default: align pool leverage with DEFAULT_LEVERAGE / --leverage before each order (Varibot runs rely on this).
+    args.set_leverage = not bool(getattr(args, "skip_set_leverage", False))
     if args.usd is not None and args.im_target_pct is not None:
         raise SystemExit("Pass at most one of --usd and --im-target-pct.")
     if args.usd is None and args.im_target_pct is None:
