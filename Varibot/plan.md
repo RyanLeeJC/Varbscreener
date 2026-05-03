@@ -182,3 +182,73 @@ cd /Users/ryanlee/Documents/Dev/Vari/Varibot && python3 multimarketorder.py --lo
 cd /Users/ryanlee/Documents/Dev/Vari/Varibot && python3 closeallpositions.py --slippage-percent 0.001 --live
 ```
 
+---
+Running varibot.py, revert_near_median.py with 5min cadence live for testing.
+---
+python3 Varibot/varibot.py --live --period-min 5 --no-align
+--period-min 5: 5‑minute cadence
+--no-align: sleeps a fixed 5 minutes between cycles (instead of waiting for the next wall-clock boundary)
+If you ARE using --strategy revert_near_median
+Right now that strategy is hard-wired into “hourly session” mode in _child_main().
+
+The easiest wiring change is to replace the period_minutes=60 in that block with period_minutes=5 (or better, use args.period_min there). If you tell me which behavior you want (keep “enter then close every interval” vs just “run cycle every interval”), I can patch it in 1–2 lines.
+
+How strategy/revert_near_median.py picks longs/shorts
+It does this, in order:
+
+Build a ranked universe
+Loads listingtabledata.json
+Parses each row into a ListingRow with:
+ticker, market_cap, chg_24h_pct, plus optional vol_24h, oi, oi_skew
+Ranks by DEFAULT_RANK_BY which is "market_cap".
+Take top 20 by market cap
+Uses DEFAULT_TOP_SPEC = "20" (or top_n if varibot passes one).
+So the starting universe is Top 20 by market cap (within the listing payload).
+Exclude tickers
+Excludes DEFAULT_EXCLUDE_CSV = "BTC,ETH"
+Excludes everything in TICKER_BLACKLIST (your extended list: PI/NIGHT/SKY/… plus others)
+Pick “near-median” tickers
+Computes the median of chg_24h_pct across the filtered universe.
+Sorts by absolute distance to that median (closest first).
+Takes DEFAULT_MAX_TICKER_ENTRIES = 10 tickers.
+That’s _near_median_subset(...).
+
+Mean-reversion split into longs/shorts
+Within those 10 tickers:
+sort by chg_24h_pct ascending
+long the bottom 5 (underperformers)
+short the top 5 (outperformers)
+That’s _revert_split_by_24h_change(...).
+
+Net effect: “low-volatility around the median movers” + “mean reversion (long slightly weak, short slightly strong)” within a Top-20 market cap, BTC/ETH excluded universe.
+
+Yes. That “TP/PnL check” is just a point in Varibot/varibot.py where it’s about to sleep and then call one_cycle() again. You can wire a Telegram (or n8n webhook) notification in two common ways:
+
+Option 1 (no code change): ship Railway logs to n8n and trigger on the line
+Railway: keep running python3 Varibot/varibot.py --live as-is.
+n8n: ingest logs (or a log drain) and trigger when a log line matches:
+session: next TP/PnL check in
+Then n8n sends Telegram.
+This is “tap the logs”, not “bot actively sends”.
+
+Option 2 (code change): call an n8n webhook right when the check is scheduled (recommended)
+At the exact place it logs:
+
+session: next TP/PnL check in 15m0s
+
+add a small HTTP POST to your n8n webhook (or Telegram) with a JSON payload, e.g.:
+
+event: "tp_check_scheduled"
+next_check_in_s: ...
+ts: ...
+optionally include the latest portfolio snapshot fields (uPnL, pos notional, TP verdict) right after the one_cycle() call.
+Wiring
+n8n: create a Webhook Trigger node (POST), then Telegram node.
+Railway: add env var like N8N_WEBHOOK_URL to your service.
+What you’d send
+On “scheduled”: “Next TP/PnL check in 15m”
+On “check ran”: include the numbers (PV/uPnL/IM/MM/TP)
+Practical recommendation
+If your goal is “portfolio numbers periodic update”, don’t trigger on the scheduled message—trigger after the check runs, because you’ll have fresh numbers to send.
+
+If you want, paste the snippet of the session loop around where it logs “next TP/PnL check in …”, and I’ll point to the exact line to insert the webhook call and what payload shape to use (still in Ask mode, so I’ll describe it precisely rather than editing).

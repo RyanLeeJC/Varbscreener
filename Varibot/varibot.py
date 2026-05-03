@@ -23,6 +23,7 @@ Dependencies: repo layout
 
 import argparse
 import json
+import math
 import os
 import queue
 import re
@@ -62,9 +63,6 @@ STRATEGY_SESSION_CLOSEALL_KEYS: frozenset[str] = frozenset({"revert_near_median"
 STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN: int = 360
 
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
-DEFAULT_TICKER_QTY: int = 60 # default ticker qty (total universe size before split; becomes half long / half short)
-_COINGECKO_PLAN: str = "pro"  # set to "pro" to use listingtable_pro.py
-
 # funding_pairs manager: refresh listingtable before opening replacement pairs
 _FP_REFRESH_LISTINGTABLE_ENV: str = "VARIBOT_FUNDING_PAIRS_REFRESH_LISTINGTABLE_ON_ROTATE"
 _FP_REFRESH_MIN_AGE_S_ENV: str = "VARIBOT_FUNDING_PAIRS_REFRESH_LISTINGTABLE_MIN_AGE_S"
@@ -117,7 +115,12 @@ from variationalbot.config import load_config  # noqa: E402
 from variationalbot.domain import parse_portfolio_snapshot  # noqa: E402
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints  # noqa: E402
 
-from multimarketorder import DEFAULT_IM_TARGET_PCT, IM_TARGET_MM_NOTIONAL_SCALE  # noqa: E402
+from multimarketorder import (  # noqa: E402
+    DEFAULT_IM_TARGET_PCT,
+    DEFAULT_LEVERAGE as MULTIMARKET_DEFAULT_LEVERAGE,
+    IM_TARGET_MM_NOTIONAL_SCALE,
+    USD_NOTIONAL_ROUND_STEP,
+)
 from strategy import strategies as strategies_mod  # noqa: E402
 from strategy import funding_pairs as funding_pairs_mod  # noqa: E402
 from strategy.near_median import DEFAULT_MAX_TICKER_ENTRIES as NEAR_MEDIAN_MAX_TICKER_ENTRIES  # noqa: E402
@@ -156,6 +159,130 @@ def _resolve_im_target_pct_for_multimarket(
             funding_pairs_mod.im_target_pct_for_funding_pairs_multimarket(int(n_long), int(n_short))
         )
     return float(args_im_target_pct) if args_im_target_pct is not None else float(DEFAULT_IM_TARGET_PCT)
+
+
+def _multimarket_effective_leverage() -> int:
+    v = (os.environ.get("DEFAULT_LEVERAGE", "") or "").strip()
+    if v:
+        try:
+            return max(1, int(float(v)))
+        except Exception:
+            pass
+    return int(MULTIMARKET_DEFAULT_LEVERAGE)
+
+
+def _near_median_im_gap_metrics(
+    *,
+    snap: Any,
+    portfolio_value_usd: float,
+    leverage: int,
+    pos_notional_usd: Optional[float] = None,
+) -> Tuple[float, float, float, str]:
+    """
+    IM gap vs DEFAULT_IM_TARGET_PCT and available_position_value = gap_ratio × pv × lev.
+
+    Prefer snap.im_usage from GET /api/portfolio?compute_margin=true (parsed ratio 0..1).
+    If missing, fall back to pos_notional_usd / (pv × leverage).
+    """
+    den = float(portfolio_value_usd) * float(leverage)
+    cap_ratio = float(DEFAULT_IM_TARGET_PCT) / 100.0
+    if den <= 1e-12:
+        return 0.0, 0.0, 0.0, "none"
+
+    im_usage_snap = getattr(snap, "im_usage", None)
+    if im_usage_snap is not None:
+        im_ratio = float(im_usage_snap)
+        gap_ratio = max(0.0, cap_ratio - im_ratio)
+        available_pv_usd = gap_ratio * den
+        return im_ratio, gap_ratio, available_pv_usd, "im_usage"
+
+    if pos_notional_usd is not None:
+        im_ratio = max(0.0, float(pos_notional_usd) / den)
+        gap_ratio = max(0.0, cap_ratio - im_ratio)
+        available_pv_usd = gap_ratio * den
+        return im_ratio, gap_ratio, available_pv_usd, "pos_notional_fallback"
+
+    return 0.0, 0.0, 0.0, "none"
+
+
+def _near_median_max_pairs_from_available_position_value(
+    *, available_position_value_usd: float, usd_per_leg: float
+) -> int:
+    """Each new pair = 2 legs at usd_per_leg → consume ~2×usd_per_leg of position-value budget."""
+    cost = 2.0 * float(usd_per_leg)
+    if cost <= 1e-12 or available_position_value_usd <= 0:
+        return 0
+    return int(available_position_value_usd // cost)
+
+
+def _near_median_slot_usd_per_leg(*, portfolio_value_usd: float, leverage: int) -> float:
+    raw = (
+        float(portfolio_value_usd) * float(leverage) * float(IM_TARGET_MM_NOTIONAL_SCALE)
+    ) / float(NEAR_MEDIAN_MAX_TICKER_ENTRIES)
+    step = float(USD_NOTIONAL_ROUND_STEP)
+    return float(math.ceil(raw / step) * step)
+
+
+def _near_median_pm_usd_for_multimarket(
+    *,
+    snap: Any,
+    args: argparse.Namespace,
+    jobs_tag: str,
+    book_pos_notional_usd: Optional[float] = None,
+) -> Optional[float]:
+    """
+    near_median PM refill / top-up: per-leg USD = (pv × leverage × mm_notional_scale) / DEFAULT_MAX_TICKER_ENTRIES.
+    IM gap uses snap.im_usage when present; else pos_notional / (pv × leverage).
+    """
+    if args.usd is not None:
+        return float(args.usd)
+
+    pv = getattr(snap, "portfolio_value_usd", None)
+    if pv is None or float(pv) <= 0:
+        _log(f"PM(near_median): skip {jobs_tag} — portfolio_value_usd missing or non-positive.")
+        return None
+
+    lev = _multimarket_effective_leverage()
+    slot = _near_median_slot_usd_per_leg(portfolio_value_usd=float(pv), leverage=int(lev))
+    im_ratio, gap_ratio, avail_pv, src = _near_median_im_gap_metrics(
+        snap=snap,
+        portfolio_value_usd=float(pv),
+        leverage=int(lev),
+        pos_notional_usd=float(book_pos_notional_usd) if book_pos_notional_usd is not None else None,
+    )
+    if src == "none":
+        _log(
+            f"PM(near_median): skip {jobs_tag} — no IM basis "
+            f"(im_usage missing and pos_notional unset; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
+        )
+        return None
+    if gap_ratio <= 0.0:
+        src_note = "im_usage (portfolio)" if src == "im_usage" else "pos_notional/(pv×lev)"
+        _log(
+            f"PM(near_median): skip {jobs_tag} — no IM gap (IM%={im_ratio * 100.0:.2f}% via {src_note}; "
+            f"cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
+        )
+        return None
+
+    max_pairs = _near_median_max_pairs_from_available_position_value(
+        available_position_value_usd=avail_pv, usd_per_leg=slot
+    )
+    im_line = (
+        f"IM%={im_ratio * 100.0:.2f}% (im_usage from /api/portfolio)"
+        if src == "im_usage"
+        else (
+            f"IM%={im_ratio * 100.0:.2f}% (fallback pos_notional/(pv×lev); "
+            f"pos_notional ${float(book_pos_notional_usd):,.2f} / ${float(pv) * float(lev):,.2f})"
+        )
+    )
+    _log(
+        f"PM(near_median): {jobs_tag} sizing — {im_line}; "
+        f"gap={(gap_ratio * 100.0):.2f}% vs target {float(DEFAULT_IM_TARGET_PCT):g}% "
+        f"→ available_position_value=${avail_pv:,.2f}; "
+        f"usd_per_leg={slot:g} (pv×lev×mm_scale/{NEAR_MEDIAN_MAX_TICKER_ENTRIES}); "
+        f"max_new_pairs≈{max_pairs} (avail / 2×leg)."
+    )
+    return float(slot)
 
 
 def _log(msg: str) -> None:
@@ -642,7 +769,8 @@ def _run_script(
 
 
 def run_listingtable_or_use_cache(*, timeout_s: float = 120.0) -> str:
-    script_name = "listingtable_pro.py" if _COINGECKO_PLAN.strip().lower() == "pro" else "listingtable.py"
+    plan = (os.getenv("VARIBOT_COINGECKO_PLAN", "pro") or "pro").strip().lower()
+    script_name = "listingtable_pro.py" if plan == "pro" else "listingtable.py"
     script = os.path.join(_LISTINGS_DIR, script_name)
     json_path = os.path.join(_LISTINGS_DIR, "listingtabledata.json")
     if not os.path.isfile(script):
@@ -744,7 +872,7 @@ def _top_n_for_strategy(strategy_key: str) -> int:
             except Exception:
                 pass
         return 60
-    return int(DEFAULT_TICKER_QTY)
+    return 60
 
 
 def run_closeallpositions(
@@ -1067,12 +1195,107 @@ def _funding_pairs_manager(
             _log(f"funding_pairs manager: replacement open skipped (error: {type(e).__name__}: {e})")
 
 
+def _near_median_pm_dry_run_refill_preview(
+    *,
+    ep: VariEndpoints,
+    args: argparse.Namespace,
+    strat_key: str,
+    positions_raw: Any,
+    pairs: List[PairCandidate],
+    snap: Any,
+) -> None:
+    """
+    Dry-run only: same universe refresh + replacement picking as live refill, but without closes or orders.
+    Uses hypothetical opens after PM closes (current opens minus legs tagged for close).
+    """
+    refill_on = bool(getattr(args, "pm_refill", False)) and not bool(getattr(args, "pm_no_refill", False))
+    if not refill_on:
+        refill_on = bool(PM_REFILL_DEFAULT_ON) and not bool(getattr(args, "pm_no_refill", False))
+    if not refill_on:
+        _log("PM(near_median): dry-run preview — refill disabled (--pm-no-refill); skip listing / sizing preview.")
+        return
+
+    n_pairs = len(pairs)
+    if n_pairs <= 0:
+        return
+
+    closed_preview: Set[str] = set()
+    for p in pairs:
+        closed_preview.add(str(p.long_ticker).strip().upper())
+        closed_preview.add(str(p.short_ticker).strip().upper())
+
+    open_syms: Set[str] = set()
+    for pos in _positions_list(positions_raw):
+        sym = _instrument_label(pos).strip().upper()
+        q = _position_qty(pos)
+        if sym and q is not None and abs(float(q)) > 1e-12:
+            open_syms.add(sym)
+
+    disallow = set(open_syms) - closed_preview
+    _log(
+        f"PM(near_median): dry-run preview — hypothetical post-close disallow set size={len(disallow)} "
+        f"(removed {len(closed_preview)} close-leg symbol(s) from current {len(open_syms)} open)."
+    )
+
+    _log("PM(near_median): dry-run preview — refreshing listingtable (pro) + marketstate as needed...")
+    try:
+        listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
+        ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
+        if not os.path.isfile(ms_path):
+            _log("PM(near_median): dry-run preview — marketstate.json missing; running marketstate.py...")
+            run_marketstate(timeout_s=float(getattr(args, "marketstate_timeout_s", 90.0)))
+
+        top_n = _top_n_for_strategy(strat_key)
+        longs, shorts, meta = run_strategy_pick_tickers(
+            strategy_key=strat_key,
+            listing_json=listing_json,
+            top_n=top_n,
+        )
+        need_each_side = int(n_pairs)
+        repl_l, repl_s = filter_replacements(
+            longs=longs,
+            shorts=shorts,
+            disallow=disallow,
+            need_each_side=need_each_side,
+        )
+        if len(repl_l) < need_each_side or len(repl_s) < need_each_side:
+            _log(
+                f"PM(near_median): dry-run preview — insufficient replacements "
+                f"(need {need_each_side}L/{need_each_side}S, got {len(repl_l)}L/{len(repl_s)}S)."
+            )
+            return
+
+        _log(
+            f"PM(near_median): dry-run preview — multimarketorder (no --live) for sizing — "
+            f"strategy={meta.get('strategy')} pairs={need_each_side}"
+        )
+        pos_n = _positions_notional_usd(positions_raw)
+        usd_run = _near_median_pm_usd_for_multimarket(
+            snap=snap,
+            args=args,
+            jobs_tag="dry-run preview",
+            book_pos_notional_usd=float(pos_n),
+        )
+        if usd_run is None:
+            return
+        run_multimarket(
+            multi_script=str(args.multi_script),
+            longs=repl_l,
+            shorts=repl_s,
+            usd=float(usd_run),
+            live=False,
+        )
+    except Exception as e:
+        _log(f"PM(near_median): dry-run preview error: {type(e).__name__}: {e}")
+
+
 def _near_median_pm_manager(
     *,
     ep: VariEndpoints,
     cfg: Any,
     args: argparse.Namespace,
     positions_raw: Any,
+    snap: Any,
 ) -> None:
     strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
     strat_norm = _strategy_key_normalized(strat_key)
@@ -1099,6 +1322,14 @@ def _near_median_pm_manager(
 
     if not bool(args.live):
         _log("PM(near_median): dry-run (not live) — would close pairs and (optionally) refill.")
+        _near_median_pm_dry_run_refill_preview(
+            ep=ep,
+            args=args,
+            strat_key=strat_key,
+            positions_raw=positions_raw,
+            pairs=pairs,
+            snap=snap,
+        )
         return
 
     # Build qty lookup once.
@@ -1143,19 +1374,71 @@ def _near_median_pm_manager(
     if n_pairs <= 0:
         return
 
-    # After closes, re-check IM usage on a fresh portfolio snapshot: do not refill when already over cap.
     try:
         raw_pf_after = ep.get_portfolio(compute_margin=True)
         snap_after = parse_portfolio_snapshot(raw_pf_after)
-        im_usage_after = getattr(snap_after, "im_usage", None)
-        if im_usage_after is not None and float(im_usage_after) * 100.0 >= float(DEFAULT_IM_TARGET_PCT):
+        open_after = ep.get_positions()
+        pos_n_after = _positions_notional_usd(open_after)
+    except Exception:
+        _log("PM(near_median): skip refill — could not fetch portfolio/positions after closes.")
+        return
+
+    pv_after = getattr(snap_after, "portfolio_value_usd", None)
+    if pv_after is None or float(pv_after) <= 0:
+        _log("PM(near_median): skip refill — post-close portfolio_value_usd missing or non-positive.")
+        return
+
+    lev_m = _multimarket_effective_leverage()
+    leg_for_budget = (
+        float(args.usd)
+        if args.usd is not None
+        else _near_median_slot_usd_per_leg(
+            portfolio_value_usd=float(pv_after),
+            leverage=int(lev_m),
+        )
+    )
+
+    _im_r, gap_r, avail_pv, _im_src = _near_median_im_gap_metrics(
+        snap=snap_after,
+        portfolio_value_usd=float(pv_after),
+        leverage=int(lev_m),
+        pos_notional_usd=float(pos_n_after),
+    )
+    max_pairs_budget = _near_median_max_pairs_from_available_position_value(
+        available_position_value_usd=float(avail_pv),
+        usd_per_leg=float(leg_for_budget),
+    )
+    need_pairs = min(int(n_pairs), int(max_pairs_budget))
+    if need_pairs <= 0:
+        _log(
+            f"PM(near_median): skip refill — IM%={_im_r * 100.0:.2f}% leaves "
+            f"available_position_value=${avail_pv:,.2f} (< 2×leg for one pair at ${leg_for_budget:g})."
+        )
+        return
+    if need_pairs < int(n_pairs):
+        _log(
+            f"PM(near_median): refill capped by IM budget — pairs wanted={n_pairs}, "
+            f"affordable={need_pairs} (available_position_value=${avail_pv:,.2f})."
+        )
+
+    if args.usd is not None:
+        if gap_r <= 0.0:
             _log(
-                f"PM(near_median): skip refill — post-close IM usage {float(im_usage_after)*100.0:.2f}% "
-                f">= DEFAULT_IM_TARGET_PCT {float(DEFAULT_IM_TARGET_PCT):g}%"
+                f"PM(near_median): skip refill — no IM gap (IM%={_im_r * 100.0:.2f}%; cap "
+                f"{float(DEFAULT_IM_TARGET_PCT):g}%)."
             )
             return
-    except Exception:
-        _log("PM(near_median): skip refill — could not parse post-close IM usage.")
+        usd_run = float(args.usd)
+    else:
+        usd_run_opt = _near_median_pm_usd_for_multimarket(
+            snap=snap_after,
+            args=args,
+            jobs_tag="PM refill (post-close)",
+            book_pos_notional_usd=float(pos_n_after),
+        )
+        if usd_run_opt is None:
+            return
+        usd_run = float(usd_run_opt)
 
     # Refresh listing cache (pro) and ensure marketstate exists (strategy runner requires it for non-funding_pairs).
     _log("PM(near_median): refreshing listingtable (pro) for replacements...")
@@ -1166,7 +1449,6 @@ def _near_median_pm_manager(
         run_marketstate(timeout_s=float(getattr(args, "marketstate_timeout_s", 90.0)))
 
     # Disallow: closed this cycle + currently open positions (post-close).
-    open_after = ep.get_positions()
     open_syms: Set[str] = set()
     for pos in _positions_list(open_after):
         sym = _instrument_label(pos).strip().upper()
@@ -1177,7 +1459,7 @@ def _near_median_pm_manager(
 
     top_n = _top_n_for_strategy(strat_key)
     longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
-    need_each_side = int(n_pairs)
+    need_each_side = int(need_pairs)
     repl_l, repl_s = filter_replacements(
         longs=longs,
         shorts=shorts,
@@ -1195,28 +1477,13 @@ def _near_median_pm_manager(
         f"PM(near_median): opening replacements (strategy={meta.get('strategy')}) "
         f"longs={len(repl_l)} shorts={len(repl_s)}..."
     )
-    if args.usd is not None:
-        run_multimarket(
-            multi_script=str(args.multi_script),
-            longs=repl_l,
-            shorts=repl_s,
-            usd=float(args.usd),
-            live=True,
-        )
-    else:
-        pct = _resolve_im_target_pct_for_multimarket(
-            strategy_key=strat_key,
-            n_long=len(repl_l),
-            n_short=len(repl_s),
-            args_im_target_pct=float(args.im_target_pct) if args.im_target_pct is not None else None,
-        )
-        run_multimarket(
-            multi_script=str(args.multi_script),
-            longs=repl_l,
-            shorts=repl_s,
-            im_target_pct=pct,
-            live=True,
-        )
+    run_multimarket(
+        multi_script=str(args.multi_script),
+        longs=repl_l,
+        shorts=repl_s,
+        usd=float(usd_run),
+        live=bool(args.live),
+    )
 
 
 def _near_median_topup_if_needed(
@@ -1227,29 +1494,61 @@ def _near_median_topup_if_needed(
     positions_raw: Any,
 ) -> None:
     """
-    Branch behavior: if already holding positions, optionally top up the book to the strategy target
-    (near_median.DEFAULT_MAX_TICKER_ENTRIES) by adding long/short pairs, but only when IM usage is
-    not already above the sizing default (multimarketorder.DEFAULT_IM_TARGET_PCT).
+    Top-up adds paired long/short slots toward DEFAULT_MAX_TICKER_ENTRIES when affordable.
 
-    If IM usage is high, skip top-ups and proceed to PM close checks.
+    IM% (book) = sum(abs position value) / (portfolio_value_usd × leverage).
+    Gap vs DEFAULT_IM_TARGET_PCT × pv × lev = available position value → caps how many new pairs fit
+    (~2×usd_per_leg per pair). Need not reach 20 tickers if budget is smaller.
     """
     strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
     strat_norm = _strategy_key_normalized(strat_key)
     if strat_norm != "near_median":
         return
 
-    # Gate on IM usage: if we're already above the sizing default, don't add more risk.
-    try:
-        im_usage = getattr(snap, "im_usage", None)
-        if im_usage is not None and float(im_usage) * 100.0 >= float(DEFAULT_IM_TARGET_PCT):
-            _log(
-                f"PM(near_median): skip top-up — IM usage {float(im_usage)*100.0:.2f}% "
-                f">= DEFAULT_IM_TARGET_PCT {float(DEFAULT_IM_TARGET_PCT):g}%"
-            )
-            return
-    except Exception:
-        # If parsing fails, be conservative: don't top up.
-        _log("PM(near_median): skip top-up — could not parse IM usage.")
+    pv = getattr(snap, "portfolio_value_usd", None)
+    if pv is None or float(pv) <= 0:
+        _log("PM(near_median): skip top-up — portfolio_value_usd missing or non-positive.")
+        return
+
+    lev_m = _multimarket_effective_leverage()
+    pos_notional = float(_positions_notional_usd(positions_raw))
+    im_ratio, gap_ratio, avail_pv, _im_src = _near_median_im_gap_metrics(
+        snap=snap,
+        portfolio_value_usd=float(pv),
+        leverage=int(lev_m),
+        pos_notional_usd=pos_notional,
+    )
+    slot_pre = (
+        float(args.usd)
+        if args.usd is not None
+        else _near_median_slot_usd_per_leg(portfolio_value_usd=float(pv), leverage=int(lev_m))
+    )
+    max_pairs_budget = _near_median_max_pairs_from_available_position_value(
+        available_position_value_usd=float(avail_pv),
+        usd_per_leg=float(slot_pre),
+    )
+
+    if _im_src == "im_usage":
+        _log(
+            f"PM(near_median): IM%={im_ratio * 100.0:.2f}% (im_usage from /api/portfolio); "
+            f"gap={(gap_ratio * 100.0):.2f}% vs target {float(DEFAULT_IM_TARGET_PCT):g}% "
+            f"→ available_position_value=${avail_pv:,.2f}; "
+            f"max_new_pairs≈{max_pairs_budget} at ~2×${slot_pre:g}/pair."
+        )
+    else:
+        _log(
+            f"PM(near_median): IM%={im_ratio * 100.0:.2f}% "
+            f"(fallback pos_notional ${pos_notional:,.2f} / (pv×lev)="
+            f"${float(pv) * float(lev_m):,.2f}); gap={(gap_ratio * 100.0):.2f}% vs target "
+            f"{float(DEFAULT_IM_TARGET_PCT):g}% → available_position_value=${avail_pv:,.2f}; "
+            f"max_new_pairs≈{max_pairs_budget} at ~2×${slot_pre:g}/pair."
+        )
+
+    if gap_ratio <= 0.0:
+        _log(
+            "PM(near_median): skip top-up — no IM gap "
+            f"(IM% vs DEFAULT_IM_TARGET_PCT {float(DEFAULT_IM_TARGET_PCT):g}%)."
+        )
         return
 
     rows = positions_to_rows(positions_raw)
@@ -1261,6 +1560,10 @@ def _near_median_topup_if_needed(
         return
     cur_total = len(rows)
     if cur_total >= target_total:
+        _log(
+            f"PM(near_median): skip top-up — book at max tickers ({cur_total}/{target_total}; "
+            f"DEFAULT_MAX_TICKER_ENTRIES)."
+        )
         return
 
     target_per_side = target_total // 2
@@ -1277,10 +1580,28 @@ def _near_median_topup_if_needed(
         else:
             need_short += remaining
 
-    # Only top up in pairs when possible (one long + one short).
-    n_pairs = min(int(need_long), int(need_short))
-    if n_pairs <= 0:
+    # Structural pairs toward 20 tickers; IM budget may allow fewer (or zero).
+    n_pairs_struct = min(int(need_long), int(need_short))
+    if n_pairs_struct <= 0:
+        _log(
+            f"PM(near_median): skip top-up — no paired slots (cur L/S={cur_long}/{cur_short}, "
+            f"target_per_side={target_per_side}, need_long={need_long}, need_short={need_short})."
+        )
         return
+
+    n_pairs = min(int(n_pairs_struct), int(max_pairs_budget))
+    if n_pairs <= 0:
+        _log(
+            "PM(near_median): skip top-up — IM budget allows 0 new pairs "
+            f"(wanted_structurally={n_pairs_struct})."
+        )
+        return
+    if n_pairs < n_pairs_struct:
+        _log(
+            f"PM(near_median): top-up capped by IM budget — structural_need={n_pairs_struct}, "
+            f"opening={n_pairs} pair(s)."
+        )
+
     need_long = n_pairs
     need_short = n_pairs
 
@@ -1291,8 +1612,10 @@ def _near_median_topup_if_needed(
     )
 
     if not bool(args.live):
-        _log("PM(near_median): dry-run (not live) — would top up missing pairs.")
-        return
+        _log(
+            "PM(near_median): dry-run — running listingtable + strategy picks + multimarketorder "
+            "(no --live; prints sizing line and per-ticker quote dry-run)."
+        )
 
     listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
     ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
@@ -1313,28 +1636,21 @@ def _near_median_topup_if_needed(
         f"PM(near_median): topping up with {n_pairs} pair(s) "
         f"(strategy={meta.get('strategy')}) longs={add_l} shorts={add_s}"
     )
-    if args.usd is not None:
-        run_multimarket(
-            multi_script=str(args.multi_script),
-            longs=add_l,
-            shorts=add_s,
-            usd=float(args.usd),
-            live=True,
-        )
-    else:
-        pct = _resolve_im_target_pct_for_multimarket(
-            strategy_key=strat_key,
-            n_long=len(add_l),
-            n_short=len(add_s),
-            args_im_target_pct=float(args.im_target_pct) if args.im_target_pct is not None else None,
-        )
-        run_multimarket(
-            multi_script=str(args.multi_script),
-            longs=add_l,
-            shorts=add_s,
-            im_target_pct=pct,
-            live=True,
-        )
+    usd_run = _near_median_pm_usd_for_multimarket(
+        snap=snap,
+        args=args,
+        jobs_tag="top-up",
+        book_pos_notional_usd=float(pos_notional),
+    )
+    if usd_run is None:
+        return
+    run_multimarket(
+        multi_script=str(args.multi_script),
+        longs=add_l,
+        shorts=add_s,
+        usd=float(usd_run),
+        live=bool(args.live),
+    )
 
 
 def one_cycle(
@@ -1371,8 +1687,11 @@ def one_cycle(
             _log("No open positions -> listingtable -> strategy -> multimarket (marketstate skipped for funding_pairs)")
         else:
             _log("No open positions -> listingtable -> marketstate -> strategy -> multimarket")
-        plan = _COINGECKO_PLAN.strip().lower()
-        _log(f"step: running listingtable ({'CoinGecko Pro' if plan == 'pro' else 'CoinGecko Free'}) (may take a while)...")
+        cg_plan = (os.getenv("VARIBOT_COINGECKO_PLAN", "pro") or "pro").strip().lower()
+        _log(
+            f"step: running listingtable ({'CoinGecko Pro' if cg_plan == 'pro' else 'CoinGecko Free'}) "
+            f"(may take a while)..."
+        )
         listing_json = run_listingtable_or_use_cache(timeout_s=float(args.listing_timeout_s))
         if _strategy_key_normalized(strat_key) != "funding_pairs":
             _log("step: running marketstate.py...")
@@ -1436,13 +1755,10 @@ def one_cycle(
             _log(f"step: {args.multi_script} finished OK")
         return False
 
-    # --- have positions: optional top-up, then per-strategy managers, then optional portfolio TP close-all ---
-    _near_median_topup_if_needed(ep=ep, args=args, snap=snap, positions_raw=raw_pos)
-    _funding_pairs_manager(ep=ep, args=args, positions_raw=raw_pos)
-    _near_median_pm_manager(ep=ep, cfg=cfg, args=args, positions_raw=raw_pos)
-
-    # This branch: near_median exits are PM-driven; do not flatten the whole book on TP.
-    if _strategy_key_normalized(strat_key) != "near_median" and out.get("tp_check") == "Yes":
+    # --- have positions ---
+    # 1) Portfolio TP: close-all when threshold hit (non-near_median only; near_median uses PM pair exits).
+    strat_norm = _strategy_key_normalized(strat_key)
+    if strat_norm != "near_median" and out.get("tp_check") == "Yes":
         if args.live:
             rc = run_closeallpositions(live=True)
             if rc != 0:
@@ -1450,6 +1766,24 @@ def one_cycle(
         else:
             _log("TP Check Yes — [dry-run] would run closeallpositions.py --live")
         return False
+
+    # 2) PM(near_median): per-pair threshold exits / refill (before top-up IM checks).
+    _near_median_pm_manager(ep=ep, cfg=cfg, args=args, positions_raw=raw_pos, snap=snap)
+
+    # 3) Live PM closes change the book — refresh snapshot before top-up / other managers.
+    if strat_norm == "near_median" and bool(args.live):
+        try:
+            raw_pf = ep.get_portfolio(compute_margin=True)
+            snap = parse_portfolio_snapshot(raw_pf)
+            raw_pos = ep.get_positions()
+        except Exception as e:
+            _log(f"WARNING: post-PM portfolio refresh failed ({type(e).__name__}: {e}); using stale snapshot for rest of cycle.")
+
+    _funding_pairs_manager(ep=ep, args=args, positions_raw=raw_pos)
+
+    # 4) Top-up only after PM(pair-threshold) step above (uses refreshed snap when live).
+    _near_median_topup_if_needed(ep=ep, args=args, snap=snap, positions_raw=raw_pos)
+
     return False
 
 

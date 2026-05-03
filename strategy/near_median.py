@@ -34,7 +34,7 @@ DEFAULT_RANK_BY: RankBy = "market_cap"
 # - "60"    → take Top 60 by the rank metric
 # - "21-60" → take ranks 21..60 by the rank metric (inclusive)
 # Note: the final count must be even (for 50/50 long/short split).
-DEFAULT_TOP_SPEC: str = "60"
+DEFAULT_TOP_SPEC: str = "80"
 
 # Number of tickers to trade (total, before 50/50 split). Must be even.
 DEFAULT_MAX_TICKER_ENTRIES: int = 20
@@ -46,7 +46,10 @@ DEFAULT_EXCLUDE_CSV: str = "BTC,ETH"
 DEFAULT_MAX_OI_SKEW: Optional[float] = None
 
 # Skip tickers with 24h volume below this USD amount; None disables the filter.
-DEFAULT_MIN_VOL_24H: Optional[float] = None
+DEFAULT_MIN_VOL_24H: Optional[float] = 30000
+
+# Skip tickers with open interest below this (same units as listingtabledata.json "OI" field); None disables.
+DEFAULT_MIN_OI: Optional[float] = 30000
 
 # Always dropped when building the top-N-by-OI universe.
 TICKER_BLACKLIST: frozenset[str] = frozenset(
@@ -77,6 +80,7 @@ TICKER_BLACKLIST: frozenset[str] = frozenset(
         "BNB",
         "CRO",
         "LTC",
+        "XDC",
     }
 )
 
@@ -372,6 +376,9 @@ def pick_tickers(
         if DEFAULT_MIN_VOL_24H is not None:
             if r.vol_24h is None or float(r.vol_24h) < float(DEFAULT_MIN_VOL_24H):
                 continue
+        if DEFAULT_MIN_OI is not None:
+            if float(r.oi) < float(DEFAULT_MIN_OI):
+                continue
         if DEFAULT_MAX_OI_SKEW is not None:
             if r.oi_skew is not None and float(r.oi_skew) > float(DEFAULT_MAX_OI_SKEW):
                 continue
@@ -410,6 +417,7 @@ def pick_tickers(
         "exclude": DEFAULT_EXCLUDE_CSV,
         "max_oi_skew": DEFAULT_MAX_OI_SKEW,
         "min_vol_24h": DEFAULT_MIN_VOL_24H,
+        "min_oi": DEFAULT_MIN_OI,
         "long_count": len(longs),
         "short_count": len(shorts),
     }
@@ -454,6 +462,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MIN_VOL_24H if DEFAULT_MIN_VOL_24H is not None else -1.0,
         help=f"Skip listings with vol_24h below this USD amount (default {DEFAULT_MIN_VOL_24H}); use negative to disable.",
     )
+    ap.add_argument(
+        "--min-oi",
+        type=float,
+        default=DEFAULT_MIN_OI if DEFAULT_MIN_OI is not None else -1.0,
+        help=f"Skip listings with OI below this (JSON key \"OI\"; default {DEFAULT_MIN_OI}); use negative to disable.",
+    )
     ap.add_argument("--print-json", action="store_true", help="Print machine-readable JSON output.")
     return ap
 
@@ -466,13 +480,17 @@ def main() -> int:
     min_vol_24h: Optional[float] = float(args.min_vol_24h)
     if min_vol_24h is not None and min_vol_24h < 0:
         min_vol_24h = None
+    min_oi: Optional[float] = float(args.min_oi)
+    if min_oi is not None and min_oi < 0:
+        min_oi = None
 
     # Apply CLI overrides to module-level behavior for this invocation only.
-    global DEFAULT_TOP_SPEC, DEFAULT_EXCLUDE_CSV, DEFAULT_MAX_OI_SKEW, DEFAULT_MIN_VOL_24H, DEFAULT_MAX_TICKER_ENTRIES
+    global DEFAULT_TOP_SPEC, DEFAULT_EXCLUDE_CSV, DEFAULT_MAX_OI_SKEW, DEFAULT_MIN_VOL_24H, DEFAULT_MIN_OI, DEFAULT_MAX_TICKER_ENTRIES
     DEFAULT_TOP_SPEC = str(args.top_spec)
     DEFAULT_EXCLUDE_CSV = str(args.exclude)
     DEFAULT_MAX_OI_SKEW = max_skew
     DEFAULT_MIN_VOL_24H = min_vol_24h
+    DEFAULT_MIN_OI = min_oi
     DEFAULT_MAX_TICKER_ENTRIES = int(args.max_ticker_entries)
 
     longs, shorts, meta = pick_tickers(listing_json=str(args.json_path), marketstate_json=None)
@@ -504,6 +522,9 @@ def main() -> int:
                     continue
                 if DEFAULT_MIN_VOL_24H is not None:
                     if r.vol_24h is None or float(r.vol_24h) < float(DEFAULT_MIN_VOL_24H):
+                        continue
+                if DEFAULT_MIN_OI is not None:
+                    if float(r.oi) < float(DEFAULT_MIN_OI):
                         continue
                 if DEFAULT_MAX_OI_SKEW is not None:
                     if r.oi_skew is not None and float(r.oi_skew) > float(DEFAULT_MAX_OI_SKEW):

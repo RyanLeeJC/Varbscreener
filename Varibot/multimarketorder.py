@@ -21,7 +21,7 @@ from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 from variationalbot.vari.endpoints import Instrument
 
 # Used when neither --usd nor --im-target-pct is passed (change here to retarget default sizing).
-DEFAULT_IM_TARGET_PCT: float = 50.0
+DEFAULT_IM_TARGET_PCT: float = 75.0
 # Omni UI: for the same book, MM usage is ~half of IM usage (MM requirement ≈ ½ × IM requirement).
 # User PCT is interpreted on that MM-style budget; scale notional by ½ vs naive (pv×lev×pct) IM math.
 IM_TARGET_MM_NOTIONAL_SCALE: float = 0.5
