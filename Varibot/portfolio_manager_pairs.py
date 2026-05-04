@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, 
 
 Side = Literal["L", "S"]
 
-PAIR_TP_THRESHOLD_PCT_DEFAULT: float = 1.0
+PAIR_TP_THRESHOLD_PCT_DEFAULT: float = 0.5
 
 
 @dataclass(frozen=True)
