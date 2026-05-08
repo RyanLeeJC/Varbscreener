@@ -11,6 +11,7 @@ STRATEGIES: Dict[str, str] = {
     "median_filter": "median_filter",
     "median_revert": "revert_median",
     "revert_median": "revert_median",
+    "invert_extreme": "invert_extreme",
     "funding_pairs": "funding_pairs",
 }
 

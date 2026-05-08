@@ -70,8 +70,8 @@ _FP_REFRESH_DEFAULT_MIN_AGE_S: float = 300.0  # refresh if listingtabledata.json
 
 # User setting: which strategy to run when flat.
 # You can put a module name (preferred) or a filename:
-#   "revert_median" or "revert_median.py"
-Strategy: str = os.getenv("VARIBOT_STRATEGY", "near_median.py").strip()
+#   "invert_extreme" or "invert_extreme.py"
+Strategy: str = os.getenv("VARIBOT_STRATEGY", "invert_extreme.py").strip()
 if not Strategy:
     Strategy = "revert_near_median.py"
 
@@ -132,7 +132,9 @@ from multimarketorder import (  # noqa: E402
 )
 from strategy import strategies as strategies_mod  # noqa: E402
 from strategy import funding_pairs as funding_pairs_mod  # noqa: E402
-from strategy.near_median import DEFAULT_MAX_TICKER_ENTRIES as NEAR_MEDIAN_MAX_TICKER_ENTRIES  # noqa: E402
+from strategy.invert_extreme import (  # noqa: E402
+    DEFAULT_MAX_TICKER_ENTRIES as INVERT_EXTREME_MAX_TICKER_ENTRIES,
+)
 from portfolio_manager_pairs import (
     PAIR_TP_THRESHOLD_PCT_DEFAULT as PM_PAIR_TP_THRESHOLD_PCT_DEFAULT,
     PairCandidate,
@@ -246,9 +248,9 @@ def _near_median_align_pair_candidates(
 
 
 def _near_median_slot_usd_per_leg(*, portfolio_value_usd: float, leverage: int) -> float:
-    """Per-leg USD slot: pv × leverage × (DEFAULT_IM_TARGET_PCT/100) / NEAR_MEDIAN_MAX_TICKER_ENTRIES (50 → 0.5)."""
+    """Per-leg USD slot: pv × leverage × (DEFAULT_IM_TARGET_PCT/100) / INVERT_EXTREME_MAX_TICKER_ENTRIES."""
     im_frac = float(DEFAULT_IM_TARGET_PCT) / 100.0
-    raw = (float(portfolio_value_usd) * float(leverage) * im_frac) / float(NEAR_MEDIAN_MAX_TICKER_ENTRIES)
+    raw = (float(portfolio_value_usd) * float(leverage) * im_frac) / float(INVERT_EXTREME_MAX_TICKER_ENTRIES)
     step = float(USD_NOTIONAL_ROUND_STEP)
     return float(math.ceil(raw / step) * step)
 
@@ -312,7 +314,7 @@ def _near_median_pm_usd_for_multimarket(
         f"gap={(gap_ratio * 100.0):.2f}% vs target {float(DEFAULT_IM_TARGET_PCT):g}% "
         f"→ available_position_value=${avail_pv:,.2f}; "
         f"$/pair=${pair_budget:,.2f} (2×usd_per_leg); "
-        f"usd_per_leg={slot:g} (pv×lev×({DEFAULT_IM_TARGET_PCT:g}%/100)/{NEAR_MEDIAN_MAX_TICKER_ENTRIES}); "
+        f"usd_per_leg={slot:g} (pv×lev×({DEFAULT_IM_TARGET_PCT:g}%/100)/{INVERT_EXTREME_MAX_TICKER_ENTRIES}); "
         f"max_new_pairs≈{max_pairs} (avail / $/pair)."
     )
     return float(slot)
@@ -1064,7 +1066,7 @@ def _near_median_substitute_skew_rejected_multimarket(
     failed), open alternate tickers from the same strategy ranked lists (excluding open book + failed
     symbols). Controlled by VARIBOT_SKEW_REPLACE_MAX_ROUNDS (default 1).
     """
-    if _strategy_key_normalized(strat_key) != "near_median":
+    if _strategy_key_normalized(strat_key) != "invert_extreme":
         return
     if not bool(args.live):
         return
@@ -1555,7 +1557,7 @@ def _near_median_pm_manager(
 ) -> None:
     strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
     strat_norm = _strategy_key_normalized(strat_key)
-    if strat_norm != "near_median":
+    if strat_norm != "invert_extreme":
         return
 
     rows = positions_to_rows(positions_raw)
@@ -1792,7 +1794,7 @@ def _near_median_topup_if_needed(
     """
     strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
     strat_norm = _strategy_key_normalized(strat_key)
-    if strat_norm != "near_median":
+    if strat_norm != "invert_extreme":
         return
 
     pv = getattr(snap, "portfolio_value_usd", None)
@@ -1804,7 +1806,7 @@ def _near_median_topup_if_needed(
     if not rows:
         return
 
-    target_total = int(NEAR_MEDIAN_MAX_TICKER_ENTRIES)
+    target_total = int(INVERT_EXTREME_MAX_TICKER_ENTRIES)
     if target_total <= 0:
         return
     cur_total = len(rows)
@@ -2084,7 +2086,7 @@ def one_cycle(
             _log(f"step: {args.multi_script} finished OK")
             if bool(args.live):
                 _log_post_multimarket_positions_tally(ep=ep, longs=longs, shorts=shorts)
-        if _strategy_key_normalized(strat_key) == "near_median" and bool(args.live):
+        if _strategy_key_normalized(strat_key) == "invert_extreme" and bool(args.live):
             _near_median_substitute_skew_rejected_multimarket(
                 ep=ep,
                 args=args,
@@ -2102,7 +2104,7 @@ def one_cycle(
     _near_median_pm_manager(ep=ep, cfg=cfg, args=args, positions_raw=raw_pos, snap=snap)
 
     # 2) Live PM closes change the book — refresh snapshot before top-up / other managers.
-    if strat_norm == "near_median" and bool(args.live):
+    if strat_norm == "invert_extreme" and bool(args.live):
         try:
             raw_pf = ep.get_portfolio(compute_margin=True)
             snap = parse_portfolio_snapshot(raw_pf)

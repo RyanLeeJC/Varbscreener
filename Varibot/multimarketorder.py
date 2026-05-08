@@ -89,7 +89,7 @@ def default_leverage_from_env() -> int:
 # IM-target per-order notional is rounded up to this USD step (e.g. 241.04 -> 250).
 USD_NOTIONAL_ROUND_STEP: float = 10.0
 # Default max slippage when --max-slippage and MAX_SLIPPAGE env are unset (fraction of notional).
-_DEFAULT_MAX_SLIPPAGE: float = 0.0005
+_DEFAULT_MAX_SLIPPAGE: float = 0.001
 
 # Post-entry verification: /api/positions can lag shortly after fills.
 _POST_ENTRY_POSITIONS_MAX_WAIT_S: float = 2.0
