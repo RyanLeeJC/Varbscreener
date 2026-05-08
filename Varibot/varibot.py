@@ -87,7 +87,7 @@ POST_MULTIMARKET_POSITIONS_POLL_S: float = 0.5
 # Reduce-only pair closes (PM near_median, funding_pairs; _close_reduce_only_with_slippage_steps).
 # Same defaults as multimarketorder.py (_DEFAULT_MAX_SLIPPAGE / _SLIPPAGE_RETRY_INCREMENT / _MAX_LIVE_ATTEMPTS).
 # Default max slippage when MAX_SLIPPAGE env is unset (fraction of notional).
-_DEFAULT_MAX_SLIPPAGE: float = 0.0005
+_DEFAULT_MAX_SLIPPAGE: float = 0.001
 
 # Retry behavior for reduce-only closes (same values as multimarketorder.py).
 _SLIPPAGE_RETRY_INCREMENT: float = 0.0005
@@ -138,7 +138,11 @@ from strategy.invert_extreme import (  # noqa: E402
 from portfolio_manager_pairs import (
     PAIR_TP_THRESHOLD_PCT_DEFAULT as PM_PAIR_TP_THRESHOLD_PCT_DEFAULT,
     PairCandidate,
+    LEG_SL_THRESHOLD_PCT_DEFAULT as PM_LEG_SL_THRESHOLD_PCT_DEFAULT,
+    LEG_TP_THRESHOLD_PCT_DEFAULT as PM_LEG_TP_THRESHOLD_PCT_DEFAULT,
     filter_replacements,
+    filter_replacements_one_side,
+    select_legs_to_close,
     positions_to_rows,
     scan_best_winner_opposite_pair,
     select_pairs_greedy_grid,
@@ -1564,42 +1568,24 @@ def _near_median_pm_manager(
     if not rows:
         return
 
-    threshold_pct = float(getattr(args, "pm_pair_tp_pct", PM_PAIR_TP_THRESHOLD_PCT_DEFAULT))
-    pairs = select_pairs_greedy_grid(rows=rows, threshold_pct=threshold_pct)
-    if not pairs:
-        nearest = scan_best_winner_opposite_pair(rows=rows)
-        if nearest is None:
-            _log(
-                f"PM(near_median): no eligible close pairs (threshold={threshold_pct:g}%) — "
-                "no winner×opposite pairing evaluated (no positive-uPnL leg or missing L/S side)."
-            )
-        else:
-            _log(
-                f"PM(near_median): no eligible close pairs (threshold={threshold_pct:g}%) — "
-                f"nearest: LONG {nearest.long_ticker} + SHORT {nearest.short_ticker} "
-                f"combined_uPNL%={nearest.combined_upnl_pct:.3f}% "
-                f"(${nearest.combined_upnl_usd:,.2f} / ${nearest.combined_value_usd:,.2f})."
-            )
+    # This branch uses individual-leg TP/SL monitoring (no pairing):
+    # - close legs with upnl_pct >= +5% or <= -10% (thresholds are defaults below)
+    tp_pct = float(PM_LEG_TP_THRESHOLD_PCT_DEFAULT)
+    sl_pct = float(PM_LEG_SL_THRESHOLD_PCT_DEFAULT)
+    legs = select_legs_to_close(rows=rows, tp_pct=tp_pct, sl_pct=sl_pct)
+    if not legs:
+        _log(f"PM(invert_extreme): no eligible legs to close (tp>={tp_pct:g}%, sl<=-{sl_pct:g}%).")
         return
 
-    _log(f"PM(near_median): {len(pairs)} eligible pair(s) to close (threshold={threshold_pct:g}%).")
-    for p in pairs:
+    _log(f"PM(invert_extreme): {len(legs)} leg(s) to close (tp>={tp_pct:g}%, sl<=-{sl_pct:g}%).")
+    for x in legs:
         _log(
-            f"  close_if_live: LONG {p.long_ticker} + SHORT {p.short_ticker} "
-            f"combined_uPNL%={p.combined_upnl_pct:.3f}% "
-            f"(${p.combined_upnl_usd:,.2f} / ${p.combined_value_usd:,.2f})"
+            f"  close_if_live: {x.side} {x.ticker} upnl%={x.upnl_pct:.3f}% "
+            f"(${x.upnl_usd:,.2f} / ${x.value_usd:,.2f}) reason={x.reason}"
         )
 
     if not bool(args.live):
-        _log("PM(near_median): dry-run (not live) — would close pairs and (optionally) refill.")
-        _near_median_pm_dry_run_refill_preview(
-            ep=ep,
-            args=args,
-            strat_key=strat_key,
-            positions_raw=positions_raw,
-            pairs=pairs,
-            snap=snap,
-        )
+        _log("PM(invert_extreme): dry-run (not live) — would close legs and (optionally) replace.")
         return
 
     # Build qty lookup once.
@@ -1612,35 +1598,39 @@ def _near_median_pm_manager(
 
     max_slip = _resolve_max_slippage()
     closed_syms: Set[str] = set()
+    closed_long_n = 0
+    closed_short_n = 0
 
-    for p in pairs:
-        for sym in (p.long_ticker, p.short_ticker):
-            q = by_sym.get(sym)
-            if q is None or abs(float(q)) <= 1e-12:
-                _log(f"PM(near_median): skip close {sym} (no open qty found).")
-                continue
-            close_side = "sell" if float(q) > 0 else "buy"
-            qty_abs = abs(float(q))
-            _log(f"PM(near_median): closing {sym} qty={qty_abs:g} side={close_side} reduce-only...")
-            _close_reduce_only_with_slippage_steps(
-                ep=ep,
-                sym=sym,
-                qty_abs=float(qty_abs),
-                close_side=str(close_side),
-                max_slip=float(max_slip),
-            )
-            closed_syms.add(str(sym).strip().upper())
+    for x in legs:
+        sym = str(x.ticker).strip().upper()
+        q = by_sym.get(sym)
+        if q is None or abs(float(q)) <= 1e-12:
+            _log(f"PM(invert_extreme): skip close {sym} (no open qty found).")
+            continue
+        close_side = "sell" if float(q) > 0 else "buy"
+        qty_abs = abs(float(q))
+        _log(f"PM(invert_extreme): closing {sym} qty={qty_abs:g} side={close_side} reduce-only...")
+        _close_reduce_only_with_slippage_steps(
+            ep=ep,
+            sym=sym,
+            qty_abs=float(qty_abs),
+            close_side=str(close_side),
+            max_slip=float(max_slip),
+        )
+        closed_syms.add(sym)
+        if x.side == "L":
+            closed_long_n += 1
+        else:
+            closed_short_n += 1
 
-    # Refill: refresh listingtable_pro then open replacements (same strategy logic), excluding closed + open.
+    # Replacement: open new tickers in the SAME direction as closed legs, avoiding:
+    # - symbols closed earlier in this interval check
+    # - currently open symbols after closes
     refill_on = bool(getattr(args, "pm_refill", False)) and not bool(getattr(args, "pm_no_refill", False))
     if not refill_on:
         # Default behavior for this branch: refill unless explicitly disabled.
         refill_on = bool(PM_REFILL_DEFAULT_ON) and not bool(getattr(args, "pm_no_refill", False))
     if not refill_on:
-        return
-
-    n_pairs = len(pairs)
-    if n_pairs <= 0:
         return
 
     try:
@@ -1649,12 +1639,12 @@ def _near_median_pm_manager(
         open_after = ep.get_positions()
         pos_n_after = _positions_notional_usd(open_after)
     except Exception:
-        _log("PM(near_median): skip refill — could not fetch portfolio/positions after closes.")
+        _log("PM(invert_extreme): skip replacements — could not fetch portfolio/positions after closes.")
         return
 
     pv_after = getattr(snap_after, "portfolio_value_usd", None)
     if pv_after is None or float(pv_after) <= 0:
-        _log("PM(near_median): skip refill — post-close portfolio_value_usd missing or non-positive.")
+        _log("PM(invert_extreme): skip replacements — post-close portfolio_value_usd missing or non-positive.")
         return
 
     lev_m = _multimarket_effective_leverage()
@@ -1666,52 +1656,32 @@ def _near_median_pm_manager(
             leverage=int(lev_m),
         )
     )
-    pair_budget_refill = _near_median_usd_per_pair_budget(usd_per_leg=float(leg_refill))
-
+    # Replacements are per-side legs; use the same IM-gap heuristic but do not force pairing.
     _im_r, gap_r, avail_pv, _im_src = _near_median_im_gap_metrics(
         snap=snap_after,
         portfolio_value_usd=float(pv_after),
         leverage=int(lev_m),
         pos_notional_usd=float(pos_n_after),
     )
-    max_pairs_budget = _near_median_max_pairs_from_available_position_value(
-        available_position_value_usd=float(avail_pv),
-        usd_per_pair=float(pair_budget_refill),
-    )
-    need_pairs = min(int(n_pairs), int(max_pairs_budget))
-    if need_pairs <= 0:
+    if gap_r <= 0.0:
         _log(
-            f"PM(near_median): skip refill — IM%={_im_r * 100.0:.2f}% leaves "
-            f"available_position_value=${avail_pv:,.2f} (< $/pair for one pair at ${pair_budget_refill:,.2f})."
+            f"PM(invert_extreme): skip replacements — no IM gap "
+            f"(IM%={_im_r * 100.0:.2f}%; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
         )
         return
-    if need_pairs < int(n_pairs):
-        _log(
-            f"PM(near_median): refill capped by IM budget — pairs wanted={n_pairs}, "
-            f"affordable={need_pairs} (available_position_value=${avail_pv:,.2f})."
-        )
 
-    if args.usd is not None:
-        if gap_r <= 0.0:
-            _log(
-                f"PM(near_median): skip refill — no IM gap (IM%={_im_r * 100.0:.2f}%; cap "
-                f"{float(DEFAULT_IM_TARGET_PCT):g}%)."
-            )
-            return
-        usd_run = float(args.usd)
-    else:
-        usd_run_opt = _near_median_pm_usd_for_multimarket(
-            snap=snap_after,
-            args=args,
-            jobs_tag="PM refill (post-close)",
-            book_pos_notional_usd=float(pos_n_after),
-        )
-        if usd_run_opt is None:
-            return
-        usd_run = float(usd_run_opt)
+    usd_run_opt = _near_median_pm_usd_for_multimarket(
+        snap=snap_after,
+        args=args,
+        jobs_tag="PM replacements (post-close)",
+        book_pos_notional_usd=float(pos_n_after),
+    )
+    if usd_run_opt is None:
+        return
+    usd_run = float(usd_run_opt)
 
     # Refresh listing cache (pro) and ensure marketstate exists (strategy runner requires it for non-funding_pairs).
-    _log("PM(near_median): refreshing listingtable (pro) for replacements...")
+    _log("PM(invert_extreme): refreshing listingtable (pro) for replacements...")
     listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
     ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
     if not os.path.isfile(ms_path):
@@ -1729,49 +1699,37 @@ def _near_median_pm_manager(
 
     top_n = _top_n_for_strategy(strat_key)
     longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
-    need_each_side = int(need_pairs)
-    repl_l, repl_s = filter_replacements(
-        longs=longs,
-        shorts=shorts,
-        disallow=disallow,
-        need_each_side=need_each_side,
-    )
-    got_l, got_s = len(repl_l), len(repl_s)
-    repl_l, repl_s, n_do = _near_median_align_pair_candidates(repl_l, repl_s, wanted_pairs=need_each_side)
-    if n_do <= 0:
-        _log(
-            f"PM(near_median): WARNING insufficient replacements after disallow filter "
-            f"(wanted {need_each_side} pair(s); got {got_l}L/{got_s}S). Skip refill."
-        )
-        return
-    if n_do < need_each_side:
-        _log(
-            f"PM(near_median): refill partial — wanted {need_each_side} pair(s), opening {n_do} "
-            f"(candidates {got_l}L/{got_s}S)."
-        )
 
-    _log(
-        f"PM(near_median): opening replacements (strategy={meta.get('strategy')}) "
-        f"pairs={n_do} longs={len(repl_l)} shorts={len(repl_s)}..."
-    )
-    rc_mm = run_multimarket(
-        multi_script=str(args.multi_script),
-        longs=repl_l,
-        shorts=repl_s,
-        usd=float(usd_run),
-        live=bool(args.live),
-    )
-    if bool(args.live) and int(rc_mm) == 0:
-        _log_post_multimarket_positions_tally(ep=ep, longs=repl_l, shorts=repl_s)
-    if bool(args.live):
-        _near_median_substitute_skew_rejected_multimarket(
-            ep=ep,
-            args=args,
-            strat_key=strat_key,
-            listing_json=listing_json,
-            jobs_tag="PM refill",
+    # Pick per-side replacements.
+    repl_l = filter_replacements_one_side(candidates=longs, disallow=disallow, need=int(closed_long_n))
+    repl_s = filter_replacements_one_side(candidates=shorts, disallow=disallow, need=int(closed_short_n))
+    if closed_long_n and not repl_l:
+        _log(f"PM(invert_extreme): WARNING no long replacements (closed_long={closed_long_n}).")
+    if closed_short_n and not repl_s:
+        _log(f"PM(invert_extreme): WARNING no short replacements (closed_short={closed_short_n}).")
+
+    if repl_l:
+        _log(f"PM(invert_extreme): opening long replacements n={len(repl_l)} (strategy={meta.get('strategy')})...")
+        rc_l = run_multimarket(
+            multi_script=str(args.multi_script),
+            longs=repl_l,
+            shorts=[],
             usd=float(usd_run),
+            live=bool(args.live),
         )
+        if bool(args.live) and int(rc_l) == 0:
+            _log_post_multimarket_positions_tally(ep=ep, longs=repl_l, shorts=[])
+    if repl_s:
+        _log(f"PM(invert_extreme): opening short replacements n={len(repl_s)} (strategy={meta.get('strategy')})...")
+        rc_s = run_multimarket(
+            multi_script=str(args.multi_script),
+            longs=[],
+            shorts=repl_s,
+            usd=float(usd_run),
+            live=bool(args.live),
+        )
+        if bool(args.live) and int(rc_s) == 0:
+            _log_post_multimarket_positions_tally(ep=ep, longs=[], shorts=repl_s)
 
 
 def _near_median_topup_if_needed(

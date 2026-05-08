@@ -8,6 +8,8 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, 
 Side = Literal["L", "S"]
 
 PAIR_TP_THRESHOLD_PCT_DEFAULT: float = 1.0
+LEG_TP_THRESHOLD_PCT_DEFAULT: float = 5.0
+LEG_SL_THRESHOLD_PCT_DEFAULT: float = 10.0
 
 
 @dataclass(frozen=True)
@@ -17,6 +19,97 @@ class PositionRow:
     qty: float
     value_usd: float
     upnl_usd: float
+
+
+@dataclass(frozen=True)
+class LegCloseCandidate:
+    ticker: str
+    side: Side
+    qty: float
+    value_usd: float
+    upnl_usd: float
+    upnl_pct: float
+    reason: str  # "tp" | "sl"
+
+
+def leg_upnl_pct(row: PositionRow) -> Optional[float]:
+    den = float(row.value_usd)
+    if den <= 1e-12:
+        return None
+    return float(row.upnl_usd) / den * 100.0
+
+
+def select_legs_to_close(
+    *,
+    rows: Sequence[PositionRow],
+    tp_pct: float = LEG_TP_THRESHOLD_PCT_DEFAULT,
+    sl_pct: float = LEG_SL_THRESHOLD_PCT_DEFAULT,
+    disallow: Optional[Set[str]] = None,
+) -> List[LegCloseCandidate]:
+    """
+    Individual-leg monitoring (no pairing).
+
+    Close conditions (uPnL% is uPnL USD divided by this leg's abs position value USD):
+      - take profit: upnl_pct >= tp_pct
+      - stop loss:   upnl_pct <= -sl_pct
+
+    Returns candidates sorted by |upnl_pct| descending (largest move first).
+    """
+    dis = {t.strip().upper() for t in (disallow or set()) if isinstance(t, str)}
+    out: List[LegCloseCandidate] = []
+    for r in rows:
+        sym = str(r.ticker).strip().upper()
+        if not sym or sym in dis:
+            continue
+        p = leg_upnl_pct(r)
+        if p is None:
+            continue
+        pf = float(p)
+        if pf >= float(tp_pct):
+            out.append(
+                LegCloseCandidate(
+                    ticker=sym,
+                    side=r.side,
+                    qty=float(r.qty),
+                    value_usd=float(r.value_usd),
+                    upnl_usd=float(r.upnl_usd),
+                    upnl_pct=pf,
+                    reason="tp",
+                )
+            )
+        elif pf <= -float(sl_pct):
+            out.append(
+                LegCloseCandidate(
+                    ticker=sym,
+                    side=r.side,
+                    qty=float(r.qty),
+                    value_usd=float(r.value_usd),
+                    upnl_usd=float(r.upnl_usd),
+                    upnl_pct=pf,
+                    reason="sl",
+                )
+            )
+    out.sort(key=lambda x: abs(float(x.upnl_pct)), reverse=True)
+    return out
+
+
+def filter_replacements_one_side(
+    *,
+    candidates: Sequence[str],
+    disallow: Set[str],
+    need: int,
+) -> List[str]:
+    dis = {t.strip().upper() for t in disallow if isinstance(t, str)}
+    out: List[str] = []
+    for t in candidates:
+        sym = str(t).strip().upper()
+        if not sym or sym in dis:
+            continue
+        if sym not in out:
+            out.append(sym)
+        if len(out) >= int(need):
+            break
+    return out
 
 
 def _first_float(d: Dict[str, Any], keys: Sequence[str]) -> Optional[float]:
