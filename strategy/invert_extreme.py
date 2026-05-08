@@ -327,26 +327,45 @@ def _pick_invert_extreme(
     Selection per user spec:
       - shorts: up 1h and up 24h; priority: most positive 7d first
       - longs:  down 1h and down 24h; priority: most negative 7d first
-    Returns (longs, shorts) with equal counts (paired for market-neutral basket).
+    No pairing requirement: fill up to max_total_entries across both buckets (can be lopsided).
+    Final inclusion priority is global by abs(7d%), after bucket criteria are satisfied.
     """
     cap = int(max_total_entries)
     if cap <= 0:
-        return [], []
-    if cap % 2 != 0:
-        cap -= 1
-    per_side = cap // 2
-    if per_side <= 0:
         return [], []
 
     shorts_all = [r for r in universe if float(r.chg_1h_pct) > 0.0 and float(r.chg_24h_pct) > 0.0]
     longs_all = [r for r in universe if float(r.chg_1h_pct) < 0.0 and float(r.chg_24h_pct) < 0.0]
 
-    shorts_ranked = sorted(shorts_all, key=lambda r: (float(r.chg_7d_pct), float(r.chg_24h_pct), float(r.chg_1h_pct), r.ticker), reverse=True)
-    longs_ranked = sorted(longs_all, key=lambda r: (float(r.chg_7d_pct), float(r.chg_24h_pct), float(r.chg_1h_pct), r.ticker))
+    # Bucket ranking (kept for tie-break stability inside a bucket).
+    shorts_ranked = sorted(
+        shorts_all,
+        key=lambda r: (float(r.chg_7d_pct), float(r.chg_24h_pct), float(r.chg_1h_pct), r.ticker),
+        reverse=True,
+    )
+    longs_ranked = sorted(
+        longs_all,
+        key=lambda r: (float(r.chg_7d_pct), float(r.chg_24h_pct), float(r.chg_1h_pct), r.ticker),
+    )
 
-    n = min(per_side, len(shorts_ranked), len(longs_ranked))
-    shorts = [r.ticker for r in shorts_ranked[:n]]
-    longs = [r.ticker for r in longs_ranked[:n]]
+    # Global inclusion priority: abs(7d%) desc (ties: abs(24h), abs(1h), then ticker).
+    # We preserve side labels by building a combined list first, then splitting after truncation.
+    combined: List[Tuple[str, ListingRow]] = []
+    combined.extend([("S", r) for r in shorts_ranked])
+    combined.extend([("L", r) for r in longs_ranked])
+    combined.sort(
+        key=lambda x: (abs(float(x[1].chg_7d_pct)), abs(float(x[1].chg_24h_pct)), abs(float(x[1].chg_1h_pct)), x[1].ticker),
+        reverse=True,
+    )
+    picked = combined[:cap]
+
+    longs: List[str] = []
+    shorts: List[str] = []
+    for side, r in picked:
+        if side == "L":
+            longs.append(r.ticker)
+        else:
+            shorts.append(r.ticker)
     return longs, shorts
 
 
@@ -360,6 +379,7 @@ def _selected_sign_check(
     Verify the selection invariants:
       - all shorts are up 1h & up 24h
       - all longs are down 1h & down 24h
+    (No pairing / count-balance invariant is enforced.)
     """
     idx: Dict[str, ListingRow] = {r.ticker.upper(): r for r in universe}
 
@@ -496,7 +516,7 @@ def pick_tickers(
         "selection": {
             "short_filter": "chg_1h_pct>0 AND chg_24h_pct>0",
             "long_filter": "chg_1h_pct<0 AND chg_24h_pct<0",
-            "rank": "7d desc for shorts, 7d asc for longs (ties: 24h, 1h)",
+            "rank": "global abs(7d) desc after bucket filters (ties: abs(24h), abs(1h)); bucket ordering uses 7d/24h/1h",
             "sign_check": sign_check,
         },
     }
