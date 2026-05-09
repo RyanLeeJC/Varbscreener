@@ -1822,19 +1822,9 @@ def _invert_extreme_topup_if_needed(
     if target_total <= 0:
         return
     cur_total = len(rows)
-    target_per_side = target_total // 2
     cur_long = sum(1 for r in rows if r.side == "L")
     cur_short = sum(1 for r in rows if r.side == "S")
-    need_long = max(0, int(target_per_side) - int(cur_long))
-    need_short = max(0, int(target_per_side) - int(cur_short))
-
-    # If still short on total due to oddities, allocate remaining to the smaller side.
-    remaining = max(0, int(target_total) - int(cur_total) - int(need_long) - int(need_short))
-    if remaining > 0:
-        if cur_long <= cur_short:
-            need_long += remaining
-        else:
-            need_short += remaining
+    slots_total = max(0, int(target_total) - int(cur_total))
 
     if int(cycle_index) == 1:
         syms = sorted({str(r.ticker).strip().upper() for r in rows if r.ticker})
@@ -1848,7 +1838,7 @@ def _invert_extreme_topup_if_needed(
 
     _log(
         f"PM(invert_extreme): book snapshot — tickers={cur_total}/{target_total} "
-        f"L={cur_long} S={cur_short}; top-up need_long={need_long} need_short={need_short}."
+        f"L={cur_long} S={cur_short}; slots_total={slots_total}."
     )
 
     im_usage = getattr(snap, "im_usage", None)
@@ -1876,17 +1866,14 @@ def _invert_extreme_topup_if_needed(
         )
         return
 
-    if int(need_long) <= 0 and int(need_short) <= 0:
-        _log(
-            f"PM(invert_extreme): skip top-up — no slots needed (cur L/S={cur_long}/{cur_short}, "
-            f"target_per_side={target_per_side})."
-        )
+    if int(slots_total) <= 0:
+        _log("PM(invert_extreme): skip top-up — no slots needed (book already at target).")
         return
 
     open_syms: Set[str] = {r.ticker.strip().upper() for r in rows if r.ticker}
     _log(
         f"PM(invert_extreme): top-up plan — current={cur_total}/{target_total} "
-        f"(L={cur_long}, S={cur_short}); add_L={need_long} add_S={need_short} (non-paired)."
+        f"(L={cur_long}, S={cur_short}); slots_total={slots_total} (non-paired; follow strategy picks)."
     )
 
     if not bool(args.live):
@@ -1903,22 +1890,17 @@ def _invert_extreme_topup_if_needed(
     top_n = _top_n_for_strategy(strat_key)
     longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
     disallow = set(open_syms)
-    add_l = (
-        filter_replacements_one_side(candidates=longs, disallow=disallow, need=int(need_long))
-        if int(need_long) > 0
-        else []
-    )
+    # Fill from the current strategy pick list (ranked order). We do NOT enforce 50/50 L/S here.
+    # If the strategy currently has 0 longs, we'll top-up shorts-only (and vice versa).
+    add_l = filter_replacements_one_side(candidates=longs, disallow=disallow, need=int(slots_total))
     disallow |= set(add_l)
-    add_s = (
-        filter_replacements_one_side(candidates=shorts, disallow=disallow, need=int(need_short))
-        if int(need_short) > 0
-        else []
-    )
+    rem = max(0, int(slots_total) - int(len(add_l)))
+    add_s = filter_replacements_one_side(candidates=shorts, disallow=disallow, need=int(rem)) if rem > 0 else []
     n_open = int(len(add_l) + len(add_s))
     if n_open <= 0:
         _log(
             "PM(invert_extreme): top-up skipped — insufficient new tickers "
-            f"(wanted L={need_long} S={need_short}; got {len(add_l)}L/{len(add_s)}S after filter)."
+            f"(slots_total={slots_total}; got {len(add_l)}L/{len(add_s)}S after filter)."
         )
         return
 
