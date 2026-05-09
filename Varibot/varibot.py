@@ -588,6 +588,62 @@ def _positions_time_kill_candidates(
     return out
 
 
+def _parse_pct_str(v: Any) -> Optional[float]:
+    """
+    Parse strings like "1.23%" or numeric-ish values into a float percent (e.g. 1.23).
+    """
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        s = str(v).strip()
+    except Exception:
+        return None
+    if not s:
+        return None
+    s = s.replace("%", "").strip()
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def _ticker_abs_7d_from_listing_json(listing_json: str) -> Dict[str, float]:
+    """
+    Best-effort map: ticker -> abs(7d change %), from listingtabledata.json.
+    """
+    try:
+        with open(listing_json, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        return {}
+
+    listings = None
+    if isinstance(payload, dict) and isinstance(payload.get("listings"), list):
+        listings = payload.get("listings")
+    elif isinstance(payload, list):
+        listings = payload
+    if not isinstance(listings, list):
+        return {}
+
+    out: Dict[str, float] = {}
+    for row in listings:
+        if not isinstance(row, dict):
+            continue
+        t = row.get("vari_ticker") or row.get("ticker") or row.get("symbol")
+        if not t:
+            continue
+        sym = str(t).strip().upper()
+        if not sym:
+            continue
+        chg7 = _parse_pct_str(row.get("price_change_7d_pct") or row.get("price_change_7d") or row.get("chg_7d_pct"))
+        if chg7 is None:
+            continue
+        out[sym] = abs(float(chg7))
+    return out
+
+
 def _oldest_position_summary(positions_raw: Any, *, now_ts: Optional[float] = None) -> Optional[Tuple[str, float]]:
     """
     Return (symbol, age_s) for the oldest open position by position_info.opened_at.
@@ -1890,12 +1946,36 @@ def _invert_extreme_topup_if_needed(
     top_n = _top_n_for_strategy(strat_key)
     longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
     disallow = set(open_syms)
-    # Fill from the current strategy pick list (ranked order). We do NOT enforce 50/50 L/S here.
-    # If the strategy currently has 0 longs, we'll top-up shorts-only (and vice versa).
-    add_l = filter_replacements_one_side(candidates=longs, disallow=disallow, need=int(slots_total))
-    disallow |= set(add_l)
-    rem = max(0, int(slots_total) - int(len(add_l)))
-    add_s = filter_replacements_one_side(candidates=shorts, disallow=disallow, need=int(rem)) if rem > 0 else []
+
+    # Fill by global priority: biggest abs(7d chg%) first (ties: keep strategy order/ticker).
+    abs7 = _ticker_abs_7d_from_listing_json(str(listing_json))
+    # (abs7, seq, side, sym) so ties keep strategy-list ordering.
+    combined: List[Tuple[float, int, str, str]] = []
+    seq = 0
+    for t in longs:
+        sym = str(t).strip().upper()
+        if sym:
+            combined.append((float(abs7.get(sym, 0.0)), seq, "L", sym))
+            seq += 1
+    for t in shorts:
+        sym = str(t).strip().upper()
+        if sym:
+            combined.append((float(abs7.get(sym, 0.0)), seq, "S", sym))
+            seq += 1
+    combined.sort(key=lambda x: (-float(x[0]), int(x[1])))
+
+    add_l: List[str] = []
+    add_s: List[str] = []
+    for _, __, side, sym in combined:
+        if sym in disallow:
+            continue
+        if side == "L":
+            add_l.append(sym)
+        else:
+            add_s.append(sym)
+        disallow.add(sym)
+        if len(add_l) + len(add_s) >= int(slots_total):
+            break
     n_open = int(len(add_l) + len(add_s))
     if n_open <= 0:
         _log(
