@@ -588,6 +588,35 @@ def _positions_time_kill_candidates(
     return out
 
 
+def _oldest_position_summary(positions_raw: Any, *, now_ts: Optional[float] = None) -> Optional[Tuple[str, float]]:
+    """
+    Return (symbol, age_s) for the oldest open position by position_info.opened_at.
+    """
+    now = float(now_ts) if now_ts is not None else float(time.time())
+    best_sym: Optional[str] = None
+    best_age: Optional[float] = None
+    for p in _positions_list(positions_raw):
+        q = _position_qty(p)
+        if q is None or abs(float(q)) <= 1e-12:
+            continue
+        pi = p.get("position_info")
+        if not isinstance(pi, dict):
+            continue
+        opened = _parse_ts(pi.get("opened_at"))
+        if opened is None:
+            continue
+        age_s = max(0.0, now - float(opened))
+        sym = _instrument_label(p).strip().upper()
+        if not sym:
+            continue
+        if best_age is None or age_s > best_age:
+            best_age = float(age_s)
+            best_sym = sym
+    if best_sym is None or best_age is None:
+        return None
+    return best_sym, best_age
+
+
 def _log_post_multimarket_positions_tally(
     *,
     ep: VariEndpoints,
@@ -2033,6 +2062,13 @@ def one_cycle(
 
     # --- have positions ---
     strat_norm = _strategy_key_normalized(strat_key)
+
+    # Log oldest open position (helps sanity-check time-kill / holds).
+    if strat_norm == "invert_extreme":
+        oldest = _oldest_position_summary(raw_pos, now_ts=time.time())
+        if oldest is not None:
+            sym, age_s = oldest
+            _log(f"oldest_pos= {sym} ({_format_duration_s(age_s)})")
 
     # Hard time-kill (invert_extreme only): if the oldest open position is too old, close all.
     if strat_norm == "invert_extreme":
