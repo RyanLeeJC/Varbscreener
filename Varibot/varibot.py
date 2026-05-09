@@ -893,12 +893,13 @@ def _run_script(
 
 def run_listingtable_or_use_cache(*, timeout_s: float = 120.0) -> str:
     plan = (os.getenv("VARIBOT_COINGECKO_PLAN", "pro") or "pro").strip().lower()
-    script_name = "listingtable_pro.py" if plan == "pro" else "listingtable.py"
+    # listingtable.py now supports --plan; keep this function stable even if the old pro wrapper is removed.
+    script_name = "listingtable.py"
     script = os.path.join(_LISTINGS_DIR, script_name)
     json_path = os.path.join(_LISTINGS_DIR, "listingtabledata.json")
     if not os.path.isfile(script):
         raise FileNotFoundError(f"{script_name} not found: {script}")
-    rc = _run_script(script, cwd=_LISTINGS_DIR, timeout_s=timeout_s)
+    rc = _run_script(script, cwd=_LISTINGS_DIR, args=["--plan", str(plan)], timeout_s=timeout_s)
     if rc != 0 and os.path.isfile(json_path):
         _log(f"{script_name} exited {rc}; using cached listingtabledata.json if present.")
     elif rc != 0:

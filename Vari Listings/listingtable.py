@@ -5,6 +5,7 @@ with CoinGecko market data.
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from datetime import datetime
@@ -15,6 +16,12 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import requests
+
+# Optional: local convenience to load Varibot/.env when running this script directly.
+try:
+    from dotenv import load_dotenv  # type: ignore
+except Exception:  # pragma: no cover
+    load_dotenv = None  # type: ignore[assignment]
 
 # Variational Omni read-only API
 VARI_BASE_URL: str = "https://omni-client-api.prod.ap-northeast-1.variational.io"
@@ -877,11 +884,108 @@ def compute_oi_skew(oi_long: Any, oi_short: Any, oi_total: Any) -> Optional[floa
         return None
 
 
-def main() -> None:
+def _apply_cli_filters_to_env(*, mcap: Optional[int], vol: Optional[float], blacklist: Optional[List[str]]) -> None:
+    if mcap is not None:
+        os.environ[FILTER_TOP_N_BY_MCAP_ENV] = str(int(mcap))
+    if vol is not None:
+        os.environ[FILTER_MIN_VOL_24H_ENV] = str(float(vol))
+    if blacklist is not None:
+        raw = ",".join(blacklist) if isinstance(blacklist, list) else str(blacklist)
+        os.environ[FILTER_BLACKLIST_ENV] = raw
+
+
+def _apply_plan_tuning(*, plan: str) -> None:
+    """
+    Adjust global CoinGecko settings based on plan and API key availability.
+    """
+    global COINGECKO_BASE_URL
+    global COINGECKO_MARKETS_PER_PAGE
+    global COINGECKO_ID_BATCH_SIZE
+    global COINGECKO_SYMBOL_BATCH_SIZE
+    global COINGECKO_MIN_SECONDS_BETWEEN_CALLS
+
+    plan_norm = (plan or "auto").strip().lower()
+    api_key = os.getenv(COINGECKO_API_KEY_ENV, "").strip()
+
+    # auto: pro if api key present, else free
+    if plan_norm in ("auto", ""):
+        plan_norm = "pro" if api_key else "free"
+
+    if plan_norm == "pro" and api_key:
+        # Pro API keys must use the Pro root URL.
+        COINGECKO_BASE_URL = "https://pro-api.coingecko.com/api/v3"
+        # CoinGecko /coins/markets allows up to 250 per page.
+        COINGECKO_MARKETS_PER_PAGE = 250
+        # For id-based calls: large batches can produce a URL that's too long (HTTP 400),
+        # so keep this conservative unless you override explicitly.
+        COINGECKO_ID_BATCH_SIZE = int(os.getenv("COINGECKO_ID_BATCH_SIZE_PRO", "100"))
+        # Keep symbol lookup capped at 50 (CoinGecko docs / our code comments).
+        COINGECKO_SYMBOL_BATCH_SIZE = min(int(COINGECKO_SYMBOL_BATCH_SIZE), 50)
+        # Analyst/Pro plans have higher rate limits; this just reduces our conservative pacing.
+        COINGECKO_MIN_SECONDS_BETWEEN_CALLS = float(os.getenv("COINGECKO_MIN_SECONDS_BETWEEN_CALLS_PRO", "0.25"))
+
+    # Print a one-line banner to stderr so it's obvious what mode we ran in.
+    plan_used = "pro" if (plan_norm == "pro" and api_key) else "free"
+    key_hint = (
+        (api_key[:6] + "..." + api_key[-4:]) if api_key and len(api_key) >= 12 else ("set" if api_key else "missing")
+    )
+    print(
+        f"[listingtable] plan={plan_used} api_key={key_hint} base={COINGECKO_BASE_URL} "
+        f"per_page={COINGECKO_MARKETS_PER_PAGE} id_batch={COINGECKO_ID_BATCH_SIZE} "
+        f"min_sleep_s={COINGECKO_MIN_SECONDS_BETWEEN_CALLS}",
+        file=sys.stderr,
+    )
+
+
+def main(argv: Optional[List[str]] = None) -> int:
     """
     Fetches Variational stats and writes listingtabledata.txt with timestamp
     and listing summary.
     """
+    parser = argparse.ArgumentParser(
+        prog="listingtable.py",
+        description="Fetch Vari listings and enrich with CoinGecko market data.",
+    )
+    parser.add_argument(
+        "--plan",
+        choices=("auto", "free", "pro"),
+        default=os.getenv("VARIBOT_COINGECKO_PLAN", "auto").strip().lower() or "auto",
+        help="CoinGecko plan tuning: auto (default), free, or pro (requires COINGECKO_API_KEY).",
+    )
+    parser.add_argument(
+        "--mcap",
+        type=int,
+        default=None,
+        help="Keep only the top N tickers by market cap (after BTC/ETH ordering). Example: --mcap 60",
+    )
+    parser.add_argument(
+        "--vol",
+        type=float,
+        default=None,
+        help="Filter out listings with 24h volume below this minimum (USDC). Example: --vol 100000",
+    )
+    parser.add_argument(
+        "--blacklist",
+        nargs="*",
+        default=None,
+        help='Tickers to exclude (space-separated or comma-separated). Example: --blacklist BTC ETH  (or --blacklist "BTC,ETH")',
+    )
+    args = parser.parse_args(argv)
+
+    if load_dotenv is not None:
+        # Local convenience: load ../Varibot/.env if present. (Railway uses service Variables instead.)
+        here = os.path.dirname(os.path.abspath(__file__))
+        maybe_env = os.path.abspath(os.path.join(here, "..", "Varibot", ".env"))
+        if os.path.isfile(maybe_env):
+            load_dotenv(maybe_env)
+
+    # Keep old behavior available via env, but also allow CLI flags for the wrapper use-case.
+    bl = args.blacklist
+    if isinstance(bl, list) and len(bl) == 1 and "," in str(bl[0]):
+        bl = [t.strip() for t in str(bl[0]).split(",") if t.strip()]
+    _apply_cli_filters_to_env(mcap=args.mcap, vol=args.vol, blacklist=bl)
+    _apply_plan_tuning(plan=str(args.plan))
+
     stats = fetch_variational_metadata_stats()
     listings: List[Dict[str, Any]] = stats.get("listings", [])
 
@@ -1009,7 +1113,8 @@ def main() -> None:
         )
 
     print(f"Tickers successfully fetched: {len(listings)}...in {dt_s:.2f}s")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
