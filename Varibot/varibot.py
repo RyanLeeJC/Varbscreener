@@ -68,6 +68,11 @@ _FP_REFRESH_MIN_AGE_S_ENV: str = "VARIBOT_FUNDING_PAIRS_REFRESH_LISTINGTABLE_MIN
 _FP_REFRESH_DEFAULT_ON: bool = True
 _FP_REFRESH_DEFAULT_MIN_AGE_S: float = 300.0  # refresh if listingtabledata.json older than 5 minutes
 
+# Strategy risk control: hard max hold time for position batches (invert_extreme only).
+# If the oldest open position's `position_info.opened_at` is >= this many hours, varibot will
+# close all positions (live only) at the start of the "have positions" cycle.
+TIME_KILL_POSITION_HOURS: float = 24.0
+
 # User setting: which strategy to run when flat.
 # You can put a module name (preferred) or a filename:
 #   "invert_extreme" or "invert_extreme.py"
@@ -528,6 +533,59 @@ def has_open_positions(positions_raw: Any) -> bool:
         if q is not None and abs(float(q)) > 1e-12:
             return True
     return False
+
+
+def _oldest_position_opened_at_ts(positions_raw: Any) -> Optional[float]:
+    """
+    Best-effort: return unix ts for the oldest open position's opened_at.
+    Observed live shape: position_info.opened_at = ISO-8601 string.
+    """
+    best: Optional[float] = None
+    for p in _positions_list(positions_raw):
+        pi = p.get("position_info")
+        if not isinstance(pi, dict):
+            continue
+        ts = _parse_ts(pi.get("opened_at"))
+        if ts is None:
+            continue
+        if best is None or ts < best:
+            best = float(ts)
+    return best
+
+
+def _positions_time_kill_candidates(
+    *,
+    positions_raw: Any,
+    now_ts: Optional[float],
+    kill_after_s: float,
+) -> List[Tuple[str, float, float]]:
+    """
+    Return [(sym, qty, age_s), ...] for positions whose opened_at age >= kill_after_s.
+
+    qty is signed (same sign convention as positions); age_s is seconds since opened_at.
+    """
+    out: List[Tuple[str, float, float]] = []
+    now = float(now_ts) if now_ts is not None else float(time.time())
+    for p in _positions_list(positions_raw):
+        q = _position_qty(p)
+        if q is None or abs(float(q)) <= 1e-12:
+            continue
+        pi = p.get("position_info")
+        if not isinstance(pi, dict):
+            continue
+        opened = _parse_ts(pi.get("opened_at"))
+        if opened is None:
+            continue
+        age_s = max(0.0, now - float(opened))
+        if age_s < float(kill_after_s):
+            continue
+        sym = _instrument_label(p).strip().upper()
+        if not sym:
+            continue
+        out.append((sym, float(q), float(age_s)))
+    # Close oldest first for determinism/log readability.
+    out.sort(key=lambda t: (-t[2], t[0]))
+    return out
 
 
 def _log_post_multimarket_positions_tally(
@@ -1975,6 +2033,53 @@ def one_cycle(
 
     # --- have positions ---
     strat_norm = _strategy_key_normalized(strat_key)
+
+    # Hard time-kill (invert_extreme only): if the oldest open position is too old, close all.
+    if strat_norm == "invert_extreme":
+        kill_hours = float(TIME_KILL_POSITION_HOURS)
+        try:
+            v = (os.getenv("VARIBOT_TIME_KILL_POSITION_HOURS", "") or "").strip()
+            if v:
+                kill_hours = float(v)
+        except Exception:
+            pass
+        if kill_hours > 0:
+            kill_s = float(kill_hours) * 3600.0
+            candidates = _positions_time_kill_candidates(
+                positions_raw=raw_pos,
+                now_ts=time.time(),
+                kill_after_s=kill_s,
+            )
+            if candidates:
+                _log(
+                    f"time-kill: {len(candidates)} position(s) age >= {_format_duration_s(kill_s)} "
+                    f"(hours={kill_hours:g}); "
+                    f"{'closing reduce-only (LIVE)' if args.live else 'dry-run only'}..."
+                )
+                if bool(args.live):
+                    max_slip = _resolve_max_slippage()
+                    for sym, qty, age_s in candidates:
+                        close_side = "sell" if float(qty) > 0 else "buy"
+                        qty_abs = abs(float(qty))
+                        try:
+                            _log(
+                                f"time-kill: close {sym} qty={qty:g} age={_format_duration_s(age_s)} "
+                                f"(reduce-only {close_side} qty_abs={qty_abs:g})"
+                            )
+                            _close_reduce_only_with_slippage_steps(
+                                ep=ep,
+                                sym=sym,
+                                qty_abs=qty_abs,
+                                close_side=close_side,
+                                max_slip=float(max_slip),
+                            )
+                        except Exception as e:
+                            _log(f"time-kill: close {sym} failed ({type(e).__name__}: {e})")
+                    # Refresh book before PM/top-up logic.
+                    try:
+                        raw_pos = ep.get_positions()
+                    except Exception as e:
+                        _log(f"WARNING: time-kill post-close positions refresh failed ({type(e).__name__}: {e})")
 
     # 1) PM(near_median): per-pair threshold exits / refill (before top-up IM checks).
     _near_median_pm_manager(ep=ep, cfg=cfg, args=args, positions_raw=raw_pos, snap=snap)
