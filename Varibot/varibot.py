@@ -268,8 +268,8 @@ def _near_median_pm_usd_for_multimarket(
 ) -> Optional[float]:
     """
     near_median PM refill / top-up: per-leg USD = (pv × leverage × DEFAULT_IM_TARGET_PCT/100) / DEFAULT_MAX_TICKER_ENTRIES.
-    IM gap uses snap.im_usage when present; else pos_notional / (pv × leverage).
-    Pair-count vs IM budget: $/pair = 2 × usd_per_leg; max_new_pairs ≈ avail / $/pair.
+    Hard-cap behavior: if snap.im_usage >= DEFAULT_IM_TARGET_PCT, do not open new exposure.
+    (No "remaining IM"/gap budgeting for refills; sizing stays constant per slot.)
     """
     if args.usd is not None:
         return float(args.usd)
@@ -279,47 +279,24 @@ def _near_median_pm_usd_for_multimarket(
         _log(f"PM(near_median): skip {jobs_tag} — portfolio_value_usd missing or non-positive.")
         return None
 
-    lev = _multimarket_effective_leverage()
-    slot = _near_median_slot_usd_per_leg(portfolio_value_usd=float(pv), leverage=int(lev))
-    pair_budget = _near_median_usd_per_pair_budget(usd_per_leg=float(slot))
-    im_ratio, gap_ratio, avail_pv, src = _near_median_im_gap_metrics(
-        snap=snap,
-        portfolio_value_usd=float(pv),
-        leverage=int(lev),
-        pos_notional_usd=float(book_pos_notional_usd) if book_pos_notional_usd is not None else None,
-    )
-    if src == "none":
-        _log(
-            f"PM(near_median): skip {jobs_tag} — no IM basis "
-            f"(im_usage missing and pos_notional unset; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
-        )
+    im_usage = getattr(snap, "im_usage", None)
+    if im_usage is None:
+        _log(f"PM(near_median): skip {jobs_tag} — im_usage missing; cannot enforce IM hard cap.")
         return None
-    if gap_ratio <= 0.0:
-        src_note = "im_usage (portfolio)" if src == "im_usage" else "pos_notional/(pv×lev)"
+    cap_ratio = float(DEFAULT_IM_TARGET_PCT) / 100.0
+    if float(im_usage) >= cap_ratio:
         _log(
-            f"PM(near_median): skip {jobs_tag} — no IM gap (IM%={im_ratio * 100.0:.2f}% via {src_note}; "
-            f"cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
+            f"PM(near_median): skip {jobs_tag} — IM hard cap "
+            f"(IM%={float(im_usage) * 100.0:.2f}%; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
         )
         return None
 
-    max_pairs = _near_median_max_pairs_from_available_position_value(
-        available_position_value_usd=avail_pv, usd_per_pair=pair_budget
-    )
-    im_line = (
-        f"IM%={im_ratio * 100.0:.2f}% (im_usage from /api/portfolio)"
-        if src == "im_usage"
-        else (
-            f"IM%={im_ratio * 100.0:.2f}% (fallback pos_notional/(pv×lev); "
-            f"pos_notional ${float(book_pos_notional_usd):,.2f} / ${float(pv) * float(lev):,.2f})"
-        )
-    )
+    lev = _multimarket_effective_leverage()
+    slot = _near_median_slot_usd_per_leg(portfolio_value_usd=float(pv), leverage=int(lev))
     _log(
-        f"PM(near_median): {jobs_tag} sizing — {im_line}; "
-        f"gap={(gap_ratio * 100.0):.2f}% vs target {float(DEFAULT_IM_TARGET_PCT):g}% "
-        f"→ available_position_value=${avail_pv:,.2f}; "
-        f"$/pair=${pair_budget:,.2f} (2×usd_per_leg); "
-        f"usd_per_leg={slot:g} (pv×lev×({DEFAULT_IM_TARGET_PCT:g}%/100)/{INVERT_EXTREME_MAX_TICKER_ENTRIES}); "
-        f"max_new_pairs≈{max_pairs} (avail / $/pair)."
+        f"PM(near_median): {jobs_tag} sizing — "
+        f"IM%={float(im_usage) * 100.0:.2f}% (cap {float(DEFAULT_IM_TARGET_PCT):g}%); "
+        f"usd_per_leg={slot:g} (pv×lev×({DEFAULT_IM_TARGET_PCT:g}%/100)/{INVERT_EXTREME_MAX_TICKER_ENTRIES})."
     )
     return float(slot)
 
@@ -991,6 +968,9 @@ def run_multimarket(
         ]
     if live:
         cmd_args.append("--live")
+    # Ensure the child script uses the same sizing divisor as the strategy (do not rely on its ability to import).
+    # This keeps slot sizing stable when DEFAULT_MAX_TICKER_ENTRIES is edited.
+    cmd_args.extend(["--max-ticker-entries", str(int(INVERT_EXTREME_MAX_TICKER_ENTRIES))])
     if extra_args:
         cmd_args.extend(extra_args)
     _log(f"Invoking {multi_script} longs={len(longs)} shorts={len(shorts)} live={live}")
@@ -1656,29 +1636,18 @@ def _near_median_pm_manager(
             leverage=int(lev_m),
         )
     )
-    # Replacements are per-side legs; use the same IM-gap heuristic but do not force pairing.
-    _im_r, gap_r, avail_pv, _im_src = _near_median_im_gap_metrics(
-        snap=snap_after,
-        portfolio_value_usd=float(pv_after),
-        leverage=int(lev_m),
-        pos_notional_usd=float(pos_n_after),
-    )
-    if gap_r <= 0.0:
+    im_usage_after = getattr(snap_after, "im_usage", None)
+    if im_usage_after is None:
+        _log("PM(invert_extreme): skip replacements — im_usage missing; cannot enforce IM hard cap.")
+        return
+    cap_ratio = float(DEFAULT_IM_TARGET_PCT) / 100.0
+    if float(im_usage_after) >= cap_ratio:
         _log(
-            f"PM(invert_extreme): skip replacements — no IM gap "
-            f"(IM%={_im_r * 100.0:.2f}%; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
+            f"PM(invert_extreme): skip replacements — IM hard cap "
+            f"(IM%={float(im_usage_after) * 100.0:.2f}%; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
         )
         return
-
-    usd_run_opt = _near_median_pm_usd_for_multimarket(
-        snap=snap_after,
-        args=args,
-        jobs_tag="PM replacements (post-close)",
-        book_pos_notional_usd=float(pos_n_after),
-    )
-    if usd_run_opt is None:
-        return
-    usd_run = float(usd_run_opt)
+    usd_run = float(leg_refill)
 
     # Refresh listing cache (pro) and ensure marketstate exists (strategy runner requires it for non-funding_pairs).
     _log("PM(invert_extreme): refreshing listingtable (pro) for replacements...")

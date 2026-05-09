@@ -41,7 +41,7 @@ DEFAULT_TOP_SPEC: str = "120"
 
 # Max tickers returned from pick_tickers (even total before 50/50 split). When the filtered rank window is larger,
 # names farthest from cross-sectional median 24h change are dropped first (see _near_median_subset).
-DEFAULT_MAX_TICKER_ENTRIES: int = 40
+DEFAULT_MAX_TICKER_ENTRIES: int = 60
 
 # Default exclude list (unioned with `TICKER_BLACKLIST`).
 DEFAULT_EXCLUDE_CSV: str = "BTC,ETH"

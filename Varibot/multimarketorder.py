@@ -76,6 +76,13 @@ DEFAULT_IM_TARGET_PCT: float = 50.0
 # If pool leverage stays below this while notionals are sized for higher leverage, IM usage rises faster than gap math.
 DEFAULT_LEVERAGE: int = 50
 
+# Default number of "slots" across the book for sizing (per-order USD = pv×lev×(im_target_pct/100) / slots).
+# Prefer the strategy constant when available so strategy and order script stay aligned.
+try:
+    from strategy.invert_extreme import DEFAULT_MAX_TICKER_ENTRIES as DEFAULT_MAX_TICKER_ENTRIES  # type: ignore
+except Exception:
+    DEFAULT_MAX_TICKER_ENTRIES: int = 40
+
 
 def default_leverage_from_env() -> int:
     """Prefer DEFAULT_LEVERAGE env (digits only), then DEFAULT_LEVERAGE constant."""
@@ -295,10 +302,19 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PCT",
         dest="im_target_pct",
         help=(
-            "Size each order as (portfolio_value_usd × --leverage × PCT/100) / number_of_orders "
+            "Size each order as (portfolio_value_usd × --leverage × PCT/100) / --max-ticker-entries "
             "(GET /api/portfolio?compute_margin=true). "
             f"If --usd is omitted and this is omitted, defaults to {DEFAULT_IM_TARGET_PCT:g}%%. "
             "Do not pass both --usd and --im-target-pct."
+        ),
+    )
+    p.add_argument(
+        "--max-ticker-entries",
+        type=int,
+        default=int(DEFAULT_MAX_TICKER_ENTRIES),
+        help=(
+            "Sizing divisor used with --im-target-pct (per-order USD uses pv×lev×pct/this). "
+            f"Default {int(DEFAULT_MAX_TICKER_ENTRIES)}."
         ),
     )
     p.add_argument(
@@ -558,7 +574,27 @@ def main() -> int:
     if not jobs:
         raise SystemExit("Provide --long/--short, or provide --assets/--asset with --side {buy,sell}.")
 
+    # Hard cap (no new opens) + optional IM-target sizing uses portfolio snapshot.
+    # Note: reduce-only orders are always allowed (they reduce risk / margin usage).
     portfolio_value_for_sizing: Optional[float] = None
+    snap_for_guard: Optional[Any] = None
+    if not bool(args.reduce_only):
+        try:
+            raw_pf_guard = ep.get_portfolio(compute_margin=True)
+            snap_for_guard = parse_portfolio_snapshot(raw_pf_guard)
+        except Exception:
+            snap_for_guard = None
+        if snap_for_guard is None or getattr(snap_for_guard, "im_usage", None) is None:
+            raise SystemExit(
+                "Cannot enforce IM hard cap: /api/portfolio?compute_margin=true did not provide im_usage."
+            )
+        cap_pct = float(args.im_target_pct) if args.im_target_pct is not None else float(DEFAULT_IM_TARGET_PCT)
+        if float(getattr(snap_for_guard, "im_usage")) >= (cap_pct / 100.0):
+            raise SystemExit(
+                f"IM hard cap: current im_usage={float(getattr(snap_for_guard, 'im_usage')) * 100.0:.2f}% "
+                f">= cap {cap_pct:g}% — blocking new opens."
+            )
+
     if args.usd is None:
         pct = float(args.im_target_pct)  # type: ignore[arg-type]
         if pct <= 0:
@@ -572,15 +608,15 @@ def main() -> int:
             )
         portfolio_value_for_sizing = float(pv)
         lev = int(args.leverage)
-        n_jobs = len(jobs)
-        raw_usd = (
-            portfolio_value_for_sizing * float(lev) * (pct / 100.0)
-        ) / float(n_jobs)
+        slots = int(getattr(args, "max_ticker_entries", int(DEFAULT_MAX_TICKER_ENTRIES)) or int(DEFAULT_MAX_TICKER_ENTRIES))
+        if slots <= 0:
+            raise SystemExit("--max-ticker-entries must be positive.")
+        raw_usd = (portfolio_value_for_sizing * float(lev) * (pct / 100.0)) / float(slots)
         step = float(USD_NOTIONAL_ROUND_STEP)
         usd_per_order = math.ceil(raw_usd / step) * step
         print(
             f"Sizing: portfolio_value_usd={portfolio_value_for_sizing} leverage={lev}x im_target_pct={pct}% "
-            f"jobs={n_jobs} -> ${raw_usd:.2f} raw -> "
+            f"max_ticker_entries={slots} -> ${raw_usd:.2f} raw -> "
             f"${usd_per_order:.0f} per order (ceil to nearest ${step:g})"
         )
     else:
