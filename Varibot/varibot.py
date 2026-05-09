@@ -1701,7 +1701,7 @@ def _near_median_pm_manager(
             _log_post_multimarket_positions_tally(ep=ep, longs=[], shorts=repl_s)
 
 
-def _near_median_topup_if_needed(
+def _invert_extreme_topup_if_needed(
     *,
     ep: VariEndpoints,
     args: argparse.Namespace,
@@ -1710,14 +1710,11 @@ def _near_median_topup_if_needed(
     cycle_index: int = 0,
 ) -> None:
     """
-    Top-up adds paired long/short slots toward DEFAULT_MAX_TICKER_ENTRIES when affordable.
+    Top-up (invert_extreme only): fill empty ticker slots up to DEFAULT_MAX_TICKER_ENTRIES.
 
-    IM gap uses snap.im_usage when present; else pos_notional / (pv × leverage).
-    available_position_value → max_new_pairs ≈ avail / $/pair with
-    $/pair = 2 × usd_per_leg (same leg size as pv×lev×(DEFAULT_IM_TARGET_PCT/100)/N or --usd). Need not reach target tickers if budget is smaller.
-
-    Book / positions are evaluated before IM gap (cycle 1 logs an explicit init inventory so startup
-    does not look like a blind IM-only no-op).
+    This is intentionally NON-PAIRED and can be lopsided (strategy picks are lopsided).
+    We enforce the same IM hard cap as other entry paths: if snap.im_usage >= DEFAULT_IM_TARGET_PCT,
+    do not add new exposure.
     """
     strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
     strat_norm = _strategy_key_normalized(strat_key)
@@ -1726,7 +1723,7 @@ def _near_median_topup_if_needed(
 
     pv = getattr(snap, "portfolio_value_usd", None)
     if pv is None or float(pv) <= 0:
-        _log("PM(near_median): skip top-up — portfolio_value_usd missing or non-positive.")
+        _log("PM(invert_extreme): skip top-up — portfolio_value_usd missing or non-positive.")
         return
 
     rows = positions_to_rows(positions_raw)
@@ -1751,114 +1748,62 @@ def _near_median_topup_if_needed(
         else:
             need_short += remaining
 
-    # Structural pairs toward 20 tickers; IM budget may allow fewer (or zero).
-    n_pairs_struct = min(int(need_long), int(need_short))
-
     if int(cycle_index) == 1:
         syms = sorted({str(r.ticker).strip().upper() for r in rows if r.ticker})
         preview = ", ".join(syms[:24])
         if len(syms) > 24:
             preview += f", … (+{len(syms) - 24} more)"
         _log(
-            f"PM(near_median): init — loaded open book tickers={cur_total} "
+            f"PM(invert_extreme): init — loaded open book tickers={cur_total} "
             f"(L={cur_long}, S={cur_short}): {preview}"
         )
 
     _log(
-        f"PM(near_median): book snapshot — tickers={cur_total}/{target_total} "
-        f"L={cur_long} S={cur_short}; structural top-up need≈{n_pairs_struct} pair(s) "
-        f"(need_long={need_long}, need_short={need_short})."
+        f"PM(invert_extreme): book snapshot — tickers={cur_total}/{target_total} "
+        f"L={cur_long} S={cur_short}; top-up need_long={need_long} need_short={need_short}."
     )
 
-    lev_m = _multimarket_effective_leverage()
-    pos_notional = float(_positions_notional_usd(positions_raw))
-    im_ratio, gap_ratio, avail_pv, _im_src = _near_median_im_gap_metrics(
-        snap=snap,
-        portfolio_value_usd=float(pv),
-        leverage=int(lev_m),
-        pos_notional_usd=pos_notional,
-    )
-    slot_pre = (
-        float(args.usd)
-        if args.usd is not None
-        else _near_median_slot_usd_per_leg(portfolio_value_usd=float(pv), leverage=int(lev_m))
-    )
-    pair_budget_top = _near_median_usd_per_pair_budget(usd_per_leg=float(slot_pre))
-    max_pairs_budget = _near_median_max_pairs_from_available_position_value(
-        available_position_value_usd=float(avail_pv),
-        usd_per_pair=float(pair_budget_top),
-    )
-
-    if _im_src == "im_usage":
-        _log(
-            f"PM(near_median): IM%={im_ratio * 100.0:.2f}% (im_usage from /api/portfolio); "
-            f"gap={(gap_ratio * 100.0):.2f}% vs target {float(DEFAULT_IM_TARGET_PCT):g}% "
-            f"→ available_position_value=${avail_pv:,.2f}; "
-            f"max_new_pairs≈{max_pairs_budget} at ${pair_budget_top:,.2f}/pair "
-            f"(2×usd_per_leg={slot_pre:g})."
-        )
-    else:
-        _log(
-            f"PM(near_median): IM%={im_ratio * 100.0:.2f}% "
-            f"(fallback pos_notional ${pos_notional:,.2f} / (pv×lev)="
-            f"${float(pv) * float(lev_m):,.2f}); gap={(gap_ratio * 100.0):.2f}% vs target "
-            f"{float(DEFAULT_IM_TARGET_PCT):g}% → available_position_value=${avail_pv:,.2f}; "
-            f"max_new_pairs≈{max_pairs_budget} at ${pair_budget_top:,.2f}/pair "
-            f"(2×usd_per_leg={slot_pre:g})."
-        )
-
-    if gap_ratio <= 0.0:
+    im_usage = getattr(snap, "im_usage", None)
+    if im_usage is None:
+        _log("PM(invert_extreme): skip top-up — im_usage missing; cannot enforce IM hard cap.")
+        return
+    cap_ratio = float(DEFAULT_IM_TARGET_PCT) / 100.0
+    if float(im_usage) >= cap_ratio:
         if int(cycle_index) == 1:
             _log(
-                "PM(near_median): init — no top-up: IM at or above portfolio target "
+                "PM(invert_extreme): init — no top-up: IM at or above portfolio target "
                 f"({float(DEFAULT_IM_TARGET_PCT):g}%); book snapshot above. Next cycles same checks apply."
             )
         else:
             _log(
-                "PM(near_median): skip top-up — no IM gap "
-                f"(IM% vs DEFAULT_IM_TARGET_PCT {float(DEFAULT_IM_TARGET_PCT):g}%)."
+                "PM(invert_extreme): skip top-up — IM hard cap "
+                f"(IM%={float(im_usage) * 100.0:.2f}%; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
             )
         return
 
     if cur_total >= target_total:
         _log(
-            f"PM(near_median): skip top-up — book at max tickers ({cur_total}/{target_total}; "
+            f"PM(invert_extreme): skip top-up — book at max tickers ({cur_total}/{target_total}; "
             f"DEFAULT_MAX_TICKER_ENTRIES)."
         )
         return
 
-    if n_pairs_struct <= 0:
+    if int(need_long) <= 0 and int(need_short) <= 0:
         _log(
-            f"PM(near_median): skip top-up — no paired slots (cur L/S={cur_long}/{cur_short}, "
-            f"target_per_side={target_per_side}, need_long={need_long}, need_short={need_short})."
+            f"PM(invert_extreme): skip top-up — no slots needed (cur L/S={cur_long}/{cur_short}, "
+            f"target_per_side={target_per_side})."
         )
         return
-
-    n_pairs = min(int(n_pairs_struct), int(max_pairs_budget))
-    if n_pairs <= 0:
-        _log(
-            "PM(near_median): skip top-up — IM budget allows 0 new pairs "
-            f"(wanted_structurally={n_pairs_struct})."
-        )
-        return
-    if n_pairs < n_pairs_struct:
-        _log(
-            f"PM(near_median): top-up capped by IM budget — structural_need={n_pairs_struct}, "
-            f"opening={n_pairs} pair(s)."
-        )
-
-    need_long = n_pairs
-    need_short = n_pairs
 
     open_syms: Set[str] = {r.ticker.strip().upper() for r in rows if r.ticker}
     _log(
-        f"PM(near_median): top-up plan — current={cur_total}/{target_total} "
-        f"(L={cur_long}, S={cur_short}); add {n_pairs} pair(s)."
+        f"PM(invert_extreme): top-up plan — current={cur_total}/{target_total} "
+        f"(L={cur_long}, S={cur_short}); add_L={need_long} add_S={need_short} (non-paired)."
     )
 
     if not bool(args.live):
         _log(
-            "PM(near_median): dry-run — running listingtable + strategy picks + multimarketorder "
+            "PM(invert_extreme): dry-run — running listingtable + strategy picks + multimarketorder "
             "(no --live; prints sizing line and per-ticker quote dry-run)."
         )
 
@@ -1869,30 +1814,34 @@ def _near_median_topup_if_needed(
 
     top_n = _top_n_for_strategy(strat_key)
     longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
-    add_l, add_s = filter_replacements(longs=longs, shorts=shorts, disallow=set(open_syms), need_each_side=int(n_pairs))
-    got_l, got_s = len(add_l), len(add_s)
-    add_l, add_s, n_open = _near_median_align_pair_candidates(add_l, add_s, wanted_pairs=n_pairs)
+    disallow = set(open_syms)
+    add_l = (
+        filter_replacements_one_side(candidates=longs, disallow=disallow, need=int(need_long))
+        if int(need_long) > 0
+        else []
+    )
+    disallow |= set(add_l)
+    add_s = (
+        filter_replacements_one_side(candidates=shorts, disallow=disallow, need=int(need_short))
+        if int(need_short) > 0
+        else []
+    )
+    n_open = int(len(add_l) + len(add_s))
     if n_open <= 0:
         _log(
-            f"PM(near_median): top-up skipped — insufficient new tickers "
-            f"(wanted {n_pairs} pair(s); got {got_l}L/{got_s}S after filter)."
+            "PM(invert_extreme): top-up skipped — insufficient new tickers "
+            f"(wanted L={need_long} S={need_short}; got {len(add_l)}L/{len(add_s)}S after filter)."
         )
         return
-    if n_open < n_pairs:
-        _log(
-            f"PM(near_median): top-up partial — wanted {n_pairs} pair(s), opening {n_open} "
-            f"(candidates {got_l}L/{got_s}S)."
-        )
 
     _log(
-        f"PM(near_median): topping up with {n_open} pair(s) "
+        f"PM(invert_extreme): topping up with n={n_open} (non-paired) "
         f"(strategy={meta.get('strategy')}) longs={add_l} shorts={add_s}"
     )
     usd_run = _near_median_pm_usd_for_multimarket(
         snap=snap,
         args=args,
         jobs_tag="top-up",
-        book_pos_notional_usd=float(pos_notional),
     )
     if usd_run is None:
         return
@@ -2042,7 +1991,7 @@ def one_cycle(
     _funding_pairs_manager(ep=ep, args=args, positions_raw=raw_pos)
 
     # 3) Top-up only after PM(pair-threshold) step above (uses refreshed snap when live).
-    _near_median_topup_if_needed(
+    _invert_extreme_topup_if_needed(
         ep=ep, args=args, snap=snap, positions_raw=raw_pos, cycle_index=int(cycle_index)
     )
 
