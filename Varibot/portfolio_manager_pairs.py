@@ -99,6 +99,8 @@ def filter_replacements_one_side(
     disallow: Set[str],
     need: int,
 ) -> List[str]:
+    if int(need) <= 0:
+        return []
     dis = {t.strip().upper() for t in disallow if isinstance(t, str)}
     out: List[str] = []
     for t in candidates:

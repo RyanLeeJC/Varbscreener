@@ -1816,6 +1816,43 @@ def _near_median_pm_manager(
     # Pick per-side replacements.
     repl_l = filter_replacements_one_side(candidates=longs, disallow=disallow, need=int(closed_long_n))
     repl_s = filter_replacements_one_side(candidates=shorts, disallow=disallow, need=int(closed_short_n))
+
+    # Never open more replacement tickers than slots remaining under max book size (e.g. 60).
+    # If both long and short refills were planned but only one slot remains, keep the candidate
+    # with larger abs(7d change %) from listingtabledata.json (tie: earlier in sorted list wins).
+    max_open_tickers = int(INVERT_EXTREME_MAX_TICKER_ENTRIES)
+    slot_budget = max(0, max_open_tickers - len(open_syms))
+    planned_n = len(repl_l) + len(repl_s)
+    if planned_n > slot_budget:
+        abs7_map = _ticker_abs_7d_from_listing_json(str(listing_json))
+
+        def _abs7_score(sym: str) -> float:
+            v = abs7_map.get(str(sym).strip().upper())
+            return float(v) if v is not None else -1.0
+
+        tagged: List[Tuple[str, str]] = [("L", str(s).strip().upper()) for s in repl_l] + [
+            ("S", str(s).strip().upper()) for s in repl_s
+        ]
+        tagged.sort(key=lambda t: _abs7_score(t[1]), reverse=True)
+        kept_l: List[str] = []
+        kept_s: List[str] = []
+        seen: Set[str] = set()
+        for side, sym_u in tagged:
+            if not sym_u or sym_u in seen:
+                continue
+            seen.add(sym_u)
+            if side == "L":
+                kept_l.append(sym_u)
+            else:
+                kept_s.append(sym_u)
+            if len(kept_l) + len(kept_s) >= slot_budget:
+                break
+        repl_l, repl_s = kept_l, kept_s
+        _log(
+            f"PM(invert_extreme): replacement slot cap — budget={slot_budget}/{max_open_tickers} "
+            f"(planned was {planned_n}); |7d| ranked — L={repl_l} S={repl_s}"
+        )
+
     if closed_long_n and not repl_l:
         _log(f"PM(invert_extreme): WARNING no long replacements (closed_long={closed_long_n}).")
     if closed_short_n and not repl_s:
