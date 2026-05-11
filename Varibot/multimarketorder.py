@@ -505,20 +505,37 @@ def _flatten_resp_text(obj: Any, *, max_len: int = 6000) -> str:
     return " ".join(parts)[:max_len]
 
 
-def _order_reject_is_skew_or_risk_cap(resp: Any) -> bool:
+def _venue_risk_substitute_ticker_message(blob_lower: str) -> bool:
     """
-    Venue risk: OI skew / FDV cap (SkewAsPercentOfFdvLimit). Retrying with higher max_slippage does not help.
+    Venue-side risk rejects where raising max_slippage will not help — substitute another ticker
+    (same path as OI skew / FDV skew limits).
+
+    Includes: OI skew vs FDV, global/total OI cap on the asset (Omni 'Risk Check Failed' toast / order history).
     """
-    blob = _flatten_resp_text(resp).lower()
-    if "risk checks have failed" in blob:
+    b = blob_lower
+    if "risk checks have failed" in b:
         return True
-    if "skewaspercentoffdv" in blob or "skew as percent" in blob:
+    if "risk check failed" in b:
         return True
-    if "skew" in blob and "too large" in blob and ("oi" in blob or "open interest" in blob):
+    if "total oi on this asset" in b and "too large" in b:
         return True
-    if "fully diluted" in blob and "skew" in blob:
+    if "too large to accommodate your trade" in b:
+        return True
+    if "skewaspercentoffdv" in b or "skew as percent" in b:
+        return True
+    if "skew" in b and "too large" in b and ("oi" in b or "open interest" in b):
+        return True
+    if "fully diluted" in b and "skew" in b:
         return True
     return False
+
+
+def _order_reject_is_skew_or_risk_cap(resp: Any) -> bool:
+    """
+    Venue risk: OI skew / FDV cap (SkewAsPercentOfFdvLimit), total-OI cap, and similar risk checks.
+    Retrying with higher max_slippage does not help.
+    """
+    return _venue_risk_substitute_ticker_message(_flatten_resp_text(resp).lower())
 
 
 def _order_response_rejected(resp: Any) -> bool:
@@ -536,6 +553,8 @@ def _order_response_rejected(resp: Any) -> bool:
         v = resp.get(k)
         if isinstance(v, str) and "slippage" in v.lower() and ("exceed" in v.lower() or "exceeded" in v.lower()):
             return True
+    if _venue_risk_substitute_ticker_message(_flatten_resp_text(resp).lower()):
+        return True
     return False
 
 
@@ -827,8 +846,21 @@ def main() -> int:
                                 "error": {"type": type(e).__name__, "message": str(e)},
                             }
                         )
+                        em = str(e)
+                        if _venue_risk_substitute_ticker_message(em.lower()):
+                            item["steps"]["slippage_retry_stopped"] = "oi_skew_or_risk_cap"
+                            snippet = (em[:280] + "…") if len(em) > 280 else em
+                            print(
+                                f"STOP retrying {asset}: OI skew / risk cap — "
+                                f"higher slippage will not help. {snippet}"
+                            )
+                            attempts[-1]["stopped"] = "oi_skew_or_risk_cap"
+                            item["error"] = {
+                                "type": "OiSkewRiskCapReject",
+                                "message": snippet or "Venue risk: risk checks failed (e.g. total OI cap)",
+                            }
+                            break
                         if attempt >= int(_MAX_LIVE_ATTEMPTS):
-                            em = str(e)
                             if _looks_like_slippage_reject(em):
                                 item["error"] = {
                                     "type": "SlippageExhausted",
@@ -960,7 +992,18 @@ def main() -> int:
                             )
                             continue
                         raise RuntimeError("order rejected")
-                except Exception:
+                except Exception as ex:
+                    if _venue_risk_substitute_ticker_message(str(ex).lower()):
+                        risk_skip_syms.add(sym)
+                        sn = str(ex)
+                        sn = (sn[:240] + "…") if len(sn) > 240 else sn
+                        print(
+                            f"STOP reattempt {sym}: OI skew / risk cap (no further slippage retries). {sn}"
+                        )
+                        skew_extra_from_reattempt.append(
+                            {"asset": str(sym).strip().upper(), "side": str(side).strip().lower()}
+                        )
+                        continue
                     # Keep it missing; we will try again next round with higher slippage.
                     pass
 
