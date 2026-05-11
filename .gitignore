@@ -12,3 +12,17 @@ Varibot/state.db
 Varibot/.varibot_position_latch.json
 Varibot/runs/
 Varibot/Bot_credentials/
+Varibot/.multimarket_last_result.json
+
+# Local listing snapshot (regenerate with Vari Listings/listingtable.py)
+Vari Listings/listingtabledata.json
+
+# Local DB / WAL (not for remote)
+Vari Listings/vari_railway_db/
+
+# Local tooling / dashboards (keep on disk; do not commit)
+DataView/
+
+# Backtest artifacts and scratch DBs under vari-backtest
+vari-backtest/out/
+vari-backtest/ck-cg-sql/
