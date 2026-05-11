@@ -1198,6 +1198,9 @@ def _near_median_substitute_skew_rejected_multimarket(
         return
     if not bool(args.live):
         return
+    skew_sub_extra: List[str] = []
+    if (getattr(args, "mm_probe_short", None) or "").strip():
+        skew_sub_extra.append("--skip-im-hard-cap")
     try:
         max_rounds = max(1, int(os.getenv("VARIBOT_SKEW_REPLACE_MAX_ROUNDS", "1")))
     except Exception:
@@ -1267,6 +1270,7 @@ def _near_median_substitute_skew_rejected_multimarket(
                 shorts=new_s,
                 usd=float(usd),
                 live=True,
+                extra_args=skew_sub_extra or None,
             )
         else:
             pct = _resolve_im_target_pct_for_multimarket(
@@ -1283,6 +1287,7 @@ def _near_median_substitute_skew_rejected_multimarket(
                 shorts=new_s,
                 im_target_pct=pct,
                 live=True,
+                extra_args=skew_sub_extra or None,
             )
 
         if int(rc2) == 0:
@@ -2332,11 +2337,60 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Sleep fixed --period-min between cycles instead of aligning to wall clock.",
     )
+    p.add_argument(
+        "--mm-probe-short",
+        default=None,
+        metavar="TICKER",
+        help=(
+            "Bypass the normal cycle: after auth, run one live multimarket short for this ticker "
+            "(notional from --usd if set, else --mm-probe-usd), pass --skip-im-hard-cap to the child script, "
+            "then run invert_extreme skew substitution if .multimarket_last_result.json lists rejects."
+        ),
+    )
+    p.add_argument(
+        "--mm-probe-usd",
+        type=float,
+        default=100.0,
+        help="With --mm-probe-short: USD per order when --usd is omitted (default 100).",
+    )
     return p.parse_args()
 
 
 def _child_main() -> int:
     args = parse_args()
+    probe_ticker = (getattr(args, "mm_probe_short", None) or "").strip()
+    if probe_ticker:
+        if not bool(args.live):
+            print("varibot: --mm-probe-short requires --live (places a real order).", file=sys.stderr)
+            return 2
+        run_auth_or_exit()
+        cfg, ep = build_endpoints()
+        usd_probe = float(args.usd) if args.usd is not None else float(getattr(args, "mm_probe_usd", 100.0) or 100.0)
+        listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
+        strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
+        sym_u = probe_ticker.upper()
+        _log(
+            f"mm-probe: multimarket live short {sym_u} usd={usd_probe:g} (child --skip-im-hard-cap); "
+            f"strategy={strat_key}"
+        )
+        rc_mm = run_multimarket(
+            multi_script=str(args.multi_script),
+            longs=[],
+            shorts=[sym_u],
+            usd=float(usd_probe),
+            live=True,
+            extra_args=["--skip-im-hard-cap"],
+        )
+        _near_median_substitute_skew_rejected_multimarket(
+            ep=ep,
+            args=args,
+            strat_key=strat_key,
+            listing_json=str(listing_json),
+            jobs_tag="mm_probe_short",
+            usd=float(usd_probe),
+        )
+        return int(rc_mm)
+
     if args.usd is not None and args.im_target_pct is not None:
         print("varibot: pass at most one of --usd and --im-target-pct.", file=sys.stderr)
         return 2

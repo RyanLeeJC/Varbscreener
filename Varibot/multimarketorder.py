@@ -353,6 +353,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually place the order. Without this flag, script is dry-run only.",
     )
     p.add_argument(
+        "--skip-im-hard-cap",
+        action="store_true",
+        help="Skip the IM usage hard-cap guard (GET /api/portfolio) before new opens. Testing / probes only.",
+    )
+    p.add_argument(
         "--confirm",
         action="store_true",
         help="After submitting live orders, fetch /api/orders/v2?status=pending to confirm order_id/status.",
@@ -521,6 +526,11 @@ def _venue_risk_substitute_ticker_message(blob_lower: str) -> bool:
         return True
     if "too large to accommodate your trade" in b:
         return True
+    # Wording variants seen on venue / order history.
+    if "accommodate your trade" in b and ("oi" in b or "open interest" in b):
+        return True
+    if "total oi" in b and "too large" in b:
+        return True
     if "skewaspercentoffdv" in b or "skew as percent" in b:
         return True
     if "skew" in b and "too large" in b and ("oi" in b or "open interest" in b):
@@ -536,6 +546,118 @@ def _order_reject_is_skew_or_risk_cap(resp: Any) -> bool:
     Retrying with higher max_slippage does not help.
     """
     return _venue_risk_substitute_ticker_message(_flatten_resp_text(resp).lower())
+
+
+def _orders_v2_result_items(raw: Any) -> List[Dict[str, Any]]:
+    if isinstance(raw, list):
+        return [x for x in raw if isinstance(x, dict)]
+    if isinstance(raw, dict):
+        for key in ("result", "orders", "data", "items"):
+            v = raw.get(key)
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
+    return []
+
+
+def _order_row_underlying(row: Dict[str, Any]) -> str:
+    inst = row.get("instrument")
+    if isinstance(inst, dict):
+        u = inst.get("underlying")
+        if isinstance(u, str) and u.strip():
+            return u.strip().upper()
+    for k in ("underlying", "asset", "symbol"):
+        v = row.get(k)
+        if isinstance(v, str) and v.strip():
+            s = v.strip().upper()
+            if s.endswith("-PERP"):
+                s = s[: -len("-PERP")]
+            return s
+    return ""
+
+
+def _venue_risk_visible_in_orders_v2(
+    ep: VariEndpoints,
+    sym: str,
+    *,
+    settlement_asset: str,
+    funding_interval_s: int,
+) -> bool:
+    """Best-effort: recent rejected row for this instrument still carries risk/OI text."""
+    sym_u = str(sym).strip().upper()
+    inst_q = _instrument_query_param(
+        asset=sym_u, settlement_asset=str(settlement_asset), funding_interval_s=int(funding_interval_s)
+    )
+    try:
+        raw = ep.client.request_json("GET", f"/api/orders/v2?instrument={inst_q}")
+    except Exception:
+        return False
+    for item in _orders_v2_result_items(raw):
+        if _order_row_underlying(item) != sym_u:
+            continue
+        st = str(item.get("status") or item.get("order_status") or item.get("state") or "").lower()
+        if "reject" not in st and st not in ("failed", "error", "cancelled"):
+            continue
+        if _venue_risk_substitute_ticker_message(_flatten_resp_text(item).lower()):
+            return True
+    return False
+
+
+def _annotate_skew_reject_for_missing_asset(
+    sym: str,
+    orders_out: List[Dict[str, Any]],
+    jobs: List[Dict[str, str]],
+    *,
+    ep: Optional[VariEndpoints],
+    settlement_asset: str,
+    funding_interval_s: int,
+) -> bool:
+    """
+    If we treated an order as OK but have no position, recover OI / risk-cap from stored
+    order_response or /api/orders/v2 so we do not waste cycles on slippage reattempts.
+    """
+    sym_u = str(sym).strip().upper()
+    side_fm = "buy"
+    for j in jobs:
+        if str(j.get("asset") or "").strip().upper() == sym_u:
+            side_fm = str(j.get("side") or "buy").strip().lower()
+            break
+    for o in orders_out:
+        if str(o.get("asset") or "").strip().upper() != sym_u:
+            continue
+        if isinstance(o.get("error"), dict) and o.get("error", {}).get("type") == "OiSkewRiskCapReject":
+            return True
+        resp_stored = (o.get("steps") or {}).get("order_response")
+        blob = ""
+        if resp_stored is not None:
+            blob = _flatten_resp_text(resp_stored).lower()
+        if blob and _venue_risk_substitute_ticker_message(blob):
+            snippet = _flatten_resp_text(resp_stored)
+            snippet = (snippet[:280] + "…") if len(snippet) > 280 else snippet
+            o.setdefault("steps", {})["slippage_retry_stopped"] = "oi_skew_or_risk_cap"
+            o["error"] = {
+                "type": "OiSkewRiskCapReject",
+                "message": snippet or "Venue risk: OI / risk checks",
+            }
+            print(
+                f"NOTE: {sym_u} missing position but order response shows venue risk/OI cap; "
+                f"skipping slippage retries. {snippet}"
+            )
+            return True
+        if ep is not None and _venue_risk_visible_in_orders_v2(
+            ep, sym_u, settlement_asset=settlement_asset, funding_interval_s=funding_interval_s
+        ):
+            o.setdefault("steps", {})["slippage_retry_stopped"] = "oi_skew_or_risk_cap"
+            o["error"] = {
+                "type": "OiSkewRiskCapReject",
+                "message": f"Venue risk (from /api/orders/v2): {sym_u} {side_fm}",
+            }
+            print(
+                f"NOTE: {sym_u} missing position; /api/orders/v2 shows rejected risk/OI — "
+                "skipping slippage retries."
+            )
+            return True
+        return False
+    return False
 
 
 def _order_response_rejected(resp: Any) -> bool:
@@ -597,7 +719,7 @@ def main() -> int:
     # Note: reduce-only orders are always allowed (they reduce risk / margin usage).
     portfolio_value_for_sizing: Optional[float] = None
     snap_for_guard: Optional[Any] = None
-    if not bool(args.reduce_only):
+    if not bool(args.reduce_only) and not bool(getattr(args, "skip_im_hard_cap", False)):
         try:
             raw_pf_guard = ep.get_portfolio(compute_margin=True)
             snap_for_guard = parse_portfolio_snapshot(raw_pf_guard)
@@ -778,29 +900,31 @@ def main() -> int:
                             max_slippage=float(slip),
                             is_reduce_only=bool(args.reduce_only),
                         )
-                        if _order_response_rejected(resp):
-                            if _order_reject_is_skew_or_risk_cap(resp):
-                                item["steps"]["order_response"] = resp
-                                item["steps"]["slippage_retry_stopped"] = "oi_skew_or_risk_cap"
-                                snippet = _flatten_resp_text(resp)
-                                snippet = (snippet[:280] + "…") if len(snippet) > 280 else snippet
-                                print(
-                                    f"STOP retrying {asset}: OI skew / risk cap — "
-                                    f"higher slippage will not help. {snippet}"
-                                )
-                                attempts.append(
-                                    {
-                                        "attempt": attempt,
-                                        "max_slippage": float(slip),
-                                        "ok": False,
-                                        "stopped": "oi_skew_or_risk_cap",
-                                    }
-                                )
-                                item["error"] = {
-                                    "type": "OiSkewRiskCapReject",
-                                    "message": snippet or "Venue risk: OI skew / FDV skew limit",
+                        flat_r = _flatten_resp_text(resp).lower()
+                        # Classify from full body: venue sometimes omits standard status fields on HTTP 200.
+                        if _venue_risk_substitute_ticker_message(flat_r):
+                            item["steps"]["order_response"] = resp
+                            item["steps"]["slippage_retry_stopped"] = "oi_skew_or_risk_cap"
+                            snippet = _flatten_resp_text(resp)
+                            snippet = (snippet[:280] + "…") if len(snippet) > 280 else snippet
+                            print(
+                                f"STOP retrying {asset}: OI skew / risk cap — "
+                                f"higher slippage will not help. {snippet}"
+                            )
+                            attempts.append(
+                                {
+                                    "attempt": attempt,
+                                    "max_slippage": float(slip),
+                                    "ok": False,
+                                    "stopped": "oi_skew_or_risk_cap",
                                 }
-                                break
+                            )
+                            item["error"] = {
+                                "type": "OiSkewRiskCapReject",
+                                "message": snippet or "Venue risk: OI skew / FDV skew limit",
+                            }
+                            break
+                        if _order_response_rejected(resp):
                             blob = _flatten_resp_text(resp)
                             if attempt >= int(_MAX_LIVE_ATTEMPTS):
                                 item["steps"]["order_response"] = resp
@@ -947,6 +1071,17 @@ def main() -> int:
         # Continue until all missing tickers show up in /api/positions, or we hit max rounds.
         missing2: set[str] = set(missing)
         risk_skip_syms: set[str] = set()
+        for sym in list(missing2):
+            if _annotate_skew_reject_for_missing_asset(
+                sym,
+                orders_out,
+                jobs,
+                ep=ep,
+                settlement_asset=str(args.settlement_asset),
+                funding_interval_s=int(args.funding_interval_s),
+            ):
+                risk_skip_syms.add(str(sym).strip().upper())
+                missing2.discard(str(sym).strip().upper())
         for round_i in range(1, int(_MAX_LIVE_ATTEMPTS) + 1):
             to_retry = missing2 - risk_skip_syms
             if not to_retry:
@@ -979,18 +1114,19 @@ def main() -> int:
                         max_slippage=float(slip_round),
                         is_reduce_only=bool(args.reduce_only),
                     )
+                    flat_r2 = _flatten_resp_text(resp2).lower()
+                    if _venue_risk_substitute_ticker_message(flat_r2):
+                        risk_skip_syms.add(sym)
+                        sn = _flatten_resp_text(resp2)
+                        sn = (sn[:240] + "…") if len(sn) > 240 else sn
+                        print(
+                            f"STOP reattempt {sym}: OI skew / risk cap (no further slippage retries). {sn}"
+                        )
+                        skew_extra_from_reattempt.append(
+                            {"asset": str(sym).strip().upper(), "side": str(side).strip().lower()}
+                        )
+                        continue
                     if _order_response_rejected(resp2):
-                        if _order_reject_is_skew_or_risk_cap(resp2):
-                            risk_skip_syms.add(sym)
-                            sn = _flatten_resp_text(resp2)
-                            sn = (sn[:240] + "…") if len(sn) > 240 else sn
-                            print(
-                                f"STOP reattempt {sym}: OI skew / risk cap (no further slippage retries). {sn}"
-                            )
-                            skew_extra_from_reattempt.append(
-                                {"asset": str(sym).strip().upper(), "side": str(side).strip().lower()}
-                            )
-                            continue
                         raise RuntimeError("order rejected")
                 except Exception as ex:
                     if _venue_risk_substitute_ticker_message(str(ex).lower()):
