@@ -12,13 +12,14 @@ STRATEGY_NAME: str = "invert_extreme"
 
 # Trade thesis (printed to strategy/strategy_output.txt when run via the strategy loader).
 #
-# NOTE: This module is intentionally cloned from `near_median.py` to avoid confusion in bot logs/config.
-# The selection logic is the same unless you change defaults below.
+# NOTE: Forked from near_median.py for naming/logging; selection is invert_extreme (see pick_tickers).
 TRADE_THESIS: str = (
-    "Within a market-cap-ranked universe (excluding BTC/ETH), after liquidity filters, "
-    "short tickers that are up on 1h, 24h, and 7d (priority: highest 7d first). "
-    "To stay market-neutral, pair the shorts with longs that are down on 1h, 24h, and 7d "
-    "(priority: most negative 7d first)."
+    "Within a rank window on listing data (default: by market cap, excluding BTC/ETH), after liquidity "
+    "filters, keep only names whose absolute 7d change is strictly between a floor and ceiling "
+    "(default: >10% and <50%). Then short names with positive 1h and positive 24h change; long names with "
+    "negative 1h and negative 24h change. 7d is not a third sign gate for direction: among rows that pass "
+    "the band, candidates are ordered by |7d| (then |24h|, |1h|) and the list is capped; long and short "
+    "counts need not be equal after the cap."
 )
 
 # When running this strategy standalone, also write a human-readable table to Varibot/strategy_output.txt.
@@ -55,7 +56,11 @@ DEFAULT_MIN_VOL_24H: Optional[float] = 30000
 # Skip tickers with open interest below this (same units as listingtabledata.json "OI" field); None disables.
 DEFAULT_MIN_OI: Optional[float] = 30000
 
-# Skip tickers whose absolute 7d change exceeds this percent (e.g. 50 => drop > +50% and < -50%).
+# Require absolute 7d change strictly greater than this percent (e.g. 10 => keep only |7d| > 10).
+# Set negative to disable.
+DEFAULT_MIN_ABS_CHG_7D_PCT: float = 10.0
+
+# Require absolute 7d change strictly less than this percent (e.g. 50 => drop if |7d| >= 50).
 # Set negative to disable.
 DEFAULT_MAX_ABS_CHG_7D_PCT: float = 50.0
 
@@ -138,6 +143,16 @@ def _split_csv(s: Optional[str]) -> List[str]:
         if t:
             parts.append(t)
     return parts
+
+
+def _abs_7d_pct_passes_band(chg_7d_pct: float, *, min_abs: Optional[float], max_abs: Optional[float]) -> bool:
+    """True if |7d%| is in the open band (min_abs, max_abs) when bounds are set (strict > min, strict < max)."""
+    a = abs(float(chg_7d_pct))
+    if min_abs is not None and a <= float(min_abs):
+        return False
+    if max_abs is not None and a >= float(max_abs):
+        return False
+    return True
 
 
 def _parse_top_spec(spec: str) -> Tuple[int, int]:
@@ -324,7 +339,7 @@ def _pick_invert_extreme(
     max_total_entries: int,
 ) -> Tuple[List[str], List[str]]:
     """
-    Selection per user spec:
+    Selection per user spec (caller must already restrict |7d%| band, liquidity, rank window, etc.):
       - shorts: up 1h and up 24h; priority: most positive 7d first
       - longs:  down 1h and down 24h; priority: most negative 7d first
     No pairing requirement: fill up to max_total_entries across both buckets (can be lopsided).
@@ -440,6 +455,10 @@ def pick_tickers(
     exclude_set = {s.strip().upper() for s in _split_csv(DEFAULT_EXCLUDE_CSV) if s and str(s).strip()}
     exclude_set |= set(TICKER_BLACKLIST)
 
+    min_abs_7d: Optional[float] = float(DEFAULT_MIN_ABS_CHG_7D_PCT)
+    if min_abs_7d < 0:
+        min_abs_7d = None
+
     max_abs_7d: Optional[float] = float(DEFAULT_MAX_ABS_CHG_7D_PCT)
     if max_abs_7d < 0:
         max_abs_7d = None
@@ -463,7 +482,7 @@ def pick_tickers(
     for r in universe:
         if r.ticker in exclude_set:
             continue
-        if max_abs_7d is not None and abs(float(r.chg_7d_pct)) > float(max_abs_7d):
+        if not _abs_7d_pct_passes_band(r.chg_7d_pct, min_abs=min_abs_7d, max_abs=max_abs_7d):
             continue
         if DEFAULT_MIN_VOL_24H is not None:
             if r.vol_24h is None or float(r.vol_24h) < float(DEFAULT_MIN_VOL_24H):
@@ -509,11 +528,13 @@ def pick_tickers(
         "max_oi_skew": DEFAULT_MAX_OI_SKEW,
         "min_vol_24h": DEFAULT_MIN_VOL_24H,
         "min_oi": DEFAULT_MIN_OI,
+        "min_abs_chg_7d_pct": min_abs_7d,
         "max_abs_chg_7d_pct": max_abs_7d,
         "long_count": len(longs),
         "short_count": len(shorts),
         "orchestrator_top_n_ignored": True,
         "selection": {
+            "abs_7d_band": "|7d%| strictly between min and max when set (applied before 1h/24h bucketing and rank)",
             "short_filter": "chg_1h_pct>0 AND chg_24h_pct>0",
             "long_filter": "chg_1h_pct<0 AND chg_24h_pct<0",
             "rank": "global abs(7d) desc after bucket filters (ties: abs(24h), abs(1h)); bucket ordering uses 7d/24h/1h",
@@ -571,10 +592,22 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Skip listings with OI below this (JSON key \"OI\"; default {DEFAULT_MIN_OI}); use negative to disable.",
     )
     ap.add_argument(
+        "--min-abs-7d-pct",
+        type=float,
+        default=float(DEFAULT_MIN_ABS_CHG_7D_PCT),
+        help=(
+            f"Skip tickers with abs(7d change %) less than or equal to this (default {DEFAULT_MIN_ABS_CHG_7D_PCT:g}, "
+            f"i.e. keep |7d| > this); use negative to disable."
+        ),
+    )
+    ap.add_argument(
         "--max-abs-7d-pct",
         type=float,
         default=float(DEFAULT_MAX_ABS_CHG_7D_PCT),
-        help=f"Skip tickers with abs(7d change %) above this (default {DEFAULT_MAX_ABS_CHG_7D_PCT:g}); use negative to disable.",
+        help=(
+            f"Skip tickers with abs(7d change %) greater than or equal to this (default {DEFAULT_MAX_ABS_CHG_7D_PCT:g}, "
+            f"i.e. keep |7d| < this); use negative to disable."
+        ),
     )
     ap.add_argument("--print-json", action="store_true", help="Print machine-readable JSON output.")
     return ap
@@ -592,18 +625,23 @@ def main() -> int:
     if min_oi is not None and min_oi < 0:
         min_oi = None
 
+    min_abs_7d: Optional[float] = float(args.min_abs_7d_pct)
+    if min_abs_7d is not None and min_abs_7d < 0:
+        min_abs_7d = None
+
     max_abs_7d: Optional[float] = float(args.max_abs_7d_pct)
     if max_abs_7d is not None and max_abs_7d < 0:
         max_abs_7d = None
 
     # Apply CLI overrides to module-level behavior for this invocation only.
-    global DEFAULT_TOP_SPEC, DEFAULT_EXCLUDE_CSV, DEFAULT_MAX_OI_SKEW, DEFAULT_MIN_VOL_24H, DEFAULT_MIN_OI, DEFAULT_MAX_TICKER_ENTRIES, DEFAULT_MAX_ABS_CHG_7D_PCT
+    global DEFAULT_TOP_SPEC, DEFAULT_EXCLUDE_CSV, DEFAULT_MAX_OI_SKEW, DEFAULT_MIN_VOL_24H, DEFAULT_MIN_OI, DEFAULT_MAX_TICKER_ENTRIES, DEFAULT_MIN_ABS_CHG_7D_PCT, DEFAULT_MAX_ABS_CHG_7D_PCT
     DEFAULT_TOP_SPEC = str(args.top_spec)
     DEFAULT_EXCLUDE_CSV = str(args.exclude)
     DEFAULT_MAX_OI_SKEW = max_skew
     DEFAULT_MIN_VOL_24H = min_vol_24h
     DEFAULT_MIN_OI = min_oi
     DEFAULT_MAX_TICKER_ENTRIES = int(args.max_ticker_entries)
+    DEFAULT_MIN_ABS_CHG_7D_PCT = float(min_abs_7d) if min_abs_7d is not None else -1.0
     DEFAULT_MAX_ABS_CHG_7D_PCT = float(max_abs_7d) if max_abs_7d is not None else -1.0
 
     longs, shorts, meta = pick_tickers(listing_json=str(args.json_path), marketstate_json=None)
@@ -629,8 +667,16 @@ def main() -> int:
             ranked2 = _ranked_universe(rows, rank_by=DEFAULT_RANK_BY)
             universe2 = _slice_ranks(ranked2, start_rank, end_rank)
             filtered2: List[ListingRow] = []
+            min_a: Optional[float] = float(DEFAULT_MIN_ABS_CHG_7D_PCT)
+            if min_a < 0:
+                min_a = None
+            max_a: Optional[float] = float(DEFAULT_MAX_ABS_CHG_7D_PCT)
+            if max_a < 0:
+                max_a = None
             for r in universe2:
                 if r.ticker in exclude_set:
+                    continue
+                if not _abs_7d_pct_passes_band(r.chg_7d_pct, min_abs=min_a, max_abs=max_a):
                     continue
                 if DEFAULT_MIN_VOL_24H is not None:
                     if r.vol_24h is None or float(r.vol_24h) < float(DEFAULT_MIN_VOL_24H):
