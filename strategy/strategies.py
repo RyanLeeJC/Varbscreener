@@ -12,7 +12,6 @@ STRATEGIES: Dict[str, str] = {
     "median_revert": "revert_median",
     "revert_median": "revert_median",
     "invert_extreme": "invert_extreme",
-    "funding_pairs": "funding_pairs",
 }
 
 # Shared strategy output file (written when strategies are triggered via this loader).

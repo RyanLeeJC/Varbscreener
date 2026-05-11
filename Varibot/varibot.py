@@ -6,7 +6,6 @@ Varibot orchestrator — implements the VariBotFlowchart workflow:
   Auth (validate_vr_token) -> every T minutes: portfolio snapshot ->
   if positions -> PM / managers (see strategy); portfolio-wide TP close-all removed ->
   if flat -> listingtable -> marketstate -> strategy -> multimarketorder
-  (strategy funding_pairs skips marketstate on entry; per-pair exits in funding_pairs manager.)
 
 Run from the Varibot directory (or any cwd; this file fixes imports):
 
@@ -62,11 +61,6 @@ STRATEGY_SESSION_CLOSEALL_KEYS: frozenset[str] = frozenset({"revert_near_median"
 STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN: int = 360
 
 _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
-# funding_pairs manager: refresh listingtable before opening replacement pairs
-_FP_REFRESH_LISTINGTABLE_ENV: str = "VARIBOT_FUNDING_PAIRS_REFRESH_LISTINGTABLE_ON_ROTATE"
-_FP_REFRESH_MIN_AGE_S_ENV: str = "VARIBOT_FUNDING_PAIRS_REFRESH_LISTINGTABLE_MIN_AGE_S"
-_FP_REFRESH_DEFAULT_ON: bool = True
-_FP_REFRESH_DEFAULT_MIN_AGE_S: float = 300.0  # refresh if listingtabledata.json older than 5 minutes
 
 # Strategy risk control: hard max hold time for position batches (invert_extreme only).
 # If the oldest open position's `position_info.opened_at` is >= this many hours, varibot will
@@ -78,7 +72,7 @@ TIME_KILL_POSITION_HOURS: float = 12.0
 #   "invert_extreme" or "invert_extreme.py"
 Strategy: str = os.getenv("VARIBOT_STRATEGY", "invert_extreme.py").strip()
 if not Strategy:
-    Strategy = "revert_near_median.py"
+    Strategy = "invert_extreme.py"
 
 # Rolling log (wrapper mode): varibot.py can self-wrap to prefix lines and keep a rolling logfile,
 # so you can run just `python3 varibot.py --live` and still get the run_varibot_logged behavior.
@@ -89,7 +83,7 @@ _VARIBOT_WRAPPED_ENV: str = "VARIBOT_WRAPPED"
 POST_MULTIMARKET_POSITIONS_MAX_WAIT_S: float = 2.0
 POST_MULTIMARKET_POSITIONS_POLL_S: float = 0.5
 
-# Reduce-only pair closes (PM near_median, funding_pairs; _close_reduce_only_with_slippage_steps).
+# Reduce-only closes (portfolio manager, time-kill; _close_reduce_only_with_slippage_steps).
 # Same defaults as multimarketorder.py (_DEFAULT_MAX_SLIPPAGE / _SLIPPAGE_RETRY_INCREMENT / _MAX_LIVE_ATTEMPTS).
 # Default max slippage when MAX_SLIPPAGE env is unset (fraction of notional).
 _DEFAULT_MAX_SLIPPAGE: float = 0.001
@@ -136,7 +130,6 @@ from multimarketorder import (  # noqa: E402
     _order_response_rejected,
 )
 from strategy import strategies as strategies_mod  # noqa: E402
-from strategy import funding_pairs as funding_pairs_mod  # noqa: E402
 from strategy.invert_extreme import (  # noqa: E402
     DEFAULT_MAX_TICKER_ENTRIES as INVERT_EXTREME_MAX_TICKER_ENTRIES,
 )
@@ -161,25 +154,8 @@ def _strategy_key_normalized(strategy: str) -> str:
     return k
 
 
-def _resolve_im_target_pct_for_multimarket(
-    *,
-    strategy_key: str,
-    n_long: int,
-    n_short: int,
-    args_im_target_pct: Optional[float],
-) -> float:
-    """
-    For strategy funding_pairs, multimarketorder's --im-target-pct is derived so each pair uses
-    funding_pairs.FUNDING_PAIR_MAX_IM_PCT of (portfolio_value × leverage), split across two legs.
-    Other strategies use --im-target-pct or DEFAULT_IM_TARGET_PCT.
-    """
-    if _strategy_key_normalized(strategy_key) == "funding_pairs":
-        n = int(n_long) + int(n_short)
-        if n <= 0:
-            return float(args_im_target_pct) if args_im_target_pct is not None else float(DEFAULT_IM_TARGET_PCT)
-        return float(
-            funding_pairs_mod.im_target_pct_for_funding_pairs_multimarket(int(n_long), int(n_short))
-        )
+def _resolve_im_target_pct_for_multimarket(*, args_im_target_pct: Optional[float]) -> float:
+    """Use --im-target-pct when set, else multimarketorder.DEFAULT_IM_TARGET_PCT."""
     return float(args_im_target_pct) if args_im_target_pct is not None else float(DEFAULT_IM_TARGET_PCT)
 
 
@@ -965,40 +941,6 @@ def run_listingtable_or_use_cache(*, timeout_s: float = 120.0) -> str:
     return json_path
 
 
-def _should_refresh_listingtable_for_funding_pairs_rotate() -> Tuple[bool, float]:
-    """
-    Returns (enabled, min_age_s).
-      - enabled defaults ON (can be disabled via env)
-      - min_age_s defaults to a small value to avoid stale funding/volume when rotating pairs
-    """
-    v = (os.getenv(_FP_REFRESH_LISTINGTABLE_ENV, "") or "").strip().lower()
-    if v in ("0", "false", "no", "n", "off"):
-        enabled = False
-    elif v in ("1", "true", "yes", "y", "on"):
-        enabled = True
-    else:
-        enabled = bool(_FP_REFRESH_DEFAULT_ON)
-
-    min_age_s = float(_FP_REFRESH_DEFAULT_MIN_AGE_S)
-    try:
-        s = (os.getenv(_FP_REFRESH_MIN_AGE_S_ENV, "") or "").strip()
-        if s:
-            min_age_s = max(0.0, float(s))
-    except Exception:
-        pass
-
-    return enabled, float(min_age_s)
-
-
-def _listingtable_age_s(path: str) -> Optional[float]:
-    try:
-        if not os.path.isfile(path):
-            return None
-        return max(0.0, time.time() - float(os.path.getmtime(path)))
-    except Exception:
-        return None
-
-
 def run_marketstate(*, timeout_s: float = 90.0) -> None:
     script = os.path.join(_LISTINGS_DIR, "marketstate.py")
     if not os.path.isfile(script):
@@ -1015,15 +957,6 @@ def run_strategy_pick_tickers(
     top_n: int,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
     ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
-    # funding_pairs.pick_tickers does not use marketstate; avoid requiring marketstate.json on disk.
-    if _strategy_key_normalized(strategy_key) == "funding_pairs":
-        return strategies_mod.run_strategy(
-            strategy_key=strategy_key,
-            listing_json=listing_json,
-            marketstate_json=None,
-            top_n=int(top_n),
-            write_output_txt=True,
-        )
     if not os.path.isfile(ms_path):
         raise FileNotFoundError(f"marketstate.json missing at {ms_path} (run marketstate.py).")
     return strategies_mod.run_strategy(
@@ -1036,22 +969,14 @@ def run_strategy_pick_tickers(
 
 
 def _top_n_for_strategy(strategy_key: str) -> int:
-    """
-    Some strategies interpret `top_n` differently. Keep funding_pairs separate from the
-    default long/short ticker-universe sizing used by other strategies.
-    """
-    k = (strategy_key or "").strip().lower()
-    if k.endswith(".py"):
-        k = k[:-3]
-    if k == "funding_pairs":
-        # Optional env override for quick tuning without code changes.
-        v = (os.getenv("VARIBOT_FUNDING_PAIRS_TOP_N", "") or "").strip()
-        if v:
-            try:
-                return max(1, int(float(v)))
-            except Exception:
-                pass
-        return 60
+    """Ticker-universe width for strategy.pick_tickers (optional VARIBOT_TOP_N)."""
+    _ = strategy_key
+    v = (os.getenv("VARIBOT_TOP_N", "") or "").strip()
+    if v:
+        try:
+            return max(1, int(float(v)))
+        except Exception:
+            pass
     return 60
 
 
@@ -1274,12 +1199,7 @@ def _near_median_substitute_skew_rejected_multimarket(
             )
         else:
             pct = _resolve_im_target_pct_for_multimarket(
-                strategy_key=strat_key,
-                n_long=len(new_l),
-                n_short=len(new_s),
-                args_im_target_pct=(
-                    float(args.im_target_pct) if args.im_target_pct is not None else None
-                ),
+                args_im_target_pct=float(args.im_target_pct) if args.im_target_pct is not None else None,
             )
             rc2 = run_multimarket(
                 multi_script=str(args.multi_script),
@@ -1425,156 +1345,6 @@ def _close_reduce_only_with_slippage_steps(
                 time.sleep(0.25)
     if last_err is not None:
         raise last_err
-
-
-def _funding_pairs_manager(
-    *,
-    ep: VariEndpoints,
-    args: argparse.Namespace,
-    positions_raw: Any,
-) -> None:
-    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
-    k = strat_key.strip().lower()
-    if k.endswith(".py"):
-        k = k[:-3]
-    if k != "funding_pairs":
-        return
-
-    snap = funding_pairs_mod.pair_interval_status(positions_raw=positions_raw)
-    for line in funding_pairs_mod.format_pair_interval_log_lines(snap):
-        _log(line)
-
-    plan = funding_pairs_mod.desired_actions_from_positions(positions_raw=positions_raw)
-    pairs_to_close = plan.get("pairs_to_close") if isinstance(plan, dict) else None
-    if not isinstance(pairs_to_close, list):
-        return
-    if not pairs_to_close:
-        _log("funding_pairs manager: no slots to close (per-pair TP/max-age).")
-        return
-
-    _log(f"funding_pairs manager: {len(pairs_to_close)} slot(s) flagged to close:")
-    for p in pairs_to_close:
-        if not isinstance(p, dict):
-            continue
-        slot = p.get("slot")
-        long_t = p.get("long")
-        short_t = p.get("short")
-        up = p.get("combined_upnl_pct")
-        reason = p.get("close_reason")
-        age_s = p.get("age_s")
-        up_s = "-" if up is None else f"{float(up):.3f}%"
-        age_s_s = "-" if age_s is None else _format_duration_s(float(age_s))
-        _log(f"  slot={slot} {reason} age={age_s_s} combined_uPNL%={up_s} LONG {long_t} / SHORT {short_t}")
-
-    if not bool(args.live):
-        _log("funding_pairs manager: dry-run (not live) — would close flagged slot legs and open replacements.")
-        return
-
-    # Build a quick lookup of current position qty by underlying.
-    by_sym: Dict[str, float] = {}
-    for pos in _positions_list(positions_raw):
-        sym = _instrument_label(pos).strip().upper()
-        q = _position_qty(pos)
-        if sym and q is not None and abs(float(q)) > 1e-12:
-            by_sym[sym] = float(q)
-
-    max_slip = _resolve_max_slippage()
-    listing_json = os.path.join(_LISTINGS_DIR, "listingtabledata.json")
-    top_n = _top_n_for_strategy(strat_key)
-
-    # If we're rotating pairs, refresh listingtable so replacement selection isn't based on stale vol/funding.
-    refresh_on, min_age_s = _should_refresh_listingtable_for_funding_pairs_rotate()
-    if refresh_on:
-        age = _listingtable_age_s(listing_json)
-        if age is None or float(age) >= float(min_age_s):
-            age_s = "missing" if age is None else f"{age:.0f}s"
-            _log(
-                f"funding_pairs manager: refreshing listingtable before replacements (age={age_s}, min_age={min_age_s:.0f}s)..."
-            )
-            try:
-                listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
-            except Exception as e:
-                _log(f"funding_pairs manager: WARNING listingtable refresh failed; using existing cache ({type(e).__name__}: {e})")
-
-    for p in pairs_to_close:
-        if not isinstance(p, dict):
-            continue
-        try:
-            slot_i = int(p.get("slot"))
-        except Exception:
-            continue
-        long_t = str(p.get("long") or "").strip().upper()
-        short_t = str(p.get("short") or "").strip().upper()
-        if not long_t or not short_t:
-            continue
-
-        # Close both legs reduce-only at full size.
-        for sym in (long_t, short_t):
-            q = by_sym.get(sym)
-            if q is None or abs(float(q)) <= 1e-12:
-                _log(f"funding_pairs manager: skip close {sym} (no open qty found).")
-                continue
-            close_side = "sell" if float(q) > 0 else "buy"
-            qty_abs = abs(float(q))
-            _log(f"funding_pairs manager: closing {sym} qty={qty_abs:g} side={close_side} reduce-only...")
-            _close_reduce_only_with_slippage_steps(
-                ep=ep,
-                sym=sym,
-                qty_abs=float(qty_abs),
-                close_side=str(close_side),
-                max_slip=float(max_slip),
-            )
-
-        # Open a replacement pair for that slot (best-effort).
-        try:
-            repl = funding_pairs_mod.pick_replacement_pair(
-                listing_json=os.path.abspath(listing_json),
-                state_json_path=None,
-                top_n_by_vol=int(top_n),
-                extra_disallow=set(by_sym.keys()),
-            )
-            new_long = str(repl.get("long") or "").strip().upper()
-            new_short = str(repl.get("short") or "").strip().upper()
-            if new_long and new_short:
-                _log(f"funding_pairs manager: opening replacement for slot {slot_i}: LONG {new_long} / SHORT {new_short}")
-                if args.usd is not None:
-                    rc_mm = run_multimarket(
-                        multi_script=str(args.multi_script),
-                        longs=[new_long],
-                        shorts=[new_short],
-                        usd=float(args.usd),
-                        live=True,
-                    )
-                else:
-                    pct = _resolve_im_target_pct_for_multimarket(
-                        strategy_key=strat_key,
-                        n_long=1,
-                        n_short=1,
-                        args_im_target_pct=(
-                            float(args.im_target_pct) if args.im_target_pct is not None else None
-                        ),
-                    )
-                    rc_mm = run_multimarket(
-                        multi_script=str(args.multi_script),
-                        longs=[new_long],
-                        shorts=[new_short],
-                        im_target_pct=pct,
-                        live=True,
-                    )
-                if int(rc_mm) == 0:
-                    _log_post_multimarket_positions_tally(ep=ep, longs=[new_long], shorts=[new_short])
-                try:
-                    funding_pairs_mod.replace_state_pair_slot(
-                        state_json_path=None,
-                        slot=int(slot_i),
-                        new_long=new_long,
-                        new_short=new_short,
-                        opened_unix=time.time(),
-                    )
-                except Exception as e:
-                    _log(f"funding_pairs manager: WARNING could not update state slot {slot_i}: {e}")
-        except Exception as e:
-            _log(f"funding_pairs manager: replacement open skipped (error: {type(e).__name__}: {e})")
 
 
 def _near_median_pm_dry_run_refill_preview(
@@ -1798,7 +1568,7 @@ def _near_median_pm_manager(
         return
     usd_run = float(leg_refill)
 
-    # Refresh listing cache (pro) and ensure marketstate exists (strategy runner requires it for non-funding_pairs).
+    # Refresh listing cache (pro) and ensure marketstate exists (strategy runner requires it).
     _log("PM(invert_extreme): refreshing listingtable (pro) for replacements...")
     listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
     ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
@@ -2082,27 +1852,22 @@ def one_cycle(
 
     if not has_pos:
         _clear_position_latch()
-        if _strategy_key_normalized(strat_key) == "funding_pairs":
-            _log("No open positions -> listingtable -> strategy -> multimarket (marketstate skipped for funding_pairs)")
-        else:
-            _log("No open positions -> listingtable -> marketstate -> strategy -> multimarket")
+        _log("No open positions -> listingtable -> marketstate -> strategy -> multimarket")
         cg_plan = (os.getenv("VARIBOT_COINGECKO_PLAN", "pro") or "pro").strip().lower()
         _log(
             f"step: running listingtable ({'CoinGecko Pro' if cg_plan == 'pro' else 'CoinGecko Free'}) "
             f"(may take a while)..."
         )
         listing_json = run_listingtable_or_use_cache(timeout_s=float(args.listing_timeout_s))
-        if _strategy_key_normalized(strat_key) != "funding_pairs":
-            _log("step: running marketstate.py...")
-            run_marketstate(timeout_s=float(args.marketstate_timeout_s))
+        _log("step: running marketstate.py...")
+        run_marketstate(timeout_s=float(args.marketstate_timeout_s))
         top_n = _top_n_for_strategy(strat_key)
         longs, shorts, meta = run_strategy_pick_tickers(
             strategy_key=strat_key,
             listing_json=listing_json,
             top_n=top_n,
         )
-        if _strategy_key_normalized(strat_key) != "funding_pairs":
-            _log("step: marketstate finished")
+        _log("step: marketstate finished")
         _log(f"step: strategy finished (strategy={meta.get('strategy')}, longs={len(longs)}, shorts={len(shorts)})")
 
         if _should_write_strategy_output():
@@ -2136,9 +1901,6 @@ def one_cycle(
             )
         else:
             pct = _resolve_im_target_pct_for_multimarket(
-                strategy_key=strat_key,
-                n_long=len(longs),
-                n_short=len(shorts),
                 args_im_target_pct=float(args.im_target_pct) if args.im_target_pct is not None else None,
             )
             rc = run_multimarket(
@@ -2234,8 +1996,6 @@ def one_cycle(
         except Exception as e:
             _log(f"WARNING: post-PM portfolio refresh failed ({type(e).__name__}: {e}); using stale snapshot for rest of cycle.")
 
-    _funding_pairs_manager(ep=ep, args=args, positions_raw=raw_pos)
-
     # 3) Top-up only after PM(pair-threshold) step above (uses refreshed snap when live).
     _invert_extreme_topup_if_needed(
         ep=ep, args=args, snap=snap, positions_raw=raw_pos, cycle_index=int(cycle_index)
@@ -2312,10 +2072,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Multimarket sizing (multimarketorder --im-target-pct): per-order USD = "
             "(portfolio_value_usd × leverage × PCT/100) / n_orders (see multimarketorder). "
-            f"If --usd is omitted and this is omitted, defaults to {DEFAULT_IM_TARGET_PCT:g}%% "
-            "(non-funding_pairs strategies). "
-            "For strategy funding_pairs, this flag is ignored unless you use --usd; "
-            "notional per leg is sized from strategy.funding_pairs.FUNDING_PAIR_MAX_IM_PCT of (pv×leverage). "
+            f"If --usd is omitted and this is omitted, defaults to {DEFAULT_IM_TARGET_PCT:g}%%. "
             "Do not pass both --usd and --im-target-pct."
         ),
     )

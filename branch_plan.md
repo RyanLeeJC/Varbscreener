@@ -104,5 +104,5 @@ Once all eligible pairs have been closed in this cycle:
 - Portfolio snapshot + TP check helpers: [`Varibot/check_portfolio_stats.py`](Varibot/check_portfolio_stats.py)
 - Main loop / session logic: [`Varibot/varibot.py`](Varibot/varibot.py)
 - Strategy selection: [`strategy/near_median.py`](strategy/near_median.py)
-- Order placement / slippage stepping patterns: [`Varibot/multimarketorder.py`](Varibot/multimarketorder.py) and existing close logic in `Varibot/varibot.py` (e.g. `funding_pairs` manager)
+- Order placement / slippage stepping patterns: [`Varibot/multimarketorder.py`](Varibot/multimarketorder.py) and existing close logic in `Varibot/varibot.py` (portfolio manager, time-kill)
 
