@@ -37,7 +37,7 @@ DEFAULT_RANK_BY: RankBy = "market_cap"
 # - "60"    → take Top 60 by the rank metric
 # - "21-60" → take ranks 21..60 by the rank metric (inclusive)
 # Note: the final count must be even (for 50/50 long/short split).
-DEFAULT_TOP_SPEC: str = "200"
+DEFAULT_TOP_SPEC: str = "120"
 
 # Max tickers returned from pick_tickers (even total before 50/50 split). When the filtered rank window is larger,
 # names farthest from cross-sectional median 24h change are dropped first (see _near_median_subset).

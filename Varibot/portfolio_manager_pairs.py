@@ -8,8 +8,8 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, 
 Side = Literal["L", "S"]
 
 PAIR_TP_THRESHOLD_PCT_DEFAULT: float = 1.0
-LEG_TP_THRESHOLD_PCT_DEFAULT: float = 3.0
-LEG_SL_THRESHOLD_PCT_DEFAULT: float = 3.0
+LEG_TP_THRESHOLD_PCT_DEFAULT: float = 5.0
+LEG_SL_THRESHOLD_PCT_DEFAULT: float = 5.0
 
 
 @dataclass(frozen=True)
