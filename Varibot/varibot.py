@@ -71,7 +71,7 @@ _FP_REFRESH_DEFAULT_MIN_AGE_S: float = 300.0  # refresh if listingtabledata.json
 # Strategy risk control: hard max hold time for position batches (invert_extreme only).
 # If the oldest open position's `position_info.opened_at` is >= this many hours, varibot will
 # close all positions (live only) at the start of the "have positions" cycle.
-TIME_KILL_POSITION_HOURS: float = 24.0
+TIME_KILL_POSITION_HOURS: float = 12.0
 
 # User setting: which strategy to run when flat.
 # You can put a module name (preferred) or a filename:
