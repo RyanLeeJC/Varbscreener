@@ -89,6 +89,7 @@ TICKER_BLACKLIST: frozenset[str] = frozenset(
         "STABLE",
         "KITE",
         "M",
+        "H",
         "JST",
         "BNB",
         "CRO",

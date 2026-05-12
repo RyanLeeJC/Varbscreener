@@ -20,7 +20,7 @@ DEFAULT_MAX_OI_SKEW: Optional[float] = 0.95
 # Always dropped when building the top-N-by-OI universe (unioned with --exclude).
 TICKER_BLACKLIST: frozenset[str] = frozenset(
     {
-        "XPL","ETC","PAXG","XAUT","RIVER","EDGE","BASED","VVV","IP"
+        "XPL","ETC","PAXG","XAUT","RIVER","EDGE","BASED","VVV","IP","H"
     }
 )
 
