@@ -16,6 +16,7 @@ Varibot/.multimarket_last_result.json
 
 # Local listing snapshot (regenerate with Vari Listings/listingtable.py)
 Vari Listings/listingtabledata.json
+Vari Listings/listingtable.py
 
 # Local DB / WAL (not for remote)
 Vari Listings/vari_railway_db/
