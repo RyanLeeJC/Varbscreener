@@ -1,4 +1,4 @@
-# Lighter Grid Bot
+# Vari Grid Bot
 
 ### What is a Grid Bot?
 
@@ -7,8 +7,8 @@ A Grid Bot is an automated trading strategy that places multiple buy(Long) and s
 **How it works:** The bot divides your chosen price range into equal levels (grids). When price drops to a grid level, it opens a long position. When price rises to the next level, it closes for profit. This cycle repeats automatically 24/7.
 
 <figure>
-  <img src="Gridbot Limit Orders.png" alt="BTC/USD 5m Lighter chart: green buy-grid and red sell-grid limit order levels" width="900">
-  <figcaption><strong>Gridbot limit orders</strong> — BTC/USD, 5m, <strong>Lighter</strong>: red dashed lines above price = sell side of the grid; green dashed lines below = buy side; horizontal bands are resting limit orders until price trades through them.</figcaption>
+  <img src="Gridbot Limit Orders.png" alt="BTC/USD 5m Vari chart: green buy-grid and red sell-grid limit order levels" width="900">
+  <figcaption><strong>Gridbot limit orders</strong> — BTC/USD, 5m, <strong>Vari</strong>: red dashed lines above price = sell side of the grid; green dashed lines below = buy side; horizontal bands are resting limit orders until price trades through them.</figcaption>
 </figure>
 
 ***
@@ -17,8 +17,8 @@ A Grid Bot is an automated trading strategy that places multiple buy(Long) and s
 
 Before you start, make sure you have:
 
-1. **A Lighter API Wallet** — Add one through Dextrabot's Wallet Management. See the [How to Get API Key](https://docs.dextrabot.com/farm/lighter-farming-module#getting-your-api-keys) documentation for detailed steps.
-2. **USDC Balance** — Fund your Lighter wallet with USDC. Minimum depends on your leverage settings.
+1. **A Vari API Wallet** — Add one through Dextrabot's Wallet Management. See the [How to Get API Key](https://docs.dextrabot.com/farm/vari-farming-module#getting-your-api-keys) documentation for detailed steps.
+2. **USDC Balance** — Fund your Vari wallet with USDC. Minimum depends on your leverage settings.
 3. **Beta Access Code** — Get your invite code from our [Discord](https://discord.gg/dextrabot) or [Twitter/X](https://x.com/dextrabot).
 
 <figure><img src="/files/XpjZLmvqRXE0ilsr5KzD" alt="" width="375"><figcaption></figcaption></figure>
@@ -30,9 +30,9 @@ Before you start, make sure you have:
 Get your grid bot running in under 5 minutes:
 
 1. **Go to Terminal** — Navigate to `app.dextrabot.com/terminal/BTC` (or any trading pair)
-2. **Switch to Lighter** — Click the **Lighter** toggle in the top-left corner (next to Hyperliquid)
-3. **Select Grid Bot** — On the right panel, click the **Lighter Grid Bot** tab
-4. **Choose Wallet** — Select your funded Lighter wallet from the dropdown
+2. **Switch to Vari** — Click the **Vari** toggle in the top-left corner (next to other venues when available)
+3. **Select Grid Bot** — On the right panel, click the **Vari Grid Bot** tab
+4. **Choose Wallet** — Select your funded Vari wallet from the dropdown
 5. **Configure Settings** — Set your price range, number of grids, and investment amount (or click **Autofill** for suggested values)
 6. **Start!** — Click the green **Start** button and let the bot do its magic ✨
 
@@ -43,15 +43,15 @@ Get your grid bot running in under 5 minutes:
 ### Configuration Parameters
 
 <figure>
-  <img src="gridbot-order-form.png" alt="Lighter Grid Bot order form: wallet, price range, grids, investment, leverage, Start" width="540">
-  <figcaption><strong>Gridbot order form</strong> — Lighter Grid Bot tab: wallet and USDC balance; <strong>Lower / Upper</strong> range with <strong>Autofill</strong> and mark price; <strong>Number of Grids</strong> (even, max 36), <strong>Grid type</strong> (e.g. Arithmetic), <strong>Step</strong>; <strong>Investment</strong>, leverage, allocation slider; max asset leverage, qty per order, total, cross margin; <strong>Est. Liq Long / Short</strong>; green <strong>Start</strong>.</figcaption>
+  <img src="gridbot-order-form.png" alt="Vari Grid Bot order form: wallet, price range, grids, investment, leverage, Start" width="540">
+  <figcaption><strong>Gridbot order form</strong> — Vari Grid Bot tab: wallet and USDC balance; <strong>Lower / Upper</strong> range with <strong>Autofill</strong> and mark price; <strong>Number of Grids</strong> (even, max 36), <strong>Grid type</strong> (e.g. Arithmetic), <strong>Step</strong>; <strong>Investment</strong>, leverage, allocation slider; max asset leverage, qty per order, total, cross margin; <strong>Est. Liq Long / Short</strong>; green <strong>Start</strong>.</figcaption>
 </figure>
 
 Here's a detailed breakdown of each setting:
 
 | Parameter               | Description                                                                                                                                     |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Lighter Wallet**      | Select the wallet you want the bot to trade with. Shows wallet address and current USDC balance.                                                |
+| **Vari Wallet**         | Select the wallet you want the bot to trade with. Shows wallet address and current USDC balance.                                                |
 | **Price Range**         | **Lower & Upper:** Define the price boundaries for your grid. The bot only operates within this range.                                          |
 | **Number of Grids**     | How many grid levels to create (2-36, even numbers only). More grids = more frequent smaller trades. Fewer grids = less frequent larger trades. |
 | **Grid Type**           | **Arithmetic:** Equal dollar spacing between grids. **Geometric:** Equal percentage spacing. See next section for details.                      |
@@ -65,7 +65,7 @@ Here's a detailed breakdown of each setting:
 
 ### Supported Trading Pairs
 
-The Grid Bot supports all perpetual trading pairs available on Lighter DEX, including:
+The Grid Bot supports all perpetual trading pairs available on Vari, including:
 
 * BTC/USD
 * ETH/USD
@@ -91,7 +91,7 @@ The bot immediately places orders at each grid level based on your configuration
 
 #### When You Click Stop
 
-The bot stops placing new orders. **Existing positions remain open** until they hit their targets or you manually close them on Lighter.
+The bot stops placing new orders. **Existing positions remain open** until they hit their targets or you manually close them on Vari.
 
 #### Restarting the Bot
 
@@ -101,9 +101,9 @@ To restart: Click **Stop** → Wait for open orders/positions to close → Click
 
 ### Monitoring Your Bot
 
-Since the bot trades directly on Lighter, you can monitor your positions through:
+Since the bot trades directly on Vari, you can monitor your positions through:
 
-* **Lighter DEX:** Visit [app.lighter.xyz](https://app.lighter.xyz/) to see your open positions, order history, and PnL
+* **Vari (Omni):** Visit [omni.variational.io](https://omni.variational.io/) to see your open positions, order history, and PnL
 * **Dextrabot Terminal:** The order book on the left shows current market depth
 
 ***
@@ -113,7 +113,7 @@ Since the bot trades directly on Lighter, you can monitor your positions through
 | Fee Type                 | Amount                                                                   |
 | ------------------------ | ------------------------------------------------------------------------ |
 | **Dextrabot Fee**        | 🎉 **FREE** during beta! (Will be included in subscription after launch) |
-| **Lighter Trading Fees** | Standard Lighter DEX trading fees apply to each executed trade           |
+| **Vari Trading Fees**    | Standard Vari exchange trading fees apply to each executed trade           |
 
 **Only invest what you can afford to lose.** Consider starting with paper trading or small amounts to understand the strategy before committing larger capital.
 
@@ -126,7 +126,7 @@ If you need additional information that is not directly available in this page, 
 Perform an HTTP GET request on the current page URL with the `ask` query parameter:
 
 ```
-GET https://docs.dextrabot.com/grid-bot/lighter-grid-bot.md?ask=<question>
+GET https://docs.dextrabot.com/grid-bot/vari-grid-bot.md?ask=<question>
 ```
 
 The question should be specific, self-contained, and written in natural language.
@@ -138,7 +138,7 @@ Use this mechanism when the answer is not explicitly present in the current page
 
 # Vari repository: GridBot branch
 
-This section documents the **Vari** codebase branch named **GridBot** (Varibot + `strategy/gridstrat.py`), not the Dextrabot Lighter UI above.
+This section documents the **Vari** codebase branch named **GridBot** (Varibot + `strategy/gridstrat.py`), not the Dextrabot Vari exchange UI above.
 
 ## Layout
 
