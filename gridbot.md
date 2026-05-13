@@ -6,6 +6,11 @@ A Grid Bot is an automated trading strategy that places multiple buy(Long) and s
 
 **How it works:** The bot divides your chosen price range into equal levels (grids). When price drops to a grid level, it opens a long position. When price rises to the next level, it closes for profit. This cycle repeats automatically 24/7.
 
+<figure>
+  <img src="Gridbot Limit Orders.png" alt="BTC/USD 5m Lighter chart: green buy-grid and red sell-grid limit order levels" width="900">
+  <figcaption><strong>Gridbot limit orders</strong> — BTC/USD, 5m, <strong>Lighter</strong>: red dashed lines above price = sell side of the grid; green dashed lines below = buy side; horizontal bands are resting limit orders until price trades through them.</figcaption>
+</figure>
+
 ***
 
 ### Prerequisites
