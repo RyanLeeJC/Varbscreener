@@ -79,7 +79,7 @@ DEFAULT_LEVERAGE: int = 50
 # Default number of "slots" across the book for sizing (per-order USD = pv×lev×(im_target_pct/100) / slots).
 # Prefer the strategy constant when available so strategy and order script stay aligned.
 try:
-    from strategy.strategy import DEFAULT_MAX_TICKER_ENTRIES as DEFAULT_MAX_TICKER_ENTRIES  # type: ignore
+    from strategy.gridstrat import DEFAULT_MAX_TICKER_ENTRIES as DEFAULT_MAX_TICKER_ENTRIES  # type: ignore
 except Exception:
     DEFAULT_MAX_TICKER_ENTRIES: int = 40
 

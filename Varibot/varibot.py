@@ -15,7 +15,7 @@ Run from the Varibot directory (or any cwd; this file fixes imports):
 
 Dependencies: repo layout
   ../Vari Listings/listingtable.py, marketstate.py, *.json
-  ../strategy/strategy.py, ./validate_vr_token.py, check_portfolio_stats.py,
+  ../strategy/gridstrat.py, ./validate_vr_token.py, check_portfolio_stats.py,
   ./closeallpositions.py, ./multimarketorder.py (or *_cadence_1s.py)
 """
 
@@ -129,8 +129,8 @@ from multimarketorder import (  # noqa: E402
     USD_NOTIONAL_ROUND_STEP,
     _order_response_rejected,
 )
-import strategy.strategy as strategies_mod  # noqa: E402
-from strategy.strategy import (  # noqa: E402
+import strategy.gridstrat as strategies_mod  # noqa: E402
+from strategy.gridstrat import (  # noqa: E402
     DEFAULT_MAX_TICKER_ENTRIES as INVERT_EXTREME_MAX_TICKER_ENTRIES,
 )
 from portfolio_manager_pairs import (
@@ -2084,7 +2084,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--strategy",
         default=Strategy,
-        help=f"Strategy key to use when flat (default {Strategy!r}; see strategy/strategy.py).",
+        help=f"Strategy key to use when flat (default {Strategy!r}; see strategy/gridstrat.py).",
     )
     p.add_argument("--listing-timeout-s", type=float, default=120.0)
     p.add_argument("--marketstate-timeout-s", type=float, default=90.0)

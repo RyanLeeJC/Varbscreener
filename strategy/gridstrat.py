@@ -11,7 +11,7 @@ STRATEGY_NAME: str = "invert_extreme"
 
 # --- Strategy settings (edit here) ---
 
-# Trade thesis (printed to strategy/strategy_output.txt when run via the strategy loader).
+# Trade thesis (printed next to this file as strategy_output.txt when run via the strategy loader).
 #
 # NOTE: Forked from near_median.py for naming/logging; selection is invert_extreme (see pick_tickers).
 TRADE_THESIS: str = (
@@ -101,7 +101,7 @@ TICKER_BLACKLIST: frozenset[str] = frozenset(
 
 
 def _repo_root_from_here() -> str:
-    # This file lives in: <repo_root>/strategy/strategy.py
+    # This file lives in: <repo_root>/strategy/gridstrat.py
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -714,7 +714,8 @@ if __name__ == "__main__":
 
 # Strategy key -> submodule name under the `strategy` package (must expose `pick_tickers()`).
 STRATEGIES: Dict[str, str] = {
-    "invert_extreme": "strategy",
+    "invert_extreme": "gridstrat",
+    "gridstrat": "gridstrat",
 }
 
 # Written when strategies are triggered via run_strategy().
