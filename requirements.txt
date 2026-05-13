@@ -1,4 +1,15 @@
-# Root requirements for Railway (Nixpacks looks here). Same as Varibot/requirements.txt.
+# Vari (GridBot) — third-party wheels for the whole runnable tree.
+#
+# Covers:
+#   - Varibot/ (curl_cffi HTTP client, python-dotenv for .env)
+#   - Vari Listings/listingtable.py (requests; optional dotenv when run standalone)
+#   - strategy/gridstrat.py (stdlib only)
+#
+# Install from repo root:
+#   python3 -m pip install -r requirements.txt
+#
+# Python: see runtime.txt (3.12+ recommended; matches Dockerfile).
+
 curl_cffi>=0.7.0
 python-dotenv>=1.0.1
 requests>=2.28.0
