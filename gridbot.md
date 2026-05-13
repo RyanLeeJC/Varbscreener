@@ -37,7 +37,10 @@ Get your grid bot running in under 5 minutes:
 
 ### Configuration Parameters
 
-<figure><img src="/files/1MEfrcx7qo6T4uGTQLPH" alt="" width="540"><figcaption></figcaption></figure>
+<figure>
+  <img src="gridbot-order-form.png" alt="Lighter Grid Bot order form: wallet, price range, grids, investment, leverage, Start" width="540">
+  <figcaption><strong>Gridbot order form</strong> — Lighter Grid Bot tab: wallet and USDC balance; <strong>Lower / Upper</strong> range with <strong>Autofill</strong> and mark price; <strong>Number of Grids</strong> (even, max 36), <strong>Grid type</strong> (e.g. Arithmetic), <strong>Step</strong>; <strong>Investment</strong>, leverage, allocation slider; max asset leverage, qty per order, total, cross margin; <strong>Est. Liq Long / Short</strong>; green <strong>Start</strong>.</figcaption>
+</figure>
 
 Here's a detailed breakdown of each setting:
 
