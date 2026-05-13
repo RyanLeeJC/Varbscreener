@@ -185,7 +185,26 @@ python3 varibot.py --once
 python3 varibot.py --help
 ```
 
-Default strategy env: `VARIBOT_STRATEGY` (default `invert_extreme.py`). Keys **`invert_extreme`** and **`gridstrat`** resolve to **`strategy/gridstrat.py`**.
+Default strategy env: `VARIBOT_STRATEGY` (default `gridstrat.py`). Keys **`gridstrat`**, **`vari_grid`**, and **`invert_extreme`** load **`strategy/gridstrat.py`** (Vari price-ladder grid).
+
+### Grid mode (`strategy/gridstrat.py`)
+
+Grid behaviour follows `gridbot.md` (buy rungs below mark, sell rungs above, buy re-arm only after an **upward cross** through the **first sell anchor**). Configure with environment variables before starting Varibot:
+
+| Variable | Example | Meaning |
+|----------|---------|---------|
+| `GRID_ASSET` | `BTC` | Underlying from `listingtabledata.json` |
+| `GRID_LOWER` | `86000` | Lower bound of ladder |
+| `GRID_UPPER` | `89000` | Upper bound |
+| `GRID_NUM` | `30` | Number of interior rungs (see `build_price_ladder` in code) |
+| `GRID_TYPE` | `arithmetic` or `geometric` | Spacing mode |
+| `GRID_INVESTMENT_USD` | `300` | Base USDC (form “Investment”) |
+| `GRID_LEVERAGE` | `25` | Leverage multiplier for notional split |
+| `GRID_MARK` | *(optional)* | Override mark; default reads `mark_price` for `GRID_ASSET` |
+| `GRIDSTRAT_RESET` | `1` | One-shot: reset persisted state on next cycle |
+| `GRIDSTRAT_STATE_PATH` | *(optional)* | Defaults to `Varibot/gridstrat_state.json` |
+
+**Execution note:** Vari endpoints in this repo place **market** orders (`multimarketorder.py`). The strategy uses **listing mark snapshots** each cycle to detect rung crosses; it is not the same as native resting limit orders on an exchange UI. Use a short `--period-min` if you need fresher marks between cycles.
 
 ## Docker / Railway
 

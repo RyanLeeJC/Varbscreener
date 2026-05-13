@@ -69,10 +69,10 @@ TIME_KILL_POSITION_HOURS: float = 12.0
 
 # User setting: which strategy to run when flat.
 # You can put a module name (preferred) or a filename:
-#   "invert_extreme" or "invert_extreme.py"
-Strategy: str = os.getenv("VARIBOT_STRATEGY", "invert_extreme.py").strip()
+#   "gridstrat" or "gridstrat.py" (Vari price-ladder grid; see strategy/gridstrat.py + GRID_* env)
+Strategy: str = os.getenv("VARIBOT_STRATEGY", "gridstrat.py").strip()
 if not Strategy:
-    Strategy = "invert_extreme.py"
+    Strategy = "gridstrat.py"
 
 # Rolling log (wrapper mode): varibot.py can self-wrap to prefix lines and keep a rolling logfile,
 # so you can run just `python3 varibot.py --live` and still get the run_varibot_logged behavior.
@@ -1046,6 +1046,83 @@ def run_multimarket(
     return _run_script(script, cwd=_VARIBOT_DIR, args=cmd_args, timeout_s=None)
 
 
+def _is_grid_like_strategy(key: str) -> bool:
+    """Strategy keys that use strategy/gridstrat.py (mark-ladder grid)."""
+    return _strategy_key_normalized(key) in ("gridstrat", "vari_grid", "invert_extreme")
+
+
+def run_multimarket_asset_side(
+    *,
+    multi_script: str,
+    asset: str,
+    side: str,
+    usd: float,
+    live: bool,
+    extra_args: Optional[List[str]] = None,
+) -> int:
+    """Single-asset market job: --assets ASSET --side buy|sell --usd (used by gridstrat events)."""
+    script = os.path.join(_VARIBOT_DIR, multi_script)
+    if not os.path.isfile(script):
+        raise FileNotFoundError(f"Multi-market script not found: {script}")
+    sym = str(asset).strip().upper()
+    sd = str(side).strip().lower()
+    if sd not in ("buy", "sell"):
+        raise ValueError("side must be buy or sell")
+    cmd_args: List[str] = [
+        "--usd",
+        str(float(usd)),
+        "--assets",
+        sym,
+        "--side",
+        sd,
+    ]
+    if live:
+        cmd_args.append("--live")
+    cmd_args.extend(["--max-ticker-entries", str(int(INVERT_EXTREME_MAX_TICKER_ENTRIES))])
+    if extra_args:
+        cmd_args.extend(extra_args)
+    _log(f"Invoking {multi_script} asset={sym} side={sd} usd={usd} live={live}")
+    return _run_script(script, cwd=_VARIBOT_DIR, args=cmd_args, timeout_s=None)
+
+
+def _execute_grid_market_events(meta: Dict[str, Any], *, args: argparse.Namespace) -> None:
+    evs = meta.get("grid_market_events") or []
+    if not evs:
+        return
+    script = str(args.multi_script)
+    for raw in evs:
+        if not isinstance(raw, dict):
+            continue
+        act = str(raw.get("action") or "")
+        if act == "grid_restore_buys":
+            _log(
+                "gridstrat: buy ladder re-armed after first-sell anchor cross "
+                f"(anchor={raw.get('price')!r})."
+            )
+            continue
+        if act not in ("open_buy", "open_sell"):
+            continue
+        usd = float(raw.get("usd") or 0.0)
+        if usd <= 0:
+            continue
+        asset = str(raw.get("asset") or meta.get("grid_asset") or "").strip().upper()
+        if not asset:
+            _log("gridstrat: skip event (missing asset)")
+            continue
+        side = "buy" if act == "open_buy" else "sell"
+        px = raw.get("price")
+        _log(f"gridstrat: {act} {asset} usd={usd:g} mark_rung={px!r} live={bool(args.live)}")
+        rc = run_multimarket_asset_side(
+            multi_script=script,
+            asset=asset,
+            side=side,
+            usd=usd,
+            live=bool(args.live),
+        )
+        if rc != 0:
+            _log(f"{script} grid event exited {rc}")
+
+
 def _read_multimarket_skew_rejected() -> List[Dict[str, str]]:
     """skew_rejected rows written by multimarketorder._write_multimarket_last_result."""
     try:
@@ -1886,6 +1963,12 @@ def one_cycle(
             except OSError as e:
                 _log(f"WARNING: could not write {out_path}: {e}")
 
+        if meta.get("grid_mode"):
+            n_ev = len(meta.get("grid_market_events") or [])
+            _log(f"step: gridstrat grid_mode events={n_ev}")
+            _execute_grid_market_events(meta, args=args)
+            return False
+
         if not longs and not shorts:
             _log("strategy returned no tickers; skip multimarket.")
             return False
@@ -1929,6 +2012,25 @@ def one_cycle(
 
     # --- have positions ---
     strat_norm = _strategy_key_normalized(strat_key)
+
+    if _is_grid_like_strategy(strat_key):
+        listing_grid = os.path.join(_LISTINGS_DIR, "listingtabledata.json")
+        if os.path.isfile(listing_grid):
+            try:
+                top_n_g = _top_n_for_strategy(strat_key)
+                _, _, meta_g = run_strategy_pick_tickers(
+                    strategy_key=strat_key,
+                    listing_json=listing_grid,
+                    top_n=top_n_g,
+                )
+                if meta_g.get("grid_mode"):
+                    n_ev = len(meta_g.get("grid_market_events") or [])
+                    if n_ev:
+                        _log(f"gridstrat (open positions): events={n_ev}")
+                    _execute_grid_market_events(meta_g, args=args)
+                    return False
+            except Exception as e:
+                _log(f"WARNING: gridstrat cycle with open positions ({type(e).__name__}: {e})")
 
     # Log oldest open position (helps sanity-check time-kill / holds).
     if strat_norm == "invert_extreme":
