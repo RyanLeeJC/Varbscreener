@@ -1,22 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
-import statistics
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
-STRATEGY_NAME: str = "near_median"
+STRATEGY_NAME: str = "invert_extreme"
 
 # --- Strategy settings (edit here) ---
 
 # Trade thesis (printed to strategy/strategy_output.txt when run via the strategy loader).
+#
+# NOTE: Forked from near_median.py for naming/logging; selection is invert_extreme (see pick_tickers).
 TRADE_THESIS: str = (
-    "Core thesis: In a market-cap-ranked universe (excluding BTC/ETH), after liquidity filters, split the window "
-    "by 24h return: long the stronger half and short the weaker half. "
-    "If more names pass filters than max_ticker_entries, keep those closest to the cross-sectional median 24h change "
-    "and drop the rest before the split."
+    "Within a rank window on listing data (default: by market cap, excluding BTC/ETH), after liquidity "
+    "filters, keep only names whose absolute 7d change is strictly between a floor and ceiling "
+    "(default: >10% and <50%). Then short names with positive 1h and positive 24h change; long names with "
+    "negative 1h and negative 24h change. 7d is not a third sign gate for direction: among rows that pass "
+    "the band, candidates are ordered by |7d| (then |24h|, |1h|) and the list is capped; long and short "
+    "counts need not be equal after the cap."
 )
 
 # When running this strategy standalone, also write a human-readable table to Varibot/strategy_output.txt.
@@ -39,7 +43,7 @@ DEFAULT_TOP_SPEC: str = "120"
 
 # Max tickers returned from pick_tickers (even total before 50/50 split). When the filtered rank window is larger,
 # names farthest from cross-sectional median 24h change are dropped first (see _near_median_subset).
-DEFAULT_MAX_TICKER_ENTRIES: int = 40
+DEFAULT_MAX_TICKER_ENTRIES: int = 60
 
 # Default exclude list (unioned with `TICKER_BLACKLIST`).
 DEFAULT_EXCLUDE_CSV: str = "BTC,ETH"
@@ -52,6 +56,14 @@ DEFAULT_MIN_VOL_24H: Optional[float] = 30000
 
 # Skip tickers with open interest below this (same units as listingtabledata.json "OI" field); None disables.
 DEFAULT_MIN_OI: Optional[float] = 30000
+
+# Require absolute 7d change strictly greater than this percent (e.g. 10 => keep only |7d| > 10).
+# Set negative to disable.
+DEFAULT_MIN_ABS_CHG_7D_PCT: float = 10.0
+
+# Require absolute 7d change strictly less than this percent (e.g. 50 => drop if |7d| >= 50).
+# Set negative to disable.
+DEFAULT_MAX_ABS_CHG_7D_PCT: float = 50.0
 
 # Always dropped when building the top-N-by-OI universe.
 TICKER_BLACKLIST: frozenset[str] = frozenset(
@@ -87,15 +99,9 @@ TICKER_BLACKLIST: frozenset[str] = frozenset(
     }
 )
 
-# Backtest alignment defaults (from baseline_revert_near_median_* json):
-# - mcap_rank_max: 20
-# - max_ticker_entries: 10
-# - pick_mode: near_median
-# - revert: true
-
 
 def _repo_root_from_here() -> str:
-    # This file lives in: <repo_root>/strategy/revert_median.py
+    # This file lives in: <repo_root>/strategy/strategy.py
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -139,6 +145,16 @@ def _split_csv(s: Optional[str]) -> List[str]:
         if t:
             parts.append(t)
     return parts
+
+
+def _abs_7d_pct_passes_band(chg_7d_pct: float, *, min_abs: Optional[float], max_abs: Optional[float]) -> bool:
+    """True if |7d%| is in the open band (min_abs, max_abs) when bounds are set (strict > min, strict < max)."""
+    a = abs(float(chg_7d_pct))
+    if min_abs is not None and a <= float(min_abs):
+        return False
+    if max_abs is not None and a >= float(max_abs):
+        return False
+    return True
 
 
 def _parse_top_spec(spec: str) -> Tuple[int, int]:
@@ -221,7 +237,7 @@ def _table_lines(title: str, tickers: Sequence[str], chg: Dict[str, float]) -> L
     return lines
 
 
-def write_strategy_output_txt(
+def write_invert_detail_txt(
     path: str,
     *,
     meta: Dict[str, Any],
@@ -232,7 +248,6 @@ def write_strategy_output_txt(
     chg = _chg_pct_by_ticker(universe)
     header: List[str] = []
     header.append(f"Strategy: {meta.get('strategy')} (top_n={meta.get('top_n')}, exclude={meta.get('exclude')})")
-    header.append(f"Median 24hChg%: {float(meta.get('median_24h_chg_pct')):.2f}%")
     if meta.get("rank_by"):
         header.append(f"RankBy: {meta.get('rank_by')}")
 
@@ -250,7 +265,9 @@ def write_strategy_output_txt(
 class ListingRow:
     ticker: str
     oi: float
+    chg_1h_pct: float
     chg_24h_pct: float
+    chg_7d_pct: float
     market_cap: Optional[float]
     vol_24h: Optional[float]
     oi_skew: Optional[float]
@@ -276,13 +293,17 @@ def _to_listing_row(d: Dict[str, Any]) -> Optional[ListingRow]:
     market_cap = _as_float(d.get("market_cap"))
     vol_24h = _as_float(d.get("vol_24h") if "vol_24h" in d else d.get("volume_24h"))
     oi_skew = _as_float(d.get("OI Skew"))
-    chg = _parse_pct(d.get("price_change_24h_pct") or d.get("price_change_24h") or d.get("chg_24h_pct"))
-    if chg is None:
+    chg_1h = _parse_pct(d.get("price_change_1h_pct") or d.get("price_change_1h") or d.get("chg_1h_pct"))
+    chg_24h = _parse_pct(d.get("price_change_24h_pct") or d.get("price_change_24h") or d.get("chg_24h_pct"))
+    chg_7d = _parse_pct(d.get("price_change_7d_pct") or d.get("price_change_7d") or d.get("chg_7d_pct"))
+    if chg_1h is None or chg_24h is None or chg_7d is None:
         return None
     return ListingRow(
         ticker=ticker.upper(),
         oi=oi_val,
-        chg_24h_pct=float(chg),
+        chg_1h_pct=float(chg_1h),
+        chg_24h_pct=float(chg_24h),
+        chg_7d_pct=float(chg_7d),
         market_cap=market_cap,
         vol_24h=vol_24h,
         oi_skew=oi_skew,
@@ -314,35 +335,110 @@ def _ranked_universe(
     return parsed
 
 
-def _split_long_short_by_24h_change(universe: Sequence[ListingRow]) -> Tuple[float, List[str], List[str]]:
-    if len(universe) % 2 != 0:
-        raise ValueError(f"Universe size must be even (got {len(universe)}).")
-    group_size = len(universe) // 2
-    chgs = [r.chg_24h_pct for r in universe]
-    median_val = float(statistics.median(chgs))
-
-    # Same sort as revert_near_median; long/short swapped: long outperformers, short underperformers.
-    ordered = sorted(universe, key=lambda r: (r.chg_24h_pct, -r.oi, r.ticker))
-    longs = [r.ticker for r in ordered[-group_size:]]
-    shorts = [r.ticker for r in ordered[:group_size]]
-    return median_val, longs, shorts
-
-
-def _near_median_subset(universe: Sequence[ListingRow], *, k: int) -> List[ListingRow]:
+def _pick_invert_extreme(
+    universe: Sequence[ListingRow],
+    *,
+    max_total_entries: int,
+) -> Tuple[List[str], List[str]]:
     """
-    Pick the k tickers closest to the cross-sectional median 24h change (drops the farthest first).
-    Used when capping pick_tickers to DEFAULT_MAX_TICKER_ENTRIES and for research/backtest parity.
+    Selection per user spec (caller must already restrict |7d%| band, liquidity, rank window, etc.):
+      - shorts: up 1h and up 24h; priority: most positive 7d first
+      - longs:  down 1h and down 24h; priority: most negative 7d first
+    No pairing requirement: fill up to max_total_entries across both buckets (can be lopsided).
+    Final inclusion priority is global by abs(7d%), after bucket criteria are satisfied.
     """
-    kk = int(k)
-    if kk <= 0:
-        raise ValueError("near_median subset size must be positive")
-    if kk % 2 != 0:
-        raise ValueError("near_median subset size must be even for long/short split")
-    if len(universe) < kk:
-        raise ValueError(f"Universe too small for near_median pick: need {kk}, got {len(universe)}")
-    median_val = float(statistics.median([r.chg_24h_pct for r in universe]))
-    ordered = sorted(universe, key=lambda r: (abs(float(r.chg_24h_pct) - median_val), -r.oi, r.ticker))
-    return list(ordered[:kk])
+    cap = int(max_total_entries)
+    if cap <= 0:
+        return [], []
+
+    shorts_all = [r for r in universe if float(r.chg_1h_pct) > 0.0 and float(r.chg_24h_pct) > 0.0]
+    longs_all = [r for r in universe if float(r.chg_1h_pct) < 0.0 and float(r.chg_24h_pct) < 0.0]
+
+    # Bucket ranking (kept for tie-break stability inside a bucket).
+    shorts_ranked = sorted(
+        shorts_all,
+        key=lambda r: (float(r.chg_7d_pct), float(r.chg_24h_pct), float(r.chg_1h_pct), r.ticker),
+        reverse=True,
+    )
+    longs_ranked = sorted(
+        longs_all,
+        key=lambda r: (float(r.chg_7d_pct), float(r.chg_24h_pct), float(r.chg_1h_pct), r.ticker),
+    )
+
+    # Global inclusion priority: abs(7d%) desc (ties: abs(24h), abs(1h), then ticker).
+    # We preserve side labels by building a combined list first, then splitting after truncation.
+    combined: List[Tuple[str, ListingRow]] = []
+    combined.extend([("S", r) for r in shorts_ranked])
+    combined.extend([("L", r) for r in longs_ranked])
+    combined.sort(
+        key=lambda x: (abs(float(x[1].chg_7d_pct)), abs(float(x[1].chg_24h_pct)), abs(float(x[1].chg_1h_pct)), x[1].ticker),
+        reverse=True,
+    )
+    picked = combined[:cap]
+
+    longs: List[str] = []
+    shorts: List[str] = []
+    for side, r in picked:
+        if side == "L":
+            longs.append(r.ticker)
+        else:
+            shorts.append(r.ticker)
+    return longs, shorts
+
+
+def _selected_sign_check(
+    universe: Sequence[ListingRow],
+    *,
+    longs: Sequence[str],
+    shorts: Sequence[str],
+) -> Dict[str, Any]:
+    """
+    Verify the selection invariants:
+      - all shorts are up 1h & up 24h
+      - all longs are down 1h & down 24h
+    (No pairing / count-balance invariant is enforced.)
+    """
+    idx: Dict[str, ListingRow] = {r.ticker.upper(): r for r in universe}
+
+    bad_shorts: List[Dict[str, Any]] = []
+    for s in shorts:
+        r = idx.get(str(s).strip().upper())
+        if r is None:
+            bad_shorts.append({"ticker": s, "reason": "missing_from_universe"})
+            continue
+        if not (float(r.chg_1h_pct) > 0.0 and float(r.chg_24h_pct) > 0.0):
+            bad_shorts.append(
+                {
+                    "ticker": r.ticker,
+                    "chg_1h_pct": float(r.chg_1h_pct),
+                    "chg_24h_pct": float(r.chg_24h_pct),
+                    "chg_7d_pct": float(r.chg_7d_pct),
+                }
+            )
+
+    bad_longs: List[Dict[str, Any]] = []
+    for s in longs:
+        r = idx.get(str(s).strip().upper())
+        if r is None:
+            bad_longs.append({"ticker": s, "reason": "missing_from_universe"})
+            continue
+        if not (float(r.chg_1h_pct) < 0.0 and float(r.chg_24h_pct) < 0.0):
+            bad_longs.append(
+                {
+                    "ticker": r.ticker,
+                    "chg_1h_pct": float(r.chg_1h_pct),
+                    "chg_24h_pct": float(r.chg_24h_pct),
+                    "chg_7d_pct": float(r.chg_7d_pct),
+                }
+            )
+
+    return {
+        "ok": (len(bad_shorts) == 0 and len(bad_longs) == 0),
+        "bad_shorts": bad_shorts[:20],
+        "bad_longs": bad_longs[:20],
+        "bad_shorts_n": len(bad_shorts),
+        "bad_longs_n": len(bad_longs),
+    }
 
 
 def pick_tickers(
@@ -360,6 +456,14 @@ def pick_tickers(
 
     exclude_set = {s.strip().upper() for s in _split_csv(DEFAULT_EXCLUDE_CSV) if s and str(s).strip()}
     exclude_set |= set(TICKER_BLACKLIST)
+
+    min_abs_7d: Optional[float] = float(DEFAULT_MIN_ABS_CHG_7D_PCT)
+    if min_abs_7d < 0:
+        min_abs_7d = None
+
+    max_abs_7d: Optional[float] = float(DEFAULT_MAX_ABS_CHG_7D_PCT)
+    if max_abs_7d < 0:
+        max_abs_7d = None
 
     with open(str(listing_json), "r", encoding="utf-8") as f:
         payload = json.load(f)
@@ -380,6 +484,8 @@ def pick_tickers(
     for r in universe:
         if r.ticker in exclude_set:
             continue
+        if not _abs_7d_pct_passes_band(r.chg_7d_pct, min_abs=min_abs_7d, max_abs=max_abs_7d):
+            continue
         if DEFAULT_MIN_VOL_24H is not None:
             if r.vol_24h is None or float(r.vol_24h) < float(DEFAULT_MIN_VOL_24H):
                 continue
@@ -391,19 +497,7 @@ def pick_tickers(
                 continue
         filtered.append(r)
 
-    max_k = int(DEFAULT_MAX_TICKER_ENTRIES)
-    if max_k < 2:
-        raise ValueError("DEFAULT_MAX_TICKER_ENTRIES must be >= 2")
-    if max_k % 2 != 0:
-        max_k -= 1
-
-    filtered_count_before_cap = len(filtered)
-    capped_to_max_entries = False
-    if len(filtered) > max_k:
-        filtered = _near_median_subset(filtered, k=max_k)
-        capped_to_max_entries = True
-
-    # Ensure even count for 50/50 split by dropping the last element (Option A) if needed.
+    # Ensure even count for paired long/short basket by dropping the last element (Option A) if needed.
     filtered_adjusted = False
     if len(filtered) % 2 != 0:
         filtered = filtered[:-1]
@@ -416,20 +510,17 @@ def pick_tickers(
 
     universe = filtered
 
-    median_24h_chg_pct, longs, shorts = _split_long_short_by_24h_change(universe)
+    longs, shorts = _pick_invert_extreme(universe, max_total_entries=int(DEFAULT_MAX_TICKER_ENTRIES))
+    sign_check = _selected_sign_check(universe, longs=longs, shorts=shorts)
 
-    meta: Dict[str, Any] = {
+    meta = {
         "strategy": STRATEGY_NAME,
         "thesis": TRADE_THESIS,
         "listing_json": os.path.abspath(str(listing_json)),
         "marketstate_json": os.path.abspath(str(marketstate_json)) if marketstate_json else None,
-        "mode": "near_median",
-        "pick_mode": "near_median",
+        "mode": "invert_extreme",
+        "pick_mode": "invert_extreme",
         "max_ticker_entries": int(DEFAULT_MAX_TICKER_ENTRIES),
-        "max_entry_cap_effective": int(max_k),
-        "filtered_count_before_cap": int(filtered_count_before_cap),
-        "capped_to_max_entries": bool(capped_to_max_entries),
-        "median_24h_chg_pct": median_24h_chg_pct,
         "top_spec": (f"{start_rank}-{end_rank}" if start_rank != 1 else str(end_rank)),
         "top_n": len(universe),
         "top_spec_adjusted": bool(adjusted),
@@ -439,16 +530,25 @@ def pick_tickers(
         "max_oi_skew": DEFAULT_MAX_OI_SKEW,
         "min_vol_24h": DEFAULT_MIN_VOL_24H,
         "min_oi": DEFAULT_MIN_OI,
+        "min_abs_chg_7d_pct": min_abs_7d,
+        "max_abs_chg_7d_pct": max_abs_7d,
         "long_count": len(longs),
         "short_count": len(shorts),
         "orchestrator_top_n_ignored": True,
+        "selection": {
+            "abs_7d_band": "|7d%| strictly between min and max when set (applied before 1h/24h bucketing and rank)",
+            "short_filter": "chg_1h_pct>0 AND chg_24h_pct>0",
+            "long_filter": "chg_1h_pct<0 AND chg_24h_pct<0",
+            "rank": "global abs(7d) desc after bucket filters (ties: abs(24h), abs(1h)); bucket ordering uses 7d/24h/1h",
+            "sign_check": sign_check,
+        },
     }
     return longs, shorts, meta
 
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
-        description="Strategy: near median (pick near-median 24h movers, then long strong / short weak split)."
+        description="Strategy: invert_extreme (short winners vs long losers by 1h/24h/7d signs)."
     )
     ap.add_argument(
         "--json-path",
@@ -493,6 +593,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MIN_OI if DEFAULT_MIN_OI is not None else -1.0,
         help=f"Skip listings with OI below this (JSON key \"OI\"; default {DEFAULT_MIN_OI}); use negative to disable.",
     )
+    ap.add_argument(
+        "--min-abs-7d-pct",
+        type=float,
+        default=float(DEFAULT_MIN_ABS_CHG_7D_PCT),
+        help=(
+            f"Skip tickers with abs(7d change %) less than or equal to this (default {DEFAULT_MIN_ABS_CHG_7D_PCT:g}, "
+            f"i.e. keep |7d| > this); use negative to disable."
+        ),
+    )
+    ap.add_argument(
+        "--max-abs-7d-pct",
+        type=float,
+        default=float(DEFAULT_MAX_ABS_CHG_7D_PCT),
+        help=(
+            f"Skip tickers with abs(7d change %) greater than or equal to this (default {DEFAULT_MAX_ABS_CHG_7D_PCT:g}, "
+            f"i.e. keep |7d| < this); use negative to disable."
+        ),
+    )
     ap.add_argument("--print-json", action="store_true", help="Print machine-readable JSON output.")
     return ap
 
@@ -509,14 +627,24 @@ def main() -> int:
     if min_oi is not None and min_oi < 0:
         min_oi = None
 
+    min_abs_7d: Optional[float] = float(args.min_abs_7d_pct)
+    if min_abs_7d is not None and min_abs_7d < 0:
+        min_abs_7d = None
+
+    max_abs_7d: Optional[float] = float(args.max_abs_7d_pct)
+    if max_abs_7d is not None and max_abs_7d < 0:
+        max_abs_7d = None
+
     # Apply CLI overrides to module-level behavior for this invocation only.
-    global DEFAULT_TOP_SPEC, DEFAULT_EXCLUDE_CSV, DEFAULT_MAX_OI_SKEW, DEFAULT_MIN_VOL_24H, DEFAULT_MIN_OI, DEFAULT_MAX_TICKER_ENTRIES
+    global DEFAULT_TOP_SPEC, DEFAULT_EXCLUDE_CSV, DEFAULT_MAX_OI_SKEW, DEFAULT_MIN_VOL_24H, DEFAULT_MIN_OI, DEFAULT_MAX_TICKER_ENTRIES, DEFAULT_MIN_ABS_CHG_7D_PCT, DEFAULT_MAX_ABS_CHG_7D_PCT
     DEFAULT_TOP_SPEC = str(args.top_spec)
     DEFAULT_EXCLUDE_CSV = str(args.exclude)
     DEFAULT_MAX_OI_SKEW = max_skew
     DEFAULT_MIN_VOL_24H = min_vol_24h
     DEFAULT_MIN_OI = min_oi
     DEFAULT_MAX_TICKER_ENTRIES = int(args.max_ticker_entries)
+    DEFAULT_MIN_ABS_CHG_7D_PCT = float(min_abs_7d) if min_abs_7d is not None else -1.0
+    DEFAULT_MAX_ABS_CHG_7D_PCT = float(max_abs_7d) if max_abs_7d is not None else -1.0
 
     longs, shorts, meta = pick_tickers(listing_json=str(args.json_path), marketstate_json=None)
     if args.print_json:
@@ -525,7 +653,6 @@ def main() -> int:
         return 0
 
     print(f"Strategy: {STRATEGY_NAME} (top_n={meta.get('top_n')}, exclude={DEFAULT_EXCLUDE_CSV})")
-    print(f"Median 24hChg%: {float(meta['median_24h_chg_pct']):.2f}%")
     print(f"Long [{len(longs)}]: {', '.join(longs)}")
     print(f"Short [{len(shorts)}]: {', '.join(shorts)}")
 
@@ -542,8 +669,16 @@ def main() -> int:
             ranked2 = _ranked_universe(rows, rank_by=DEFAULT_RANK_BY)
             universe2 = _slice_ranks(ranked2, start_rank, end_rank)
             filtered2: List[ListingRow] = []
+            min_a: Optional[float] = float(DEFAULT_MIN_ABS_CHG_7D_PCT)
+            if min_a < 0:
+                min_a = None
+            max_a: Optional[float] = float(DEFAULT_MAX_ABS_CHG_7D_PCT)
+            if max_a < 0:
+                max_a = None
             for r in universe2:
                 if r.ticker in exclude_set:
+                    continue
+                if not _abs_7d_pct_passes_band(r.chg_7d_pct, min_abs=min_a, max_abs=max_a):
                     continue
                 if DEFAULT_MIN_VOL_24H is not None:
                     if r.vol_24h is None or float(r.vol_24h) < float(DEFAULT_MIN_VOL_24H):
@@ -558,7 +693,7 @@ def main() -> int:
             if len(filtered2) % 2 != 0:
                 filtered2 = filtered2[:-1]
             universe2 = filtered2
-            write_strategy_output_txt(
+            write_invert_detail_txt(
                 _default_strategy_output_txt_path(),
                 meta=meta,
                 universe=universe2,
@@ -573,3 +708,238 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
+
+
+# --- Loader: shared strategy_output.txt table + run_strategy() ---
+
+# Strategy key -> submodule name under the `strategy` package (must expose `pick_tickers()`).
+STRATEGIES: Dict[str, str] = {
+    "invert_extreme": "strategy",
+}
+
+# Written when strategies are triggered via run_strategy().
+STRATEGY_OUTPUT_TXT: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "strategy_output.txt")
+
+OUTPUT_COLUMNS: List[str] = [
+    "side",
+    "24hChg%",
+    "mcap_usd",
+    "vol_24h_usd",
+    "oi_usd",
+    "oi_skew",
+    "ann_fundingrate",
+]
+
+
+def _parse_pct_field(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    s = str(v).strip().replace("%", "")
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def _load_listing_index(listing_json: str) -> Dict[str, Dict[str, Any]]:
+    with open(listing_json, "r", encoding="utf-8") as f:
+        doc = json.load(f)
+    listings = doc.get("listings") if isinstance(doc, dict) else None
+    if not isinstance(listings, list):
+        return {}
+    idx: Dict[str, Dict[str, Any]] = {}
+    for d in listings:
+        if not isinstance(d, dict):
+            continue
+        sym = str(d.get("vari_ticker") or "").strip().upper()
+        if not sym:
+            continue
+        idx[sym] = d
+    return idx
+
+
+def _fmt_num(v: Optional[float], *, decimals: int = 2) -> str:
+    if v is None:
+        return "-"
+    try:
+        return f"{float(v):.{decimals}f}"
+    except Exception:
+        return "-"
+
+
+def _fmt_usd(v: Optional[float]) -> str:
+    if v is None:
+        return "-"
+    try:
+        x = float(v)
+    except Exception:
+        return "-"
+    if x >= 1_000_000_000:
+        return f"${x/1_000_000_000:.2f}B"
+    if x >= 1_000_000:
+        return f"${x/1_000_000:.2f}M"
+    if x >= 1_000:
+        return f"${x/1_000:.2f}K"
+    return f"${x:.0f}"
+
+
+def _row_for_symbol(
+    sym: str,
+    *,
+    side: str,
+    listing: Optional[Dict[str, Any]],
+) -> Dict[str, str]:
+    d = listing or {}
+    chg24 = _parse_pct_field(d.get("price_change_24h_pct"))
+    mcap = _as_float(d.get("market_cap"))
+    vol = _as_float(d.get("vol_24h") if "vol_24h" in d else d.get("volume_24h"))
+    oi = _as_float(d.get("OI") if "OI" in d else d.get("open_interest"))
+    skew = _as_float(d.get("OI Skew"))
+    afr = _as_float(d.get("ann_fundingrate"))
+
+    # Map supported columns to display strings.
+    out: Dict[str, str] = {
+        "Symbol": sym,
+        "side": side,
+        "24hChg%": (f"{chg24:.2f}%" if chg24 is not None else "-"),
+        "mcap_usd": _fmt_usd(mcap),
+        "vol_24h_usd": _fmt_usd(vol),
+        "oi_usd": _fmt_usd(oi),
+        "oi_skew": _fmt_num(skew, decimals=3),
+        "ann_fundingrate": _fmt_num(afr, decimals=3),
+    }
+    return out
+
+
+def write_strategy_output_txt(
+    *,
+    strategy_key: str,
+    meta: Dict[str, Any],
+    listing_json: str,
+    longs: Iterable[str],
+    shorts: Iterable[str],
+) -> None:
+    # Also pull the listing's own fetched_at (SGT string) for the header.
+    fetched_at_sgt: Optional[str] = None
+    try:
+        with open(listing_json, "r", encoding="utf-8") as f:
+            doc = json.load(f)
+        if isinstance(doc, dict):
+            fa = doc.get("fetched_at")
+            if isinstance(fa, str) and fa.strip():
+                fetched_at_sgt = fa.strip()
+    except Exception:
+        fetched_at_sgt = None
+
+    idx = _load_listing_index(listing_json)
+
+    rows: List[Dict[str, str]] = []
+    for s in [str(x).strip().upper() for x in longs if str(x).strip()]:
+        rows.append(_row_for_symbol(s, side="Long", listing=idx.get(s)))
+    for s in [str(x).strip().upper() for x in shorts if str(x).strip()]:
+        rows.append(_row_for_symbol(s, side="Short", listing=idx.get(s)))
+
+    cols = ["Symbol"] + [c for c in OUTPUT_COLUMNS]
+    # Compute widths
+    widths: Dict[str, int] = {c: len(c) for c in cols}
+    for r in rows:
+        for c in cols:
+            widths[c] = max(widths[c], len(str(r.get(c, "-"))))
+
+    def line(parts: List[str]) -> str:
+        out_parts: List[str] = []
+        for i in range(len(cols)):
+            cell = str(parts[i])
+            # Right-align numeric-ish columns from the 3rd column onward.
+            # cols[0]=Symbol, cols[1]=side, cols[2:]=criteria columns.
+            if i >= 2:
+                out_parts.append(cell.rjust(widths[cols[i]]))
+            else:
+                out_parts.append(cell.ljust(widths[cols[i]]))
+        return "  ".join(out_parts)
+
+    header_lines: List[str] = [
+        f"Strategy: {meta.get('strategy') or strategy_key}",
+        f"listing_json: {os.path.abspath(str(listing_json))}",
+        f"fetched_at: {fetched_at_sgt or '-'}",
+    ]
+    thesis = meta.get("thesis") if isinstance(meta, dict) else None
+    if isinstance(thesis, str) and thesis.strip():
+        # Break thesis into one sentence per line for readability.
+        parts = [p.strip() for p in thesis.strip().split(". ") if p.strip()]
+        if len(parts) <= 1:
+            header_lines.append(thesis.strip())
+        else:
+            for i, p in enumerate(parts):
+                header_lines.append(p if p.endswith(".") else (p + "."))
+
+    body: List[str] = []
+    body.extend(header_lines)
+    body.append("")
+    if not rows:
+        body.append("(no symbols)")
+    else:
+        body.append(line(cols))
+        body.append(line(["-" * widths[c] for c in cols]))
+        for r in rows:
+            body.append(line([str(r.get(c, "-")) for c in cols]))
+
+    with open(STRATEGY_OUTPUT_TXT, "w", encoding="utf-8") as f:
+        f.write("\n".join(body) + "\n")
+
+
+def resolve_strategy_module_name(key: str) -> str:
+    k = (key or "").strip().lower()
+    if not k:
+        raise ValueError("strategy key is empty")
+    if k.endswith(".py"):
+        k = k[:-3]
+    mod = STRATEGIES.get(k)
+    if mod:
+        return mod
+    # Allow passing a module name directly (must exist under strategy/).
+    return k
+
+
+def load_strategy_module(key: str):
+    mod_name = resolve_strategy_module_name(key)
+    return importlib.import_module(f"strategy.{mod_name}")
+
+
+def run_strategy(
+    *,
+    strategy_key: str,
+    listing_json: str,
+    marketstate_json: Optional[str],
+    top_n: int,
+    write_output_txt: bool = True,
+) -> Tuple[List[str], List[str], Dict[str, Any]]:
+    mod = load_strategy_module(strategy_key)
+    if not hasattr(mod, "pick_tickers"):
+        raise AttributeError(
+            f"Strategy module {mod.__name__!r} missing required function pick_tickers(listing_json, marketstate_json)"
+        )
+    longs, shorts, meta = mod.pick_tickers(
+        listing_json=listing_json,
+        marketstate_json=marketstate_json,
+        top_n=int(top_n),
+    )
+    if not isinstance(meta, dict):
+        meta = {"strategy": str(getattr(mod, "STRATEGY_NAME", mod.__name__))}
+    meta.setdefault("strategy", str(getattr(mod, "STRATEGY_NAME", mod.__name__)))
+    meta.setdefault("long_count", len(longs))
+    meta.setdefault("short_count", len(shorts))
+
+    if write_output_txt:
+        try:
+            write_strategy_output_txt(
+                strategy_key=strategy_key,
+                meta=meta,
+                listing_json=listing_json,
+                longs=longs,
+                shorts=shorts,
+            )
+        except OSError:
+            pass
+
+    return list(longs), list(shorts), meta

@@ -15,7 +15,7 @@ Run from the Varibot directory (or any cwd; this file fixes imports):
 
 Dependencies: repo layout
   ../Vari Listings/listingtable.py, marketstate.py, *.json
-  ../strategy/ (strategy modules), ./validate_vr_token.py, check_portfolio_stats.py,
+  ../strategy/strategy.py, ./validate_vr_token.py, check_portfolio_stats.py,
   ./closeallpositions.py, ./multimarketorder.py (or *_cadence_1s.py)
 """
 
@@ -129,8 +129,8 @@ from multimarketorder import (  # noqa: E402
     USD_NOTIONAL_ROUND_STEP,
     _order_response_rejected,
 )
-from strategy import strategies as strategies_mod  # noqa: E402
-from strategy.invert_extreme import (  # noqa: E402
+import strategy.strategy as strategies_mod  # noqa: E402
+from strategy.strategy import (  # noqa: E402
     DEFAULT_MAX_TICKER_ENTRIES as INVERT_EXTREME_MAX_TICKER_ENTRIES,
 )
 from portfolio_manager_pairs import (
@@ -2005,7 +2005,7 @@ def one_cycle(
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Varibot flowchart orchestrator (see VariBotFlowchart.jpg).")
+    p = argparse.ArgumentParser(description="Varibot flowchart orchestrator.")
     p.add_argument(
         "--live",
         action="store_true",
@@ -2022,7 +2022,7 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=PM_PAIR_TP_THRESHOLD_PCT_DEFAULT,
         help=(
-            "Portfolio Manager: combined uPnL% threshold vs combined value for pair closes "
+            "Portfolio Manager: combined uPnL%% threshold vs combined value for pair closes "
             f"(default {PM_PAIR_TP_THRESHOLD_PCT_DEFAULT:g})."
         ),
     )
@@ -2084,7 +2084,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--strategy",
         default=Strategy,
-        help=f"Strategy key to use when flat (default {Strategy!r}; see strategy/strategies.py).",
+        help=f"Strategy key to use when flat (default {Strategy!r}; see strategy/strategy.py).",
     )
     p.add_argument("--listing-timeout-s", type=float, default=120.0)
     p.add_argument("--marketstate-timeout-s", type=float, default=90.0)
