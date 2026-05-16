@@ -982,21 +982,47 @@ def _fetch_venue_mark_for_asset(ep: VariEndpoints, *, asset: str) -> float:
     raise RuntimeError(f"Could not read a positive mark for {sym} from indicative quote.")
 
 
+def _grid_listing_snapshot_assets(*, asset_hint: Optional[str] = None) -> List[str]:
+    """Tickers to include in ``strategy_listing_snapshot.json`` (``GRID_TRADING_TICKERS`` keys)."""
+    tickers = grid_trading_ticker_band_pcts()
+    assets = [str(k).strip().upper() for k in tickers.keys() if str(k).strip()]
+    if not assets:
+        assets = [(asset_hint or os.getenv("GRID_ASSET") or "BTC").strip().upper()]
+    if asset_hint:
+        hint = str(asset_hint).strip().upper()
+        if hint and hint not in assets:
+            assets.append(hint)
+    return assets
+
+
 def _refresh_strategy_listing_snapshot_from_venue(
     ep: VariEndpoints,
     *,
     asset_hint: Optional[str] = None,
 ) -> str:
     """
-    Write ``strategy_listing_snapshot.json`` with one row: ``GRID_ASSET`` (or hint) ``mark_price``
-    from POST /api/quotes/indicative (qty probe). No CoinGecko / Vari Listings.
+    Write ``strategy_listing_snapshot.json`` with one row per grid ticker from
+    ``grid_trading_ticker_band_pcts()`` (``GRID_TRADING_TICKERS`` in gridstrat.py), each
+    ``mark_price`` from POST /api/quotes/indicative. No CoinGecko / Vari Listings.
     """
-    asset = (asset_hint or os.getenv("GRID_ASSET") or "BTC").strip().upper()
-    mark = _fetch_venue_mark_for_asset(ep, asset=asset)
+    assets = _grid_listing_snapshot_assets(asset_hint=asset_hint)
+    listings: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    for asset in assets:
+        try:
+            mark = _fetch_venue_mark_for_asset(ep, asset=asset)
+            listings.append({"vari_ticker": asset, "mark_price": float(mark)})
+        except Exception as e:
+            msg = f"{asset}: {type(e).__name__}: {e}"
+            errors.append(msg)
+            _log(f"strategy listing: indicative mark failed ({msg})")
+    if not listings:
+        detail = "; ".join(errors) if errors else f"assets={assets!r}"
+        raise RuntimeError(f"Could not fetch any grid ticker marks for listing snapshot ({detail})")
     doc: Dict[str, Any] = {
         "fetched_at_unix": int(time.time()),
         "source": "varibot_indicative",
-        "listings": [{"vari_ticker": asset, "mark_price": float(mark)}],
+        "listings": listings,
     }
     out_path = _STRATEGY_LISTING_SNAPSHOT_JSON
     tmp = out_path + ".tmp"
