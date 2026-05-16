@@ -31,7 +31,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from zoneinfo import ZoneInfo
 
 # Imports assume sibling scripts + variationalbot live under this directory.
@@ -44,7 +44,7 @@ _DEFAULT_MARKETSTATE_JSON = _STRATEGY_MARKETSTATE_JSON
 _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json")
 
 # Check interval (minutes) between cycles/sessions when --period-min is not provided.
-CHECK_INTERVAL_MIN: int = 15
+CHECK_INTERVAL_MIN: int = 2
 
 # --- User-tunable settings (surface here for quick edits) ---
 #
@@ -56,6 +56,7 @@ PM_REFILL_DEFAULT_ON: bool = True
 
 # Grid (``strategy/gridstrat``): after each ``grid_mode`` tick, write ``Varibot/gridlimits.json`` via
 # ``sync_gridlimits_json`` for ``grid_limits_reconcile``. Set ``VARIBOT_SYNC_GRIDLIMITS_JSON=0`` to skip.
+# Live sim sync: ``VARIBOT_GRID_LIMITS_DRIFT_RECONCILE=1`` cancels stale limits and posts missing rungs.
 
 # Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
 # then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).
@@ -120,7 +121,10 @@ if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
 from check_portfolio_stats import _build_out_dict  # noqa: E402
-from grid_limits_reconcile import sync_gridlimits_json  # noqa: E402
+from grid_limits_reconcile import (  # noqa: E402
+    fetch_pending_limit_keys_for_asset,
+    run_grid_limits_bootstrap,
+)
 from positions import _instrument_label  # noqa: E402
 from validate_vr_token import validate_vr_token  # noqa: E402
 from variationalbot.config import load_config  # noqa: E402
@@ -954,6 +958,28 @@ def _ensure_strategy_marketstate_json(path: Optional[str] = None) -> str:
     return out_path
 
 
+def _fetch_venue_mark_for_asset(ep: VariEndpoints, *, asset: str) -> float:
+    """Live mark from POST /api/quotes/indicative (not cached listing files)."""
+    sym = str(asset).strip().upper()
+    inst = Instrument(
+        instrument_type="perpetual_future",
+        underlying=sym,
+        funding_interval_s=3600,
+        settlement_asset="USDC",
+    )
+    q = ep.quote_indicative_simple(instrument=inst, qty=1.0)
+    if isinstance(q, dict):
+        for k in ("mark_price", "index_price", "ask", "bid"):
+            if k in q and q[k] is not None:
+                try:
+                    mf = float(q[k])
+                    if mf > 0:
+                        return mf
+                except (TypeError, ValueError):
+                    continue
+    raise RuntimeError(f"Could not read a positive mark for {sym} from indicative quote.")
+
+
 def _refresh_strategy_listing_snapshot_from_venue(
     ep: VariEndpoints,
     *,
@@ -964,26 +990,7 @@ def _refresh_strategy_listing_snapshot_from_venue(
     from POST /api/quotes/indicative (qty probe). No CoinGecko / Vari Listings.
     """
     asset = (asset_hint or os.getenv("GRID_ASSET") or "BTC").strip().upper()
-    inst = Instrument(
-        instrument_type="perpetual_future",
-        underlying=asset,
-        funding_interval_s=3600,
-        settlement_asset="USDC",
-    )
-    q = ep.quote_indicative_simple(instrument=inst, qty=1.0)
-    mark: Optional[float] = None
-    if isinstance(q, dict):
-        for k in ("mark_price", "index_price", "ask", "bid"):
-            if k in q and q[k] is not None:
-                try:
-                    mf = float(q[k])
-                    if mf > 0:
-                        mark = mf
-                        break
-                except (TypeError, ValueError):
-                    continue
-    if mark is None or mark <= 0:
-        raise RuntimeError(f"Could not read a positive mark for {asset} from indicative quote.")
+    mark = _fetch_venue_mark_for_asset(ep, asset=asset)
     doc: Dict[str, Any] = {
         "fetched_at_unix": int(time.time()),
         "source": "varibot_indicative",
@@ -1015,6 +1022,9 @@ def run_strategy_pick_tickers(
     listing_json: str,
     top_n: int,
     args: Optional[argparse.Namespace] = None,
+    venue_pending_keys: Optional[Set[Tuple[str, str]]] = None,
+    venue_mark: Optional[float] = None,
+    account_flat: bool = False,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
     ms_path = _resolve_marketstate_json_path(args=args)
     _ensure_strategy_marketstate_json(ms_path)
@@ -1029,7 +1039,28 @@ def run_strategy_pick_tickers(
         marketstate_json=ms_path,
         top_n=int(top_n),
         write_output_txt=True,
+        venue_pending_keys=venue_pending_keys,
+        venue_mark=venue_mark,
+        account_flat=bool(account_flat),
     )
+
+
+def _fetch_venue_pending_for_grid(ep: VariEndpoints) -> Optional[Set[Tuple[str, str]]]:
+    """Pending limit keys for GRID_ASSET (live paired_limit venue sync)."""
+    asset = str(os.environ.get("GRID_ASSET") or "BTC").strip().upper()
+    try:
+        return fetch_pending_limit_keys_for_asset(ep, asset=asset)
+    except Exception as e:
+        _log(f"gridlimits: pending fetch before strategy failed ({type(e).__name__}: {e})")
+        return None
+
+
+def _log_gridstrat_paired_step(meta: Dict[str, Any], *, prefix: str) -> None:
+    logs = meta.get("grid_paired_step_logs")
+    if not isinstance(logs, list) or not logs:
+        return
+    for line in logs[-8:]:
+        _log(f"{prefix}: {line}")
 
 
 def _top_n_for_strategy(strategy_key: str) -> int:
@@ -1162,15 +1193,100 @@ def run_multimarket_asset_side(
     return _run_script(script, cwd=_VARIBOT_DIR, args=cmd_args, timeout_s=None)
 
 
-def _sync_gridlimits_json_if_grid(meta: Dict[str, Any]) -> None:
-    """Write ``gridlimits.json`` from strategy meta when ``grid_mode`` (paired or legacy)."""
+def _gridlimits_sync_enabled() -> bool:
+    return (os.environ.get("VARIBOT_SYNC_GRIDLIMITS_JSON") or "").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _grid_limits_place_limit_fn(
+    ep: VariEndpoints,
+    args: argparse.Namespace,
+) -> Callable[..., int]:
+    slip = float(_resolve_max_slippage())
+
+    def place_limit(
+        asset: str,
+        side: str,
+        usd: float,
+        px: float,
+        use_mark: bool,
+        lq: Optional[str],
+    ) -> int:
+        sym = str(asset).strip().upper()
+        sd = str(side).strip().lower()
+        if sd not in ("buy", "sell"):
+            return 1
+        inst = Instrument(
+            instrument_type="perpetual_future",
+            underlying=sym,
+            funding_interval_s=3600,
+            settlement_asset="USDC",
+        )
+        lev_raw = (os.environ.get("GRID_LEVERAGE") or "").strip()
+        if lev_raw:
+            try:
+                ep.set_leverage(asset=sym, leverage=int(float(lev_raw)))
+            except Exception as e:
+                _log(f"gridlimits reconcile: set_leverage failed ({type(e).__name__}: {e})")
+        try:
+            if lq is not None and str(lq).strip():
+                raw_q = float(str(lq).strip())
+            else:
+                raw_q = float(usd) / float(px) if float(px) > 0 else 0.0
+            qty_str = ep.normalize_grid_limit_qty(
+                instrument=inst,
+                side=sd,
+                qty_raw=raw_q,
+            )
+            resp = ep.place_order_limit(
+                instrument=inst,
+                side=sd,
+                limit_price=float(px),
+                qty=qty_str,
+                slippage_limit=float(slip),
+                use_mark_price=bool(use_mark),
+                is_reduce_only=False,
+                is_auto_resize=False,
+            )
+        except Exception as e:
+            _log(f"gridlimits reconcile: place_order_limit failed ({type(e).__name__}: {e})")
+            return 1
+        if _order_response_rejected(resp):
+            _log(f"gridlimits reconcile: venue rejected limit response={str(resp)[:500]!r}")
+            return 1
+        return 0
+
+    return place_limit
+
+
+def _run_grid_limits_bootstrap_if_grid(
+    *,
+    ep: VariEndpoints,
+    meta: Dict[str, Any],
+    args: argparse.Namespace,
+    cycle_index: int,
+    has_positions: bool,
+) -> None:
     if not meta.get("grid_mode"):
         return
-    if (os.environ.get("VARIBOT_SYNC_GRIDLIMITS_JSON") or "").strip().lower() in ("0", "false", "no", "off"):
+    if not _gridlimits_sync_enabled():
+        _log("step: VARIBOT_SYNC_GRIDLIMITS_JSON=0 — skip gridlimits bootstrap (no template sync / reconcile)")
         return
-    p = sync_gridlimits_json(meta=meta, varibot_dir=_VARIBOT_DIR)
-    if p:
-        _log(f"step: synced gridlimits.json -> {p}")
+    run_grid_limits_bootstrap(
+        ep=ep,
+        meta=meta,
+        varibot_dir=_VARIBOT_DIR,
+        cycle_index=int(cycle_index),
+        has_positions=bool(has_positions),
+        log=_log,
+        place_limit=_grid_limits_place_limit_fn(ep, args),
+        live=bool(args.live),
+        multi_script=str(args.multi_script),
+    )
 
 
 def _execute_grid_market_events(meta: Dict[str, Any], *, args: argparse.Namespace) -> None:
@@ -2035,14 +2151,28 @@ def one_cycle(
         _log("step: refreshing strategy feed (indicative mark → Varibot JSON)...")
         listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
         top_n = _top_n_for_strategy(strat_key)
+        grid_asset = str(os.environ.get("GRID_ASSET") or "BTC").strip().upper()
+        venue_mark_live: Optional[float] = None
+        venue_pending = None
+        if bool(args.live) and _is_grid_like_strategy(strat_key):
+            venue_mark_live = _fetch_venue_mark_for_asset(ep, asset=grid_asset)
+            _log(f"step: venue indicative mark {grid_asset}={venue_mark_live:g}")
+            venue_pending = _fetch_venue_pending_for_grid(ep)
         longs, shorts, meta = run_strategy_pick_tickers(
             strategy_key=strat_key,
             listing_json=listing_json,
             top_n=top_n,
             args=args,
+            venue_pending_keys=venue_pending,
+            venue_mark=venue_mark_live,
+            account_flat=True,
         )
         _log("step: strategy feed ready")
         _log(f"step: strategy finished (strategy={meta.get('strategy')}, longs={len(longs)}, shorts={len(shorts)})")
+        if meta.get("grid_fresh_flat_start"):
+            _log("gridstrat: fresh flat session — symmetric paired ladder reinit at current mark")
+        if meta.get("grid_paired_limit_mode"):
+            _log_gridstrat_paired_step(meta, prefix="gridstrat")
 
         if _should_write_strategy_output():
             out_path = os.path.join(_VARIBOT_DIR, "strategy_output.json")
@@ -2066,7 +2196,10 @@ def one_cycle(
             if meta.get("grid_paired_limit_mode"):
                 n_b = len(meta.get("grid_buy_rungs") or [])
                 n_s = len(meta.get("grid_sell_rungs") or [])
-                _log(f"step: gridstrat paired_limit open_rungs buy={n_b} sell={n_s}")
+                _log(
+                    f"step: gridstrat paired_limit open_rungs buy={n_b} sell={n_s} "
+                    f"mark={meta.get('grid_mark')!r} source={meta.get('grid_mark_source')!r}"
+                )
             if meta.get("grid_bounds_explicit"):
                 _log(
                     f"step: gridstrat bounds explicit lower={meta.get('grid_lower')} "
@@ -2077,8 +2210,14 @@ def one_cycle(
                     f"step: gridstrat bounds ±{meta.get('grid_band_pct')}% (pinned) "
                     f"lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
                 )
+            _run_grid_limits_bootstrap_if_grid(
+                ep=ep,
+                meta=meta,
+                args=args,
+                cycle_index=cycle_index,
+                has_positions=False,
+            )
             _execute_grid_market_events(meta, args=args)
-            _sync_gridlimits_json_if_grid(meta)
             return False
 
         if not longs and not shorts:
@@ -2129,22 +2268,40 @@ def one_cycle(
         try:
             listing_grid, _ = _prepare_varibot_strategy_feed(ep, args=args)
             top_n_g = _top_n_for_strategy(strat_key)
+            grid_asset = str(os.environ.get("GRID_ASSET") or "BTC").strip().upper()
+            venue_mark_live = None
+            venue_pending = None
+            if bool(args.live):
+                venue_mark_live = _fetch_venue_mark_for_asset(ep, asset=grid_asset)
+                venue_pending = _fetch_venue_pending_for_grid(ep)
             _, _, meta_g = run_strategy_pick_tickers(
                 strategy_key=strat_key,
                 listing_json=listing_grid,
                 top_n=top_n_g,
                 args=args,
+                venue_pending_keys=venue_pending,
+                venue_mark=venue_mark_live,
+                account_flat=False,
             )
             if meta_g.get("grid_mode"):
                 n_ev = len(meta_g.get("grid_market_events") or [])
                 if n_ev:
                     _log(f"gridstrat (open positions): events={n_ev}")
+                if meta_g.get("grid_fresh_flat_start"):
+                    _log("gridstrat (open positions): fresh flat reinit skipped — has position")
                 if meta_g.get("grid_paired_limit_mode"):
                     n_b = len(meta_g.get("grid_buy_rungs") or [])
                     n_s = len(meta_g.get("grid_sell_rungs") or [])
                     _log(f"gridstrat (open positions): paired_limit rungs buy={n_b} sell={n_s}")
+                    _log_gridstrat_paired_step(meta_g, prefix="gridstrat")
+                _run_grid_limits_bootstrap_if_grid(
+                    ep=ep,
+                    meta=meta_g,
+                    args=args,
+                    cycle_index=cycle_index,
+                    has_positions=True,
+                )
                 _execute_grid_market_events(meta_g, args=args)
-                _sync_gridlimits_json_if_grid(meta_g)
                 return False
         except Exception as e:
             _log(f"WARNING: gridstrat cycle with open positions ({type(e).__name__}: {e})")

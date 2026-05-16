@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 from decimal import Decimal, ROUND_DOWN
+from urllib.parse import urlencode
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
@@ -30,6 +31,20 @@ def format_qty_for_indicative_api(qty: float, *, significant: Optional[int] = No
     if not math.isfinite(qf) or qf == 0.0:
         return "0"
     return format(qf, f".{int(n)}g")
+
+
+def grid_limit_qty_sigfigs() -> int:
+    """Significant figures for grid limit ``qty`` strings (default 4)."""
+    raw = (os.environ.get("GRID_LIMIT_QTY_SIGFIGS") or "4").strip()
+    try:
+        return max(1, min(18, int(raw)))
+    except ValueError:
+        return 4
+
+
+def format_qty_for_grid_limit(qty: float) -> str:
+    """Format base-asset qty for POST /api/orders/new/limit (grid / reconcile path)."""
+    return format_qty_for_indicative_api(qty, significant=grid_limit_qty_sigfigs())
 
 
 def align_order_qty_to_quote_limits(*, q1: Dict[str, Any], side: str, qty_raw: float) -> float:
@@ -91,6 +106,14 @@ class VariEndpoints:
 
     def get_orders_v2(self) -> Any:
         return self.client.request_json("GET", "/api/orders/v2")
+
+    def get_orders_v2_query(self, params: Dict[str, Any]) -> Any:
+        """GET /api/orders/v2 with query params (pagination, instrument, status, date window)."""
+        q = {str(k): str(v) for k, v in params.items() if v is not None}
+        path = "/api/orders/v2"
+        if q:
+            path = f"{path}?{urlencode(q)}"
+        return self.client.request_json("GET", path)
 
     def cancel_order_rfq(self, *, rfq_id: str) -> Any:
         """POST /api/orders/cancel — Omni uses ``{"rfq_id": "<id>"}`` for resting / RFQ flow."""
@@ -222,6 +245,79 @@ class VariEndpoints:
         resp = self.client.request_json("POST", "/api/orders/new/market", json_body=body)
         if not isinstance(resp, dict):
             # sometimes APIs return text; preserve for debugging
+            return {"raw": resp}
+        return resp
+
+    def qty_string_for_usd_at_price(
+        self,
+        *,
+        instrument: Instrument,
+        side: str,
+        usd_notional: float,
+        price: float,
+        price_hint_qty: float = 1.0,
+    ) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
+        """
+        Size a limit leg: convert USD notional to an indicative qty string at the given limit price
+        (same idea as multimarket grid / ``multimarketorder_simple``).
+        """
+        px = float(price)
+        if not math.isfinite(px) or px <= 0:
+            raise ValueError("qty_string_for_usd_at_price: invalid limit price")
+        q1 = self.quote_indicative_simple(instrument=instrument, qty=float(price_hint_qty))
+        qty_raw = float(usd_notional) / px
+        qty = align_order_qty_to_quote_limits(q1=q1, side=side, qty_raw=qty_raw)
+        q2 = self.quote_indicative_simple(instrument=instrument, qty=qty)
+        return format_qty_for_indicative_api(qty), q1, q2
+
+    def normalize_grid_limit_qty(
+        self,
+        *,
+        instrument: Instrument,
+        side: str,
+        qty_raw: float,
+        price_hint_qty: float = 1.0,
+    ) -> str:
+        """
+        Floor to venue ``min_qty_tick`` from indicative quote, then format with
+        ``GRID_LIMIT_QTY_SIGFIGS`` (default 4).
+        """
+        q1 = self.quote_indicative_simple(instrument=instrument, qty=float(price_hint_qty))
+        qty = align_order_qty_to_quote_limits(q1=q1, side=side, qty_raw=float(qty_raw))
+        return format_qty_for_grid_limit(qty)
+
+    def place_order_limit(
+        self,
+        *,
+        instrument: Instrument,
+        side: str,
+        limit_price: float,
+        qty: str,
+        slippage_limit: float,
+        use_mark_price: bool = False,
+        is_reduce_only: bool = False,
+        is_auto_resize: bool = False,
+    ) -> Dict[str, Any]:
+        """POST /api/orders/new/limit (Omni RFQ flow)."""
+        lp = round(float(limit_price), 2)
+        body: Dict[str, Any] = {
+            "order_type": "limit",
+            "limit_price": f"{lp:.2f}",
+            "side": str(side).strip().lower(),
+            "instrument": {
+                "instrument_type": instrument.instrument_type,
+                "underlying": instrument.underlying,
+                "funding_interval_s": int(instrument.funding_interval_s),
+                "settlement_asset": instrument.settlement_asset,
+            },
+            "qty": str(qty).strip(),
+            "slippage_limit": str(float(slippage_limit)),
+            "use_mark_price": bool(use_mark_price),
+            "is_reduce_only": bool(is_reduce_only),
+            "is_auto_resize": bool(is_auto_resize),
+        }
+        resp = self.client.request_json("POST", "/api/orders/new/limit", json_body=body)
+        if not isinstance(resp, dict):
             return {"raw": resp}
         return resp
 
