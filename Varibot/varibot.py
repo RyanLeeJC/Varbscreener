@@ -5,7 +5,8 @@ Varibot orchestrator — implements the VariBotFlowchart workflow:
 
   Auth (validate_vr_token) -> every T minutes: portfolio snapshot ->
   if positions -> PM / managers (see strategy); portfolio-wide TP close-all removed ->
-  if flat -> venue listing snapshot -> strategy -> multimarketorder
+  if flat (or gridstrat with GRIDSTRAT_IGNORE_VENUE_POSITIONS) -> listing -> strategy -> grid limits
+  elif flat (non-grid) -> venue listing snapshot -> strategy -> multimarketorder
 
 Run from the Varibot directory (or any cwd; this file fixes imports):
 
@@ -56,7 +57,8 @@ PM_REFILL_DEFAULT_ON: bool = True
 
 # Grid (``strategy/gridstrat``): after each ``grid_mode`` tick, write ``Varibot/gridlimits.json`` via
 # ``sync_gridlimits_json`` for ``grid_limits_reconcile``. Set ``VARIBOT_SYNC_GRIDLIMITS_JSON=0`` to skip.
-# Live sim sync: ``VARIBOT_GRID_LIMITS_DRIFT_RECONCILE=1`` cancels stale limits and posts missing rungs.
+# Live limit reconcile defaults ON (``grid_limits_reconcile.GRID_LIMITS_RECONCILE_DEFAULT``); no Railway env
+# required. Set ``VARIBOT_GRID_LIMITS_RECONCILE=0`` to disable. Drift cancel/refill auto-on with paired_limit.
 
 # Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
 # then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).
@@ -144,6 +146,7 @@ import strategy.gridstrat as strategies_mod  # noqa: E402
 from strategy.gridstrat import (  # noqa: E402
     DEFAULT_MAX_TICKER_ENTRIES as INVERT_EXTREME_MAX_TICKER_ENTRIES,
     grid_trading_ticker_band_pcts,
+    gridstrat_ignore_venue_positions,
 )
 from portfolio_manager_pairs import (
     PAIR_TP_THRESHOLD_PCT_DEFAULT as PM_PAIR_TP_THRESHOLD_PCT_DEFAULT,
@@ -1096,6 +1099,7 @@ def _grid_venue_inputs_for_cycle(
     *,
     args: argparse.Namespace,
     positions_raw: Any,
+    ignore_venue_positions: bool = False,
 ) -> Tuple[Dict[str, float], Dict[str, Set[Tuple[str, str]]], Dict[str, bool]]:
     """Per-ticker venue marks, pending limit keys, and flat flags for ``pick_tickers``."""
     marks: Dict[str, float] = {}
@@ -1111,8 +1115,12 @@ def _grid_venue_inputs_for_cycle(
             pending_by[asset] = pk if pk is not None else set()
         else:
             pending_by[asset] = set()
-        pos_s = _position_qty_summary(positions_raw or {}, asset=asset)
-        flat_by[asset] = not bool(pos_s.get("has_position")) and len(pending_by.get(asset) or ()) == 0
+        pending_empty = len(pending_by.get(asset) or ()) == 0
+        if ignore_venue_positions:
+            flat_by[asset] = pending_empty
+        else:
+            pos_s = _position_qty_summary(positions_raw or {}, asset=asset)
+            flat_by[asset] = not bool(pos_s.get("has_position")) and pending_empty
     return marks, pending_by, flat_by
 
 
@@ -1249,6 +1257,13 @@ def run_multimarket(
 def _is_grid_like_strategy(key: str) -> bool:
     """Strategy keys that use strategy/gridstrat.py (mark-ladder grid)."""
     return _strategy_key_normalized(key) in ("gridstrat", "vari_grid", "invert_extreme")
+
+
+def _gridstrat_ignores_venue_positions(strat_key: str) -> bool:
+    """Grid-only: treat venue positions as irrelevant for orchestration (see gridstrat env)."""
+    if not gridstrat_ignore_venue_positions():
+        return False
+    return _strategy_key_normalized(strat_key) in ("gridstrat", "vari_grid")
 
 
 def run_multimarket_asset_side(
@@ -2249,10 +2264,17 @@ def one_cycle(
     _log(_fmt_portfolio_snapshot_line(out))
 
     has_pos = has_open_positions(raw_pos)
+    grid_ignore_pos = _gridstrat_ignores_venue_positions(strat_key)
 
-    if not has_pos:
+    if not has_pos or grid_ignore_pos:
         _clear_position_latch()
-        _log("No open positions -> venue listing snapshot -> strategy -> multimarket")
+        if grid_ignore_pos and has_pos:
+            _log(
+                "gridstrat: ignoring venue open positions (GRIDSTRAT_IGNORE_VENUE_POSITIONS) — "
+                "flat / fresh-book grid path"
+            )
+        else:
+            _log("No open positions -> venue listing snapshot -> strategy -> multimarket")
         _log("step: refreshing strategy feed (indicative mark → Varibot JSON)...")
         listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
         top_n = _top_n_for_strategy(strat_key)
@@ -2261,7 +2283,10 @@ def one_cycle(
         flat_by: Dict[str, bool] = {}
         if _is_grid_like_strategy(strat_key):
             marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
-                ep, args=args, positions_raw=raw_pos
+                ep,
+                args=args,
+                positions_raw=raw_pos,
+                ignore_venue_positions=grid_ignore_pos,
             )
             for sym, mk in sorted(marks_by.items()):
                 _log(f"step: venue indicative mark {sym}={mk:g}")
@@ -2308,7 +2333,7 @@ def one_cycle(
                 meta=meta,
                 args=args,
                 cycle_index=cycle_index,
-                has_positions=False,
+                has_positions=bool(has_pos and not grid_ignore_pos),
             )
             _execute_grid_market_events(meta, args=args)
             return False
@@ -2357,12 +2382,15 @@ def one_cycle(
     # --- have positions ---
     strat_norm = _strategy_key_normalized(strat_key)
 
-    if _is_grid_like_strategy(strat_key):
+    if _is_grid_like_strategy(strat_key) and not grid_ignore_pos:
         try:
             listing_grid, _ = _prepare_varibot_strategy_feed(ep, args=args)
             top_n_g = _top_n_for_strategy(strat_key)
             marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
-                ep, args=args, positions_raw=raw_pos
+                ep,
+                args=args,
+                positions_raw=raw_pos,
+                ignore_venue_positions=False,
             )
             _, _, meta_g = run_strategy_pick_tickers(
                 strategy_key=strat_key,

@@ -14,8 +14,10 @@ from variationalbot.vari.endpoints import VariEndpoints
 DEFAULT_GRID_LIMITS_PATH_ENV: str = "GRID_LIMITS_JSON_PATH"
 DEFAULT_GRID_LIMITS_FILENAME: str = "gridlimits.json"
 
-# Set to 1 to POST missing limits from gridlimits.json when flat and gridstrat emitted 0 events.
+# POST missing limits from gridlimits.json when flat and gridstrat emitted 0 events.
+# Default ON when unset (Railway-friendly). Set VARIBOT_GRID_LIMITS_RECONCILE=0 to disable.
 ENV_GRID_LIMITS_RECONCILE: str = "VARIBOT_GRID_LIMITS_RECONCILE"
+GRID_LIMITS_RECONCILE_DEFAULT: bool = True
 # Set to 1 to cancel venue limits not in the strategy template and post missing template rungs (sim drift).
 ENV_GRID_LIMITS_DRIFT_RECONCILE: str = "VARIBOT_GRID_LIMITS_DRIFT_RECONCILE"
 # Sub-gates (default on when drift reconcile is on): set to 0/false to disable one leg only.
@@ -34,6 +36,12 @@ def _truthy_env(name: str) -> bool:
     return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def grid_limits_reconcile_enabled() -> bool:
+    return _env_bool_default(
+        ENV_GRID_LIMITS_RECONCILE, default_when_unset=GRID_LIMITS_RECONCILE_DEFAULT
+    )
+
+
 def _env_bool_default(name: str, *, default_when_unset: bool) -> bool:
     raw = (os.environ.get(name) or "").strip().lower()
     if not raw:
@@ -47,7 +55,7 @@ def _drift_reconcile_enabled(meta: Optional[Dict[str, Any]] = None) -> bool:
     """Explicit env, or auto-on for paired_limit when base reconcile is enabled."""
     if _truthy_env(ENV_GRID_LIMITS_DRIFT_RECONCILE):
         return True
-    if _truthy_env(ENV_GRID_LIMITS_RECONCILE) and meta and meta.get("grid_paired_limit_mode"):
+    if grid_limits_reconcile_enabled() and meta and meta.get("grid_paired_limit_mode"):
         return True
     return False
 
@@ -69,7 +77,7 @@ def _reconcile_with_positions_allowed(meta: Optional[Dict[str, Any]] = None) -> 
         return True
     if _drift_reconcile_enabled(meta):
         return True
-    if _truthy_env(ENV_GRID_LIMITS_RECONCILE) and meta and meta.get("grid_paired_limit_mode"):
+    if grid_limits_reconcile_enabled() and meta and meta.get("grid_paired_limit_mode"):
         return True
     return False
 
@@ -812,7 +820,12 @@ def run_grid_limits_bootstrap(
                 pending_keys = set()
 
         pending_by_asset[asset] = pending_keys
-        has_pos_asset = bool(pos_s.get("has_position")) if pos_s else has_positions
+        if not has_positions:
+            has_pos_asset = False
+        elif pos_s is not None:
+            has_pos_asset = bool(pos_s.get("has_position"))
+        else:
+            has_pos_asset = True
 
         if live and is_limit:
             venue_snapshots_by_asset[asset] = _build_venue_snapshot(
@@ -833,13 +846,13 @@ def run_grid_limits_bootstrap(
     if path:
         log(f"gridlimits: synced {len(asset_metas)} ticker(s) → {path}")
 
-    reconcile_on = _truthy_env(ENV_GRID_LIMITS_RECONCILE)
+    reconcile_on = grid_limits_reconcile_enabled()
     drift_on = _drift_reconcile_enabled(meta)
     if not reconcile_on and not drift_on:
         if int(cycle_index or 0) <= 1:
             log(
-                "gridlimits reconcile: skipped (set VARIBOT_GRID_LIMITS_RECONCILE=1 and/or "
-                "VARIBOT_GRID_LIMITS_DRIFT_RECONCILE=1 for live limit sync)"
+                "gridlimits reconcile: skipped (VARIBOT_GRID_LIMITS_RECONCILE=0 and drift off; "
+                "unset reconcile env for default-on live limit sync)"
             )
         return
     if not live or not is_limit:
@@ -856,7 +869,12 @@ def run_grid_limits_bootstrap(
             continue
 
         pos_s = _position_qty_summary(pos_raw or {}, asset=asset) if pos_raw is not None else None
-        has_pos_asset = bool(pos_s.get("has_position")) if pos_s else has_positions
+        if not has_positions:
+            has_pos_asset = False
+        elif pos_s is not None:
+            has_pos_asset = bool(pos_s.get("has_position"))
+        else:
+            has_pos_asset = True
         pending_keys = pending_by_asset.get(asset, set())
         n_ev = len(
             [

@@ -266,3 +266,30 @@ function process_fill_and_rearm(fill, state):
 5. **CLI entry points** — `init_grid`, `resume_grid`, `cancel_grid`, `print_state`.
 
 Write `gridstrat_rearm.py` first and test it standalone before touching the exchange adapter — that's where the bugs will be, and it's the only part that has to be perfectly correct.
+
+---
+Phase 2 development
+
+When doing gridbot trading on single ticker, or on 2 tickers, at this time, there's not way to hedge the inventory.
+
+If single ticker, you have buy limits below and sell limits above current price.
+What if price dumps or pumps massively? The account UPNL will be stuck in huge loss, and impossible to unstuck unless price recovers back or it oscillate sideways enough times.
+Doing on two tickers simply doubles the exposure of such risk.
+
+It's not possible to do the opposite on the second ticker, because on Vari you can't set sell limits below the current mark price, or set buy limits above the current mark price.
+
+I thought of a way to hedge the inventory risk, and still have a way to perform opposite grid trading on two tickers.
+
+First, during initialisation of the gridbot,
+long $1,000 of ETH
+short $1,000 of LINK (2nd highest correlation to ETH other than BTC)
+-> inventory is hedged.
+
+For ETH,
+initial $1,000 long
+do the usual grid trading. buy limits below current mark price. sell limits above current mark price. Re-arms limit orders as per current codebase.
+
+For LINK, 
+initial $1,000 short
+set s.l orders at the grid rungs above.
+set t.p orders at the grid rungs below.

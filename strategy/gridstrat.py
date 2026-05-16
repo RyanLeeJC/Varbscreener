@@ -26,6 +26,8 @@ Configure via environment variables (override file-level ``DEFAULT_*`` constants
   GRID_MARK=               # optional override for mark (else from strategy listing JSON)
   GRIDSTRAT_STATE_PATH=    # optional; default Varibot/gridstrat_state.json under repo root
   GRIDSTRAT_RESET=1        # one-shot: re-init engine state on next pick_tickers
+  GRIDSTRAT_IGNORE_VENUE_POSITIONS=1  # default on: Varibot/grid treats account as flat for grid
+                                        # (manual pre-positions do not block fresh-book init)
 
 Optional compatibility: strategy key ``invert_extreme`` still resolves to this module on the GridBot
 branch.
@@ -74,9 +76,9 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "reanchor"
 # (Same idea as ``DEFAULT_GRID_BAND_PCT`` — leave bounds NaN to use ±band around mark.)
 # -----------------------------------------------------------------------------
 DEFAULT_GRID_ASSET: str = "BTC"
-DEFAULT_GRID_INVESTMENT_USD: float = 100.0
-DEFAULT_GRID_LEVERAGE: float = 50.0
-DEFAULT_GRID_NUM: int = 20  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
+DEFAULT_GRID_INVESTMENT_USD: float = 400.0
+DEFAULT_GRID_LEVERAGE: float = 30.0
+DEFAULT_GRID_NUM: int = 40  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
 DEFAULT_GRID_MARKET_SIZING: str = "qty"  # legacy market mode only: "qty" | "usd"
 DEFAULT_GRID_BAND_PCT: float = 0.2  # fallback band % when a ticker is not listed below
 DEFAULT_GRID_LOWER: float = float("nan")  # set both bounds finite to pin explicit bracket
@@ -89,12 +91,27 @@ DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses
 # Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
 # -----------------------------------------------------------------------------
 GRID_TRADING_TICKERS: Dict[str, float] = {
-    "ETH": 0.3,
-    "LINK": 0.5,
+    "ETH": 1.0,
+    "LINK": 1.5,
     
 }
 
 ROOT_STATE_SCHEMA_VERSION: int = 4
+
+ENV_GRIDSTRAT_IGNORE_VENUE_POSITIONS: str = "GRIDSTRAT_IGNORE_VENUE_POSITIONS"
+
+
+def gridstrat_ignore_venue_positions() -> bool:
+    """
+    When True (default), Varibot runs gridstrat on the flat / fresh-book path even if
+    ``/api/positions`` shows open size (e.g. manual hedge legs). Venue positions are not
+    synced into ``inventory``; only grid fills update strategy state.
+    Set ``GRIDSTRAT_IGNORE_VENUE_POSITIONS=0`` to restore legacy position-aware branching.
+    """
+    raw = (os.environ.get(ENV_GRIDSTRAT_IGNORE_VENUE_POSITIONS) or "1").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return True
 
 
 def grid_trading_ticker_band_pcts() -> Dict[str, float]:
