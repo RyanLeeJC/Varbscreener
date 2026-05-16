@@ -14,6 +14,10 @@ Varibot/runs/
 Varibot/Bot_credentials/
 Varibot/.multimarket_last_result.json
 
+# Strategy feed snapshots (Varibot; regenerated from venue indicative)
+Varibot/strategy_listing_snapshot.json
+Varibot/strategy_marketstate.json
+
 # Local listing snapshot (regenerate with Vari Listings/listingtable.py)
 Vari Listings/listingtabledata.json
 

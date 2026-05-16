@@ -1,10 +1,65 @@
 from __future__ import annotations
 
+import math
+import os
 from decimal import Decimal, ROUND_DOWN
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .client import VariClient
+
+
+def indicative_qty_sigfigs() -> int:
+    raw = (os.environ.get("INDICATIVE_QTY_SIGFIGS") or "6").strip()
+    try:
+        return max(1, min(18, int(raw)))
+    except ValueError:
+        return 6
+
+
+def format_qty_for_indicative_api(qty: float, *, significant: Optional[int] = None) -> str:
+    """
+    String qty for POST /api/quotes/indicative (``payload["qty"]``).
+
+    Uses **significant figures** (general format), not fixed decimal places — e.g. ``1.244274`` →
+    ``'1.24427'`` and ``0.001243`` → ``'0.001243'`` with the default 6 significant digits (matches
+    ``format(float, '.6g')`` in Python).
+    """
+    n = int(significant) if significant is not None else indicative_qty_sigfigs()
+    qf = float(qty)
+    if not math.isfinite(qf) or qf == 0.0:
+        return "0"
+    return format(qf, f".{int(n)}g")
+
+
+def align_order_qty_to_quote_limits(*, q1: Dict[str, Any], side: str, qty_raw: float) -> float:
+    """Floor ``qty_raw`` to venue min_qty_tick (from indicative ``q1``) and enforce min_qty."""
+    qty_limits = q1.get("qty_limits") if isinstance(q1.get("qty_limits"), dict) else {}
+    limits_for_side = None
+    if side == "buy":
+        limits_for_side = qty_limits.get("ask") if isinstance(qty_limits.get("ask"), dict) else None
+    elif side == "sell":
+        limits_for_side = qty_limits.get("bid") if isinstance(qty_limits.get("bid"), dict) else None
+
+    tick = None
+    min_qty = None
+    if limits_for_side:
+        try:
+            tick = Decimal(str(limits_for_side.get("min_qty_tick")))
+        except Exception:
+            tick = None
+        try:
+            min_qty = Decimal(str(limits_for_side.get("min_qty")))
+        except Exception:
+            min_qty = None
+
+    qty_d = Decimal(str(float(qty_raw)))
+    if tick and tick > 0:
+        steps = (qty_d / tick).to_integral_value(rounding=ROUND_DOWN)
+        qty_d = steps * tick
+    if min_qty and min_qty > 0 and qty_d < min_qty:
+        qty_d = min_qty
+    return float(qty_d)
 
 
 @dataclass(frozen=True)
@@ -36,6 +91,13 @@ class VariEndpoints:
 
     def get_orders_v2(self) -> Any:
         return self.client.request_json("GET", "/api/orders/v2")
+
+    def cancel_order_rfq(self, *, rfq_id: str) -> Any:
+        """POST /api/orders/cancel — Omni uses ``{"rfq_id": "<id>"}`` for resting / RFQ flow."""
+        rid = str(rfq_id).strip()
+        if not rid:
+            raise ValueError("rfq_id is empty")
+        return self.client.request_json("POST", "/api/orders/cancel", json_body={"rfq_id": rid})
 
     def set_leverage(self, *, asset: str, leverage: int) -> LeverageResult:
         body = {"asset": asset, "leverage": str(int(leverage))}
@@ -82,7 +144,7 @@ class VariEndpoints:
                 "funding_interval_s": int(instrument.funding_interval_s),
                 "settlement_asset": instrument.settlement_asset,
             },
-            "qty": f"{float(qty):.6f}".rstrip("0").rstrip("."),
+            "qty": format_qty_for_indicative_api(float(qty)),
         }
         return self.quote_indicative(payload=payload)
 
@@ -114,37 +176,29 @@ class VariEndpoints:
             raise ValueError("Could not derive price from indicative quote response")
 
         qty_raw = float(usd_notional) / float(price)
+        qty = align_order_qty_to_quote_limits(q1=q1, side=side, qty_raw=qty_raw)
+        q2 = self.quote_indicative_simple(instrument=instrument, qty=qty)
+        quote_id = q2.get("quote_id") or q2.get("quoteId") or q2.get("id")
+        if not quote_id:
+            raise ValueError("Indicative quote response missing quote_id")
+        return str(quote_id), q2
 
-        # Align qty to tick size so order placement doesn't fail (422).
-        # We derive tick/min qty from the quote response if available.
-        qty_limits = q1.get("qty_limits") if isinstance(q1.get("qty_limits"), dict) else {}
-        limits_for_side = None
-        if side == "buy":
-            limits_for_side = qty_limits.get("ask") if isinstance(qty_limits.get("ask"), dict) else None
-        elif side == "sell":
-            limits_for_side = qty_limits.get("bid") if isinstance(qty_limits.get("bid"), dict) else None
+    def quote_id_for_order_qty(
+        self,
+        *,
+        instrument: Instrument,
+        side: str,
+        order_qty: float,
+        price_hint_qty: float = 1.0,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Two-step indicative quote for a target **base-asset qty** (same tick alignment as USD path).
 
-        tick = None
-        min_qty = None
-        if limits_for_side:
-            try:
-                tick = Decimal(str(limits_for_side.get("min_qty_tick")))
-            except Exception:
-                tick = None
-            try:
-                min_qty = Decimal(str(limits_for_side.get("min_qty")))
-            except Exception:
-                min_qty = None
-
-        qty_d = Decimal(str(qty_raw))
-        if tick and tick > 0:
-            # floor to tick to avoid exceeding notional / invalid multiples
-            steps = (qty_d / tick).to_integral_value(rounding=ROUND_DOWN)
-            qty_d = steps * tick
-        if min_qty and min_qty > 0 and qty_d < min_qty:
-            qty_d = min_qty
-
-        qty = float(qty_d)
+        1) ``price_hint_qty`` probe for ``qty_limits`` on the relevant side.
+        2) Floor ``order_qty`` to ``min_qty_tick`` / ``min_qty``, then quote again for ``quote_id``.
+        """
+        q1 = self.quote_indicative_simple(instrument=instrument, qty=float(price_hint_qty))
+        qty = align_order_qty_to_quote_limits(q1=q1, side=side, qty_raw=float(order_qty))
         q2 = self.quote_indicative_simple(instrument=instrument, qty=qty)
         quote_id = q2.get("quote_id") or q2.get("quoteId") or q2.get("id")
         if not quote_id:

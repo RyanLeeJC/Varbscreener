@@ -1,33 +1,34 @@
 """
-Vari grid strategy (gridbot.md): price ladder below/above mark with asymmetric buy restoration.
+Vari grid strategy (``gridbot.md`` / ``gridbot_new.md``).
 
-This module approximates a limit grid using **discrete mark snapshots** from `listingtabledata.json`
-(vari_ticker `mark_price`). When mark moves down through a buy level → one **market buy** event; when
-it moves up through a sell level → one **market sell** event.
+**Default (``GRID_EXECUTION`` unset or ``paired_limit``):** sim-aligned **paired limit** engine
+(``strategy/gridstrat_rearm.py``): arithmetic ladder, one-for-one re-arm after each crossed rung,
+optional breach **re-anchor** (same as ``grid_rearm_sim.html`` with ``gridReset: true``). Desired venue
+limits are written to ``Varibot/gridlimits.json`` via ``sync_gridlimits_json`` from Varibot; no
+``grid_market_events`` in this mode.
 
-Restoration rule (gridbot.md): after buy levels are consumed on the way down, **re-arm all buy rungs
-below the current mark** only after mark has crossed **upward through the first sell rung** (the
-lowest sell price that was active at the last full template rebuild).
-
-Limit orders are **not** placed natively (Vari client here is market-only); use small `--period-min`
-or refresh listing often if you want tighter grid fills.
+**Legacy (``GRID_EXECUTION=legacy_market``):** discrete mark snapshots → ``grid_market_events`` market
+legs (interior ladder + buy restoration gate). See ``advance_grid_state``.
 
 Configure via environment variables (mirrors the order form):
 
+  GRID_EXECUTION=paired_limit   # paired_limit (default) | legacy_market
+  GRID_REARM_ON_BREACH=reanchor # reanchor | slide (same as reanchor) | halt — paired mode only
   GRID_ASSET=BTC
   GRID_LOWER=86000
   GRID_UPPER=89000
-  GRID_NUM=30              # number of equal steps from lower→upper (fenceposts = GRID_NUM+1 prices)
-  GRID_TYPE=arithmetic     # or geometric
+  GRID_BAND_PCT=0.5        # symmetric ±% around mark when either GRID_LOWER or GRID_UPPER is unset (default 0.5)
+  GRID_NUM=30              # equal steps across [lower, upper] for paired spacing = (upper-lower)/GRID_NUM
+  GRID_TYPE=arithmetic     # or geometric (paired ladder uses arithmetic spacing only)
   GRID_INVESTMENT_USD=300
   GRID_LEVERAGE=25
-  GRID_MARK=               # optional override for mark (else from listingtabledata.json)
+  GRID_MARKET_SIZING=qty   # legacy market mode: qty vs usd sizing for multimarket events
+  GRID_MARK=               # optional override for mark (else from strategy listing JSON)
   GRIDSTRAT_STATE_PATH=    # optional; default Varibot/gridstrat_state.json under repo root
-  GRIDSTRAT_RESET=1        # delete state file on next pick_tickers (one-shot)
+  GRIDSTRAT_RESET=1        # one-shot: re-init engine state on next pick_tickers
 
-Optional compatibility: strategy key `invert_extreme` still resolves to this module on the GridBot
-branch — behaviour is always this grid when env bounds are set; otherwise pick_tickers returns an
-error meta and empty books.
+Optional compatibility: strategy key ``invert_extreme`` still resolves to this module on the GridBot
+branch.
 """
 
 from __future__ import annotations
@@ -37,23 +38,35 @@ import importlib
 import json
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, Tuple
 
+from strategy.gridstrat_rearm import (
+    PairedGridNumericConfig,
+    derive_sim_ladder_params,
+    init_paired_state,
+    open_rungs_for_meta,
+    step_mark_pair,
+)
+from strategy.gridstrat_state import load_state, save_state
+
 STRATEGY_NAME: str = "vari_grid"
+
+# Default ``paired_limit`` matches ``grid_rearm_sim.html``; set ``legacy_market`` for mark-only events.
+GRID_EXECUTION_DEFAULT: str = "paired_limit"
+# Paired mode: ``reanchor`` / ``slide`` = reset ladder on band breach (sim default); ``halt`` = no reset.
+GRID_REARM_ON_BREACH_DEFAULT: str = "reanchor"
+
+# Symmetric bracket around mark when explicit GRID_LOWER+GRID_UPPER are not both set (see resolve_grid_bounds).
+DEFAULT_GRID_BAND_PCT: float = 0.5
 
 # multimarketorder.py imports this as sizing divisor fallback when strategy import succeeds.
 DEFAULT_MAX_TICKER_ENTRIES: int = 1
 
 TRADE_THESIS: str = (
-    "Arithmetic or geometric price ladder between GRID_LOWER and GRID_UPPER. "
-    "Buy rungs sit strictly below mark; sell rungs strictly above. "
-    "On each down-cross of an armed buy rung → market buy (notional from investment×leverage / rung count). "
-    "On each up-cross of an armed sell rung → market sell. "
-    "After any buy rung fires, further buy rungs still fire on continued drops until restoration gate: "
-    "buy template is re-armed below mark only after an upward cross through the first sell anchor "
-    "(minimum initial sell price). "
-    "Execution uses Vari market orders driven by listing mark snapshots — not exchange-native limits."
+    "Default: paired arithmetic limit grid (sim-aligned) with optional breach re-anchor; "
+    "Varibot mirrors open rungs to gridlimits.json. "
+    "Legacy mode: interior ladder with market events and buy restoration after first-sell anchor cross."
 )
 
 WRITE_STRATEGY_OUTPUT_TXT: bool = True
@@ -70,6 +83,98 @@ def _default_state_path() -> str:
     return os.path.join(_repo_root_from_here(), "Varibot", "gridstrat_state.json")
 
 
+def _truthy_env(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes")
+
+
+def grid_execution_mode() -> str:
+    raw = (os.environ.get("GRID_EXECUTION") or "").strip().lower()
+    if raw in ("legacy_market", "market", "legacy"):
+        return "legacy_market"
+    if raw in ("paired_limit", "paired", "limit"):
+        return "paired_limit"
+    d = (GRID_EXECUTION_DEFAULT or "paired_limit").strip().lower()
+    return "legacy_market" if d in ("legacy_market", "market", "legacy") else "paired_limit"
+
+
+def breach_reanchors_on_breach() -> bool:
+    raw = (os.environ.get("GRID_REARM_ON_BREACH") or "").strip().lower()
+    if not raw:
+        raw = (GRID_REARM_ON_BREACH_DEFAULT or "reanchor").strip().lower()
+    if raw in ("halt", "stop", "freeze"):
+        return False
+    return True
+
+
+def env_grid_band_pct() -> float:
+    raw = (os.environ.get("GRID_BAND_PCT") or "").strip()
+    if not raw:
+        return float(DEFAULT_GRID_BAND_PCT)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(DEFAULT_GRID_BAND_PCT)
+
+
+def resolve_grid_bounds(
+    *,
+    mark: float,
+    cfg: GridConfig,
+    state: Dict[str, Any],
+) -> Tuple[float, float, bool, Optional[float], Dict[str, float], List[str]]:
+    """
+    Resolve effective lower/upper for the ladder.
+
+    - If both GRID_LOWER and GRID_UPPER are finite and upper > lower: use them (explicit bracket).
+    - Otherwise: symmetric band around **mark** using GRID_BAND_PCT (default DEFAULT_GRID_BAND_PCT),
+      pinned in state (pinned_lower, pinned_upper, pinned_band_pct) so the bracket does not
+      re-center each cycle until GRID_BAND_PCT changes, GRIDSTRAT_RESET, or you switch to explicit bounds.
+
+    Returns:
+        (eff_lower, eff_upper, explicit_bounds, band_pct_used_or_None, pin_updates, pin_delete_keys)
+    """
+    lo_c, hi_c = float(cfg.lower), float(cfg.upper)
+    explicit = (not math.isnan(lo_c)) and (not math.isnan(hi_c)) and hi_c > lo_c
+    if explicit:
+        return lo_c, hi_c, True, None, {}, ["pinned_lower", "pinned_upper", "pinned_band_pct"]
+
+    band = float(env_grid_band_pct())
+    reset = _truthy_env("GRIDSTRAT_RESET")
+
+    pin_lo = state.get("pinned_lower")
+    pin_hi = state.get("pinned_upper")
+    pin_pct = state.get("pinned_band_pct")
+    try:
+        pin_lo_f = float(pin_lo) if pin_lo is not None else float("nan")
+        pin_hi_f = float(pin_hi) if pin_hi is not None else float("nan")
+        pin_pct_f = float(pin_pct) if pin_pct is not None else float("nan")
+    except (TypeError, ValueError):
+        pin_lo_f = pin_hi_f = pin_pct_f = float("nan")
+
+    pct_match = not math.isnan(pin_pct_f) and abs(pin_pct_f - band) <= 1e-9
+    use_pins = (
+        not reset
+        and pct_match
+        and not math.isnan(pin_lo_f)
+        and not math.isnan(pin_hi_f)
+        and pin_hi_f > pin_lo_f
+    )
+    if use_pins:
+        return pin_lo_f, pin_hi_f, False, band, {}, []
+
+    f = band / 100.0
+    nl = float(mark) * (1.0 - f)
+    nu = float(mark) * (1.0 + f)
+    return (
+        nl,
+        nu,
+        False,
+        band,
+        {"pinned_lower": nl, "pinned_upper": nu, "pinned_band_pct": band},
+        [],
+    )
+
+
 def _as_float(v: Any) -> Optional[float]:
     if v is None:
         return None
@@ -80,6 +185,19 @@ def _as_float(v: Any) -> Optional[float]:
 
 
 GridType = Literal["arithmetic", "geometric"]
+
+
+def grid_market_sizing_mode() -> str:
+    """``qty`` (default) or ``usd`` — how grid market events size multimarket (see Varibot)."""
+    v = (os.environ.get("GRID_MARKET_SIZING") or "qty").strip().lower()
+    return "usd" if v == "usd" else "qty"
+
+
+def _grid_open_leg_fields(*, usd_leg: float, mark: float) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"usd": float(usd_leg)}
+    if grid_market_sizing_mode() != "usd" and float(mark) > 0:
+        out["qty"] = float(usd_leg) / float(mark)
+    return out
 
 
 @dataclass
@@ -117,10 +235,14 @@ class GridConfig:
         )
 
     def validate(self) -> Optional[str]:
-        if math.isnan(self.lower) or math.isnan(self.upper):
-            return "Set GRID_LOWER and GRID_UPPER (floats)."
-        if self.upper <= self.lower:
-            return "GRID_UPPER must be > GRID_LOWER."
+        explicit = (not math.isnan(self.lower)) and (not math.isnan(self.upper))
+        if explicit:
+            if self.upper <= self.lower:
+                return "GRID_UPPER must be > GRID_LOWER."
+        else:
+            pct = env_grid_band_pct()
+            if pct <= 0:
+                return "GRID_BAND_PCT must be > 0 when GRID_LOWER and GRID_UPPER are not both set."
         if self.n_grids < 2:
             return "GRID_NUM must be >= 2 (even count of rungs recommended in UI; we accept any integer >=2)."
         if math.isnan(self.investment_usd) or self.investment_usd <= 0:
@@ -190,23 +312,6 @@ def per_rung_usd_notional(*, investment_usd: float, leverage: float, n_rungs: in
     return float(investment_usd) * float(leverage) / float(denom)
 
 
-def _load_state(path: str) -> Dict[str, Any]:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _save_state(path: str, state: Dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
-    os.replace(tmp, path)
-
-
 def _template_fingerprint(cfg: GridConfig, levels: Sequence[float]) -> str:
     return json.dumps(
         {
@@ -216,6 +321,28 @@ def _template_fingerprint(cfg: GridConfig, levels: Sequence[float]) -> str:
             "n": cfg.n_grids,
             "t": cfg.grid_type,
             "levels": [round(x, 8) for x in levels],
+        },
+        sort_keys=True,
+    )
+
+
+def _paired_state_fingerprint(
+    cfg: GridConfig,
+    *,
+    eff_lo: float,
+    eff_hi: float,
+    breach_reanchor: bool,
+) -> str:
+    return json.dumps(
+        {
+            "mode": "paired_limit",
+            "asset": cfg.asset,
+            "lo": round(float(eff_lo), 8),
+            "hi": round(float(eff_hi), 8),
+            "n": int(cfg.n_grids),
+            "inv": round(float(cfg.investment_usd), 8),
+            "lev": round(float(cfg.leverage), 8),
+            "breach_reanchor": bool(breach_reanchor),
         },
         sort_keys=True,
     )
@@ -234,6 +361,7 @@ def advance_grid_state(
 
     grid_market_events items:
       {"action": "open_buy"|"open_sell"|"grid_restore_buys", "asset": str, "usd": float, "price": float, "reason": str}
+      For open_* when GRID_MARKET_SIZING is qty (default), also ``qty`` (base asset) ≈ usd_leg / mark.
     """
     events: List[Dict[str, Any]] = []
     levels_list = [float(x) for x in levels_template]
@@ -245,7 +373,7 @@ def advance_grid_state(
     if state.get("fingerprint") != fp or os.environ.get("GRIDSTRAT_RESET", "").strip() in ("1", "true", "yes"):
         buys, sells = split_buy_sell(levels_list, mark)
         first_sell = min(sells) if sells else None
-        state = {
+        new_state: Dict[str, Any] = {
             "schema_version": 2,
             "fingerprint": fp,
             "last_mark": float(mark),
@@ -254,7 +382,11 @@ def advance_grid_state(
             "buy_armed": [float(x) for x in buys],
             "sell_armed": [float(x) for x in sells],
         }
-        _save_state(_default_state_path(), state)
+        for _pk in ("pinned_lower", "pinned_upper", "pinned_band_pct"):
+            if _pk in state:
+                new_state[_pk] = state[_pk]
+        state = new_state
+        save_state(_default_state_path(), state)
         os.environ.pop("GRIDSTRAT_RESET", None)
         return events, state
 
@@ -286,7 +418,7 @@ def advance_grid_state(
                     {
                         "action": "open_buy",
                         "asset": cfg.asset,
-                        "usd": float(usd_leg),
+                        **_grid_open_leg_fields(usd_leg=float(usd_leg), mark=float(mark)),
                         "price": float(b),
                         "reason": "down_cross_buy_rung",
                     }
@@ -300,7 +432,7 @@ def advance_grid_state(
                     {
                         "action": "open_sell",
                         "asset": cfg.asset,
-                        "usd": float(usd_leg),
+                        **_grid_open_leg_fields(usd_leg=float(usd_leg), mark=float(mark)),
                         "price": float(s),
                         "reason": "up_cross_sell_rung",
                     }
@@ -311,7 +443,7 @@ def advance_grid_state(
     state["sell_armed"] = sorted(sell_armed)
     state["last_mark"] = float(mark)
     state["levels_template"] = levels_stored
-    _save_state(_default_state_path(), state)
+    save_state(_default_state_path(), state)
     return events, state
 
 
@@ -326,6 +458,7 @@ def pick_tickers(
     cfg = GridConfig.from_env()
     err = cfg.validate()
     state_path = _default_state_path()
+    state = load_state(state_path)
     if err:
         return (
             [],
@@ -353,44 +486,150 @@ def pick_tickers(
             },
         )
 
-    levels = build_price_ladder(
-        lower=cfg.lower, upper=cfg.upper, n_grids=cfg.n_grids, grid_type=cfg.grid_type
+    eff_lo, eff_hi, explicit_bounds, band_pct_used, pin_updates, pin_delete_keys = resolve_grid_bounds(
+        mark=float(mark), cfg=cfg, state=state
     )
-    buys, sells = split_buy_sell(levels, float(mark))
-    state = _load_state(state_path)
-    prev_mark_f: Optional[float] = None
-    lm = state.get("last_mark")
-    if isinstance(lm, (int, float)):
-        prev_mark_f = float(lm)
+    for _k in pin_delete_keys:
+        state.pop(_k, None)
+    state.update(pin_updates)
+    cfg_eff = replace(cfg, lower=float(eff_lo), upper=float(eff_hi))
 
-    events, new_state = advance_grid_state(
-        cfg=cfg,
+    if grid_execution_mode() == "legacy_market":
+        levels = build_price_ladder(
+            lower=float(eff_lo),
+            upper=float(eff_hi),
+            n_grids=cfg_eff.n_grids,
+            grid_type=cfg_eff.grid_type,
+        )
+        buys, sells = split_buy_sell(levels, float(mark))
+        prev_mark_f: Optional[float] = None
+        lm = state.get("last_mark")
+        if isinstance(lm, (int, float)):
+            prev_mark_f = float(lm)
+
+        events, new_state = advance_grid_state(
+            cfg=cfg_eff,
+            mark=float(mark),
+            prev_mark=prev_mark_f,
+            levels_template=levels,
+            state=state,
+        )
+
+        meta: Dict[str, Any] = {
+            "strategy": STRATEGY_NAME,
+            "thesis": TRADE_THESIS,
+            "grid_mode": True,
+            "grid_execution": "legacy_market",
+            "grid_paired_limit_mode": False,
+            "grid_market_events": events,
+            "grid_asset": cfg_eff.asset,
+            "grid_mark": float(mark),
+            "grid_lower": float(eff_lo),
+            "grid_upper": float(eff_hi),
+            "grid_bounds_explicit": explicit_bounds,
+            "grid_bounds_auto": not explicit_bounds,
+            "grid_band_pct": band_pct_used,
+            "grid_num": cfg_eff.n_grids,
+            "grid_type": cfg_eff.grid_type,
+            "grid_buy_rungs": buys,
+            "grid_sell_rungs": sells,
+            "grid_per_rung_usd": per_rung_usd_notional(
+                investment_usd=cfg_eff.investment_usd,
+                leverage=cfg_eff.leverage,
+                n_rungs=max(1, len(levels)),
+            ),
+            "grid_state_path": os.path.abspath(state_path),
+            "first_sell_anchor": new_state.get("first_sell_price"),
+            "grid_market_sizing": grid_market_sizing_mode(),
+            "long_count": 0,
+            "short_count": 0,
+        }
+        return [], [], meta
+
+    breach_re = breach_reanchors_on_breach()
+    fp = _paired_state_fingerprint(
+        cfg_eff,
+        eff_lo=float(eff_lo),
+        eff_hi=float(eff_hi),
+        breach_reanchor=breach_re,
+    )
+    reset_flag = _truthy_env("GRIDSTRAT_RESET")
+    if reset_flag:
+        os.environ.pop("GRIDSTRAT_RESET", None)
+
+    anchor = (float(eff_lo) + float(eff_hi)) / 2.0
+    pcfg = PairedGridNumericConfig(
+        grid_num=int(cfg_eff.n_grids),
+        investment_usd=float(cfg_eff.investment_usd),
+        leverage=float(cfg_eff.leverage),
         mark=float(mark),
-        prev_mark=prev_mark_f,
-        levels_template=levels,
-        state=state,
+        grid_reset=bool(breach_re),
     )
+    params = derive_sim_ladder_params(
+        anchor=anchor,
+        lower=float(eff_lo),
+        upper=float(eff_hi),
+        cfg=pcfg,
+    )
+    reinit = (
+        reset_flag
+        or int(state.get("schema_version") or 0) != 3
+        or str(state.get("cfg_fingerprint") or "") != fp
+        or not isinstance(state.get("orders"), list)
+    )
+    if reinit:
+        paired = init_paired_state(params=params, tick=0)
+        for _pk in ("pinned_lower", "pinned_upper", "pinned_band_pct"):
+            if _pk in state:
+                paired[_pk] = state[_pk]
+        paired["last_mark"] = float(mark)
+        paired["cfg_fingerprint"] = fp
+        state = paired
+    else:
+        prev = float(state.get("last_mark") or float(mark))
+        if abs(prev - float(mark)) > 1e-12:
+            step_mark_pair(state, p_prev=prev, p_now=float(mark), grid_reset=breach_re)
+        state["last_mark"] = float(mark)
+        state["cfg_fingerprint"] = fp
+        state["grid_reset"] = bool(breach_re)
 
-    meta: Dict[str, Any] = {
+    save_state(state_path, state)
+
+    buys, sells = open_rungs_for_meta(state)
+    qty_pg = float(state.get("qty_per_grid") or params["qty_per_grid"])
+    per_usd = per_rung_usd_notional(
+        investment_usd=cfg_eff.investment_usd,
+        leverage=cfg_eff.leverage,
+        n_rungs=max(1, int(cfg_eff.n_grids)),
+    )
+    meta = {
         "strategy": STRATEGY_NAME,
         "thesis": TRADE_THESIS,
         "grid_mode": True,
-        "grid_market_events": events,
-        "grid_asset": cfg.asset,
+        "grid_execution": "paired_limit",
+        "grid_paired_limit_mode": True,
+        "grid_rearm_on_breach": "reanchor" if breach_re else "halt",
+        "grid_market_events": [],
+        "grid_asset": cfg_eff.asset,
         "grid_mark": float(mark),
-        "grid_lower": cfg.lower,
-        "grid_upper": cfg.upper,
-        "grid_num": cfg.n_grids,
-        "grid_type": cfg.grid_type,
+        "grid_lower": float(eff_lo),
+        "grid_upper": float(eff_hi),
+        "grid_bounds_explicit": explicit_bounds,
+        "grid_bounds_auto": not explicit_bounds,
+        "grid_band_pct": band_pct_used,
+        "grid_num": cfg_eff.n_grids,
+        "grid_type": cfg_eff.grid_type,
         "grid_buy_rungs": buys,
         "grid_sell_rungs": sells,
-        "grid_per_rung_usd": per_rung_usd_notional(
-            investment_usd=cfg.investment_usd,
-            leverage=cfg.leverage,
-            n_rungs=max(1, len(levels)),
-        ),
+        "grid_per_rung_usd": per_usd,
+        "grid_per_rung_qty": f"{qty_pg:.10g}",
+        "grid_limit_sizing": "qty",
         "grid_state_path": os.path.abspath(state_path),
-        "first_sell_anchor": new_state.get("first_sell_price"),
+        "grid_market_sizing": grid_market_sizing_mode(),
+        "grid_inventory": float(state.get("inventory") or 0.0),
+        "grid_realized_pnl": float(state.get("realized_pnl") or 0.0),
+        "grid_volume_usd": float(state.get("volume_usd") or 0.0),
+        "grid_reset_count": int(state.get("reset_count") or 0),
         "long_count": 0,
         "short_count": 0,
     }
@@ -399,7 +638,10 @@ def pick_tickers(
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Vari gridstrat: print ladder + dry state bump.")
-    ap.add_argument("--json-path", default=os.path.join(_repo_root_from_here(), "Vari Listings", "listingtabledata.json"))
+    ap.add_argument(
+        "--json-path",
+        default=os.path.join(_repo_root_from_here(), "Varibot", "strategy_listing_snapshot.json"),
+    )
     ap.add_argument("--print-json", action="store_true")
     return ap
 
@@ -581,6 +823,17 @@ def write_strategy_output_txt(
     body.append("")
     if meta.get("grid_mode"):
         body.append(f"grid_asset={meta.get('grid_asset')} mark={meta.get('grid_mark')}")
+        if meta.get("grid_bounds_explicit"):
+            body.append(
+                f"grid_bounds=explicit lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
+            )
+        else:
+            bp = meta.get("grid_band_pct")
+            body.append(
+                f"grid_bounds=±{bp}% (pinned) lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
+                if bp is not None
+                else f"grid_bounds=percent_band lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
+            )
         body.append(f"grid_events_this_cycle={json.dumps(meta.get('grid_market_events') or [])}")
         body.append("")
     if not rows:

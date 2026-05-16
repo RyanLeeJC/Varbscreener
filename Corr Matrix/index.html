@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Correlations Matrix</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("corrMatrix.theme");
+        if (t === "dark" || t === "light") document.documentElement.dataset.theme = t;
+        else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+          document.documentElement.dataset.theme = "dark";
+      } catch (e) {}
+    })();
+  </script>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #fff;
+      --border: #e2e4e8;
+      --text: #1a1d21;
+      --muted: #6b7280;
+      --blue: #2563eb;
+      --blue-soft: #e8f0fe;
+      --radius: 12px;
+      --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --shell-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+      --tf-inactive-bg: #fafbfc;
+      --tf-hover: #eef1f5;
+      --sidebar-bg: #fafbfc;
+      --token-selected-border: #c7dafb;
+      --rm-hover-bg: #fee2e2;
+      --matrix-th-bg: #f3f4f6;
+      --matrix-cell-border: var(--border);
+      --grid-hl: rgba(37, 99, 235, 0.18);
+      --err-bg: #fef2f2;
+      --err-border: #fecaca;
+      --err-text: #991b1b;
+      --backdrop-scrim: rgba(15, 23, 42, 0.45);
+      --modal-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);
+      --search-bg: #fff;
+      --search-color: inherit;
+      --cell-missing-bg: #f3f4f6;
+      --cell-missing-fg: #6b7280;
+      --cell-neutral-bg: #e5e7eb;
+      --cell-neutral-fg: #374151;
+    }
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0b0e11;
+      --card: #13161b;
+      --border: #272b35;
+      --text: #f3f4f6;
+      --muted: #9ca3af;
+      --blue: #3b82f6;
+      --blue-soft: rgba(59, 130, 246, 0.14);
+      --shell-shadow: 0 4px 28px rgba(0, 0, 0, 0.5);
+      --tf-inactive-bg: #1a1d24;
+      --tf-hover: #252a33;
+      --sidebar-bg: #0f1116;
+      --token-selected-border: #334155;
+      --rm-hover-bg: rgba(185, 28, 28, 0.22);
+      --matrix-th-bg: #1a1d24;
+      --matrix-cell-border: transparent;
+      --grid-hl: rgba(59, 130, 246, 0.32);
+      --err-bg: rgba(127, 29, 29, 0.28);
+      --err-border: #7f1d1d;
+      --err-text: #fecaca;
+      --backdrop-scrim: rgba(0, 0, 0, 0.65);
+      --modal-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+      --search-bg: #1a1d24;
+      --search-color: #f3f4f6;
+      --cell-missing-bg: #1a1d24;
+      --cell-missing-fg: #9ca3af;
+      --cell-neutral-bg: #252a33;
+      --cell-neutral-fg: #d1d5db;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .shell {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shell-shadow);
+      overflow: hidden;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .theme-toggle {
+      border: 1px solid var(--border);
+      background: var(--tf-inactive-bg);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .theme-toggle:hover {
+      background: var(--tf-hover);
+    }
+    .tf-group {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--tf-inactive-bg);
+    }
+    .tf-group button {
+      border: none;
+      background: transparent;
+      padding: 8px 14px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .tf-group button + button { border-left: 1px solid var(--border); }
+    .tf-group button.active {
+      background: var(--blue);
+      color: #fff;
+    }
+    .tf-group button:not(.active):hover {
+      background: var(--tf-hover);
+    }
+    main {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 0;
+      min-height: 360px;
+    }
+    @media (max-width: 720px) {
+      main { grid-template-columns: 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+    }
+    .sidebar {
+      padding: 16px 20px;
+      border-right: 1px solid var(--border);
+      background: var(--sidebar-bg);
+    }
+    .sidebar h2 {
+      margin: 0 0 10px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+    .token-list { list-style: none; margin: 0; padding: 0; }
+    .token-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      margin-bottom: 4px;
+      cursor: default;
+      border: 1px solid transparent;
+    }
+    .token-list li.selected {
+      background: var(--blue-soft);
+      border-color: var(--token-selected-border);
+    }
+    .token-list li .rm {
+      margin-left: auto;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .token-list li .rm:hover {
+      color: #b91c1c;
+      background: var(--rm-hover-bg);
+    }
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      font-weight: 800;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .add-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 12px;
+      padding: 6px 0;
+      border: none;
+      background: none;
+      color: var(--blue);
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .add-link:hover { text-decoration: underline; }
+    .matrix-wrap {
+      padding: 16px 20px 20px;
+      overflow-x: auto;
+    }
+    .matrix {
+      border-collapse: separate;
+      border-spacing: 4px;
+      margin: 0 auto;
+    }
+    .matrix th,
+    .matrix td {
+      width: 72px;
+      height: 56px;
+      text-align: center;
+      vertical-align: middle;
+      font-size: 0.8rem;
+      font-weight: 600;
+      border-radius: 8px;
+      border: 1px solid var(--matrix-cell-border);
+    }
+    .matrix th {
+      background: var(--matrix-th-bg);
+      color: var(--text);
+      font-weight: 700;
+      border: 1px solid var(--matrix-cell-border);
+    }
+    .matrix td.cell-missing,
+    .matrix td.cell-neutral {
+      font-variant-numeric: tabular-nums;
+    }
+    .matrix td.cell-missing {
+      background: var(--cell-missing-bg);
+      color: var(--cell-missing-fg);
+    }
+    .matrix td.cell-neutral {
+      background: var(--cell-neutral-bg);
+      color: var(--cell-neutral-fg);
+    }
+    [data-theme="dark"] .matrix td.diag {
+      background: #161a21;
+    }
+    /* Crosshair: same blue as --blue, translucent overlay on top of cell fill */
+    .matrix th.grid-hl,
+    .matrix td.grid-hl {
+      box-shadow: inset 0 0 0 48px var(--grid-hl);
+    }
+    footer code {
+      background: var(--tf-inactive-bg);
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    .token-list li span:last-of-type {
+      color: var(--text);
+    }
+    .err {
+      margin: 16px 24px;
+      padding: 12px 14px;
+      background: var(--err-bg);
+      border: 1px solid var(--err-border);
+      color: var(--err-text);
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    .loading { color: var(--muted); padding: 24px; text-align: center; }
+
+    /* Modal */
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      background: var(--backdrop-scrim);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      padding: 16px;
+    }
+    .backdrop.open { display: flex; }
+    .modal {
+      width: 100%;
+      max-width: 420px;
+      background: var(--card);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      box-shadow: var(--modal-shadow);
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .modal header {
+      border-bottom: 1px solid var(--border);
+      padding: 14px 18px;
+    }
+    .modal header h2 {
+      margin: 0;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .modal .close {
+      margin-left: auto;
+      border: none;
+      background: transparent;
+      font-size: 1.25rem;
+      cursor: pointer;
+      color: var(--muted);
+      line-height: 1;
+    }
+    .modal .body { padding: 12px 16px 8px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .search::placeholder {
+      color: var(--muted);
+      opacity: 0.85;
+    }
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      margin-bottom: 8px;
+      background: var(--search-bg);
+      color: var(--search-color);
+    }
+    .modal-list {
+      overflow-y: auto;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      flex: 1;
+    }
+    .modal-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 8px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .modal-list li:hover { background: var(--blue-soft); }
+    .modal-list .sub { font-size: 0.8rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <h1>Correlations Matrix</h1>
+      <div class="header-actions">
+        <button type="button" class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode" title="Dark / light theme">🌙</button>
+        <div class="tf-group" id="tfGroup">
+          <button type="button" data-tf="1D">1D</button>
+          <button type="button" data-tf="3D">3D</button>
+          <button type="button" data-tf="1W" class="active">1W</button>
+          <button type="button" data-tf="ALL">ALL</button>
+        </div>
+      </div>
+    </header>
+    <div id="errorBox" class="err" style="display:none"></div>
+    <main>
+      <aside class="sidebar">
+        <h2>Tokens</h2>
+        <ul class="token-list" id="tokenList"></ul>
+        <button type="button" class="add-link" id="openModal">+ Add token</button>
+      </aside>
+      <div class="matrix-wrap">
+        <div id="loading" class="loading">Loading matrix…</div>
+        <table class="matrix" id="matrixTable" style="display:none"></table>
+      </div>
+    </main>
+    <footer>
+      Pearson correlation on <strong>log returns</strong> between consecutive DB snapshots (run cadence per
+      <code>vari_data_logger</code>, often ~15–60 minutes). Pairs need at least <strong>30</strong> aligned return
+      observations in the selected window; otherwise the cell shows <strong>--</strong>.
+      <span style="display:block;margin-top:6px">
+        <strong>Legend:</strong> green / red use transparency — among <em>positive</em> values in the matrix, the largest is solid green and the smallest positive is the palest green; among negatives, opacity scales with |r| (solid at −1, faint near 0). Grey ≈ zero; <strong>--</strong> = insufficient or undefined.
+      </span>
+    </footer>
+  </div>
+
+  <div class="backdrop" id="backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-labelledby="modalTitle">
+      <header style="display:flex;align-items:center;gap:8px">
+        <h2 id="modalTitle">Add token</h2>
+        <button type="button" class="close" id="closeModal" aria-label="Close">×</button>
+      </header>
+      <div class="body">
+        <input type="search" class="search" id="tokenSearch" placeholder="Search token…" autocomplete="off" />
+        <ul class="modal-list" id="modalList"></ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const LS_KEY = "corrMatrix.tickers.v1";
+    const LS_THEME = "corrMatrix.theme";
+    let lastMatrixPayload = null;
+    let currentTf = "1W";
+    let tickers = [];
+    let allTickerItems = [];
+    let searchTimer = null;
+
+    function hashColor(t) {
+      let h = 0;
+      for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+      const hue = Math.abs(h) % 360;
+      return `hsl(${hue}, 55%, 42%)`;
+    }
+
+    /** RGB for heatmap fills; alpha applied per cell. Brighter on dark background. */
+    const FILL_GREEN = { r: 22, g: 163, b: 74 };
+    const FILL_GREEN_DARK = { r: 34, g: 197, b: 94 };
+    const FILL_RED = { r: 220, g: 38, b: 38 };
+    const FILL_RED_DARK = { r: 248, g: 113, b: 113 };
+    /** Smallest positive in the matrix maps to this alpha (most transparent green). */
+    const POS_ALPHA_FLOOR = 0.06;
+    /** r ≈ 0: neutral tile */
+    const NEAR_ZERO_EPS = 1e-9;
+
+    function collectNumericRs(payload) {
+      const out = [];
+      for (const row of payload.cells) {
+        for (const c of row) {
+          if (c.kind === "data" && c.r != null && !Number.isNaN(c.r)) out.push(c.r);
+        }
+      }
+      return out;
+    }
+
+    function positiveAlphaScale(payload) {
+      const pos = collectNumericRs(payload).filter((x) => x > NEAR_ZERO_EPS);
+      if (!pos.length) return { hasPos: false, pMin: 0, pMax: 1 };
+      const pMin = Math.min(...pos);
+      const pMax = Math.max(...pos);
+      return { hasPos: true, pMin, pMax };
+    }
+
+    /** Most positive in view → alpha 1; least positive → alpha POS_ALPHA_FLOOR. */
+    function alphaForPositive(r, scale) {
+      if (!scale.hasPos) return 0.75;
+      const { pMin, pMax } = scale;
+      if (pMax - pMin < 1e-12) return 1;
+      const t = (r - pMin) / (pMax - pMin);
+      const clamped = Math.min(1, Math.max(0, t));
+      return POS_ALPHA_FLOOR + clamped * (1 - POS_ALPHA_FLOOR);
+    }
+
+    /** r = -1 → full red; r → 0⁻ → most transparent. */
+    function alphaForNegative(r) {
+      return Math.min(1, Math.max(0, -r));
+    }
+
+    function isDarkTheme() {
+      return document.documentElement.dataset.theme === "dark";
+    }
+
+    function cellStyle(r, posScale) {
+      const dark = isDarkTheme();
+      if (r > 0) {
+        const a = alphaForPositive(r, posScale);
+        const { r: R, g: G, b: B } = dark ? FILL_GREEN_DARK : FILL_GREEN;
+        const fg = dark ? (a < 0.4 ? "#e8eaed" : "#d1fae5") : a < 0.35 ? "#1a1d21" : "#0f3d1f";
+        return { background: `rgba(${R},${G},${B},${a})`, color: fg };
+      }
+      const a = alphaForNegative(r);
+      const { r: R, g: G, b: B } = dark ? FILL_RED_DARK : FILL_RED;
+      const fg = dark ? (a < 0.4 ? "#e8eaed" : "#fee2e2") : a < 0.35 ? "#1a1d21" : "#6b1515";
+      return { background: `rgba(${R},${G},${B},${a})`, color: fg };
+    }
+
+    function loadTickersFromStorage() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr) && arr.length >= 2) return arr.map(String);
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    function saveTickers() {
+      localStorage.setItem(LS_KEY, JSON.stringify(tickers));
+    }
+
+    async function fetchJSON(url) {
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText || "Request failed");
+      return data;
+    }
+
+    function renderTokenSidebar() {
+      const ul = document.getElementById("tokenList");
+      ul.innerHTML = "";
+      tickers.forEach((t, idx) => {
+        const li = document.createElement("li");
+        li.className = "selected";
+        const av = document.createElement("div");
+        av.className = "avatar";
+        av.style.background = hashColor(t);
+        av.textContent = t.slice(0, 3).toUpperCase();
+        const span = document.createElement("span");
+        span.textContent = t;
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "rm";
+        rm.setAttribute("aria-label", "Remove " + t);
+        rm.textContent = "×";
+        rm.onclick = () => {
+          if (tickers.length <= 2) {
+            alert("Keep at least two tokens in the matrix.");
+            return;
+          }
+          tickers.splice(idx, 1);
+          saveTickers();
+          refreshMatrix();
+          renderTokenSidebar();
+        };
+        li.appendChild(av);
+        li.appendChild(span);
+        li.appendChild(rm);
+        ul.appendChild(li);
+      });
+    }
+
+    function clearGridHighlight(tbl) {
+      tbl.querySelectorAll(".grid-hl").forEach((el) => el.classList.remove("grid-hl"));
+    }
+
+    function setGridHighlight(tbl, hr, hc) {
+      clearGridHighlight(tbl);
+      tbl.querySelectorAll("thead th, tbody th, tbody td").forEach((cell) => {
+        const mr = parseInt(cell.dataset.mr, 10);
+        const mc = parseInt(cell.dataset.mc, 10);
+        if (Number.isNaN(mr) || Number.isNaN(mc)) return;
+        if ((mr >= 0 && mr === hr) || (mc >= 0 && mc === hc)) cell.classList.add("grid-hl");
+      });
+    }
+
+    /** Row / column indices for crosshair; -1 = header / corner sentinel. */
+    function hoverCrosshairFromCell(cell) {
+      let hr = parseInt(cell.dataset.mr, 10);
+      let hc = parseInt(cell.dataset.mc, 10);
+      if (Number.isNaN(hr)) hr = -1;
+      if (Number.isNaN(hc)) hc = -1;
+      if (hr < 0 && hc < 0) return null;
+      if (hr >= 0 && hc < 0) hc = hr;
+      else if (hr < 0 && hc >= 0) hr = hc;
+      return { hr, hc };
+    }
+
+    let matrixHoverWired = false;
+    function wireMatrixCrosshair() {
+      if (matrixHoverWired) return;
+      matrixHoverWired = true;
+      const wrap = document.querySelector(".matrix-wrap");
+      wrap.addEventListener("mousemove", (e) => {
+        const tbl = document.getElementById("matrixTable");
+        if (!tbl || tbl.style.display === "none") return;
+        const cell = e.target.closest("th, td");
+        if (!cell || !tbl.contains(cell)) {
+          clearGridHighlight(tbl);
+          return;
+        }
+        const cross = hoverCrosshairFromCell(cell);
+        if (!cross) {
+          clearGridHighlight(tbl);
+          return;
+        }
+        setGridHighlight(tbl, cross.hr, cross.hc);
+      });
+      wrap.addEventListener("mouseleave", (e) => {
+        if (e.relatedTarget && wrap.contains(e.relatedTarget)) return;
+        const tbl = document.getElementById("matrixTable");
+        if (tbl) clearGridHighlight(tbl);
+      });
+    }
+
+    function buildMatrixTable(payload) {
+      const posScale = positiveAlphaScale(payload);
+      const tbl = document.getElementById("matrixTable");
+      tbl.innerHTML = "";
+      const thead = document.createElement("thead");
+      const hr = document.createElement("tr");
+      const corner = document.createElement("th");
+      corner.dataset.mr = "-1";
+      corner.dataset.mc = "-1";
+      hr.appendChild(corner);
+      payload.tickers.forEach((t, j) => {
+        const th = document.createElement("th");
+        th.textContent = t;
+        th.dataset.mr = "-1";
+        th.dataset.mc = String(j);
+        hr.appendChild(th);
+      });
+      thead.appendChild(hr);
+      tbl.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      for (let i = 0; i < payload.tickers.length; i++) {
+        const tr = document.createElement("tr");
+        const rth = document.createElement("th");
+        rth.textContent = payload.tickers[i];
+        rth.dataset.mr = String(i);
+        rth.dataset.mc = "-1";
+        tr.appendChild(rth);
+        for (let j = 0; j < payload.tickers.length; j++) {
+          const td = document.createElement("td");
+          td.dataset.mr = String(i);
+          td.dataset.mc = String(j);
+          const c = payload.cells[i][j];
+          if (c.kind === "diag") {
+            td.className = "diag";
+            const av = document.createElement("div");
+            av.className = "avatar";
+            av.style.background = hashColor(c.ticker);
+            av.textContent = c.ticker.slice(0, 3).toUpperCase();
+            td.appendChild(av);
+          } else {
+            td.className = "cell";
+            if (c.r == null || Number.isNaN(c.r)) {
+              td.classList.add("cell-missing");
+              td.textContent = "--";
+            } else if (Math.abs(c.r) <= NEAR_ZERO_EPS) {
+              td.classList.add("cell-neutral");
+              td.textContent = c.display;
+            } else {
+              Object.assign(td.style, cellStyle(c.r, posScale));
+              td.textContent = c.display;
+              td.title = `r=${c.r.toFixed(4)}  n=${c.n}`;
+            }
+          }
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      tbl.appendChild(tbody);
+    }
+
+    function showError(msg) {
+      const el = document.getElementById("errorBox");
+      el.style.display = msg ? "block" : "none";
+      el.textContent = msg || "";
+    }
+
+    function formatUtcIsoAsSgt(iso) {
+      if (!iso || iso === "?") return "?";
+      const d = new Date(iso.endsWith("Z") ? iso : iso.replace("+00:00", "Z"));
+      if (Number.isNaN(d.getTime())) return iso;
+      return (
+        new Intl.DateTimeFormat("en-GB", {
+          timeZone: "Asia/Singapore",
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(d) + " SGT"
+      );
+    }
+
+    async function refreshMatrix() {
+      const loading = document.getElementById("loading");
+      const tbl = document.getElementById("matrixTable");
+      loading.style.display = "block";
+      tbl.style.display = "none";
+      showError("");
+      const q = encodeURIComponent(tickers.join(","));
+      try {
+        const payload = await fetchJSON(`/api/matrix?tf=${encodeURIComponent(currentTf)}&tickers=${q}`);
+        buildMatrixTable(payload);
+        lastMatrixPayload = payload;
+        const m = payload.meta || {};
+        const foot = document.querySelector("footer");
+        foot.querySelector(".meta-line")?.remove();
+        const line = document.createElement("span");
+        line.className = "meta-line";
+        line.style.display = "block";
+        line.style.marginTop = "6px";
+        const w0 = m.window_start_utc || "?";
+        const w1 = m.window_end_utc || "?";
+        line.innerHTML =
+          `<strong>Window (SGT):</strong> ${formatUtcIsoAsSgt(w0)} → ${formatUtcIsoAsSgt(w1)} &nbsp;·&nbsp; ` +
+          `<strong>Runs in window:</strong> ${m.run_count_in_window ?? "?"}`;
+        foot.appendChild(line);
+        loading.style.display = "none";
+        tbl.style.display = "table";
+      } catch (e) {
+        loading.style.display = "none";
+        lastMatrixPayload = null;
+        showError(e.message || String(e));
+      }
+    }
+
+    function wireTf() {
+      document.getElementById("tfGroup").onclick = (ev) => {
+        const btn = ev.target.closest("button[data-tf]");
+        if (!btn) return;
+        currentTf = btn.getAttribute("data-tf");
+        document.querySelectorAll("#tfGroup button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        refreshMatrix();
+      };
+    }
+
+    function syncThemeToggle() {
+      const btn = document.getElementById("themeToggle");
+      if (!btn) return;
+      const on = isDarkTheme();
+      btn.textContent = on ? "☀️" : "🌙";
+      btn.title = on ? "Switch to light theme" : "Switch to dark theme";
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+
+    function applyTheme(mode) {
+      document.documentElement.dataset.theme = mode;
+      try {
+        localStorage.setItem(LS_THEME, mode);
+      } catch (e) {}
+      syncThemeToggle();
+      if (lastMatrixPayload) buildMatrixTable(lastMatrixPayload);
+    }
+
+    function wireThemeToggle() {
+      const btn = document.getElementById("themeToggle");
+      if (!btn) return;
+      btn.onclick = () => applyTheme(isDarkTheme() ? "light" : "dark");
+    }
+
+    async function bootstrap() {
+      wireTf();
+      wireThemeToggle();
+      syncThemeToggle();
+      try {
+        const h = await fetchJSON("/api/health");
+        if (!h.ok) throw new Error("Database missing: " + h.db);
+      } catch (e) {
+        showError(e.message || String(e));
+        document.getElementById("loading").style.display = "none";
+        return;
+      }
+      let initial = loadTickersFromStorage();
+      if (!initial) {
+        try {
+          const d = await fetchJSON("/api/default-tickers");
+          initial = d.tickers && d.tickers.length ? d.tickers : ["BTC", "ETH"];
+        } catch (_) {
+          initial = ["BTC", "ETH"];
+        }
+      }
+      tickers = initial;
+      saveTickers();
+      renderTokenSidebar();
+      wireMatrixCrosshair();
+      await refreshMatrix();
+
+      document.getElementById("openModal").onclick = () => openModal();
+      document.getElementById("closeModal").onclick = () => closeModal();
+      document.getElementById("backdrop").onclick = (e) => {
+        if (e.target.id === "backdrop") closeModal();
+      };
+      document.getElementById("tokenSearch").oninput = () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(loadModalTickers, 200);
+      };
+    }
+
+    function openModal() {
+      document.getElementById("backdrop").classList.add("open");
+      document.getElementById("backdrop").setAttribute("aria-hidden", "false");
+      document.getElementById("tokenSearch").value = "";
+      loadModalTickers();
+      setTimeout(() => document.getElementById("tokenSearch").focus(), 50);
+    }
+
+    function closeModal() {
+      document.getElementById("backdrop").classList.remove("open");
+      document.getElementById("backdrop").setAttribute("aria-hidden", "true");
+    }
+
+    async function loadModalTickers() {
+      const q = document.getElementById("tokenSearch").value.trim();
+      const ul = document.getElementById("modalList");
+      ul.innerHTML = "";
+      try {
+        const data = await fetchJSON("/api/tickers?q=" + encodeURIComponent(q) + "&limit=300");
+        allTickerItems = data.items || [];
+        allTickerItems.forEach((it) => {
+          if (tickers.includes(it.ticker)) return;
+          const li = document.createElement("li");
+          li.onclick = () => {
+            if (tickers.length >= 32) {
+              alert("Maximum 32 tokens.");
+              return;
+            }
+            tickers.push(it.ticker);
+            saveTickers();
+            closeModal();
+            renderTokenSidebar();
+            refreshMatrix();
+          };
+          const av = document.createElement("div");
+          av.className = "avatar";
+          av.style.background = hashColor(it.ticker);
+          av.textContent = it.ticker.slice(0, 3).toUpperCase();
+          const div = document.createElement("div");
+          div.innerHTML = `<div>${escapeHtml(it.name)}</div><div class="sub">${escapeHtml(it.ticker)}</div>`;
+          li.appendChild(av);
+          li.appendChild(div);
+          ul.appendChild(li);
+        });
+        if (!ul.children.length) {
+          const li = document.createElement("li");
+          li.style.cursor = "default";
+          li.style.color = "var(--muted)";
+          li.textContent = "No matches";
+          ul.appendChild(li);
+        }
+      } catch (e) {
+        const li = document.createElement("li");
+        li.textContent = e.message || String(e);
+        ul.appendChild(li);
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>

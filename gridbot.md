@@ -138,41 +138,37 @@ Use this mechanism when the answer is not explicitly present in the current page
 
 # Vari repository: GridBot branch
 
-This section documents the **Vari** codebase branch named **GridBot** (Varibot + `strategy/gridstrat.py`), not the Dextrabot Vari exchange UI above.
+**This is where the gridbot is built in code:** **Varibot** (orchestration) plus **`strategy/gridstrat.py`** (ladder, persisted state, events). The Dextrabot Terminal **Vari Grid Bot** tab above is the product UI; this repo is the headless / automation path.
+
+For an end-to-end flow diagram and limit-reconcile behaviour, see **`bot_flow.md`** in the repo root.
 
 ## Layout
 
 | Path | Role |
 |------|------|
-| `Varibot/varibot.py` | Main loop: listingtable → marketstate → strategy → multimarketorder |
-| `Varibot/multimarketorder.py` | Places orders (dry-run or `--live`) |
+| `Varibot/varibot.py` | Main loop: portfolio snapshot → `_prepare_varibot_strategy_feed` (indicative mark) → strategy → multimarket (see `bot_flow.md`) |
+| `Varibot/strategy_listing_snapshot.json` | One-row `listings` + `mark_price` for `GRID_ASSET` (regenerated from venue each cycle) |
+| `Varibot/strategy_marketstate.json` | Timestamp stub for `run_strategy` compatibility |
+| `Varibot/multimarketorder.py` | Places market orders: `--usd` / `--im-target-pct` / `--qty` (dry-run or `--live`) |
+| `Varibot/grid_limits_reconcile.py` | Optional: sync `gridlimits.json`, mental map, missing-limit refill when enabled |
 | `Varibot/closeallpositions.py` | Reduce-only closes when invoked |
-| `Varibot/portfolio_manager_pairs.py` | Pair / leg TP–SL style management helpers |
-| `Varibot/variationalbot/` | Config, Vari HTTP client, execution helpers |
-| `Vari Listings/listingtable.py` | Fetches listings + CoinGecko fields → `listingtabledata.json` |
-| `Vari Listings/marketstate.py` | Reads listing JSON → `marketstate.json` (BTC/ETH regime) |
-| `strategy/gridstrat.py` | Strategy logic + `run_strategy()` loader; writes `strategy/strategy_output.txt` when run |
-| `requirements.txt` | All third-party deps; `Varibot/requirements.txt` and `Vari Listings/requirements.txt` include it via `-r` |
+| `Varibot/portfolio_manager_pairs.py` | PM helpers: `positions_to_rows`, `select_legs_to_close`, replacement filters (`invert_extreme` path) |
+| `Varibot/variationalbot/` | Config, Vari HTTP client, `VariEndpoints` (indicative quote qty uses **significant figures**; see `vari/endpoints.py`) |
+| `strategy/gridstrat.py` | Grid bounds (% band or explicit), ladder, state machine, `grid_market_events`; `run_strategy()` loader; may write `strategy/strategy_output.txt` |
+| `requirements.txt` | Root deps; `Varibot/requirements.txt` re-exports via `-r` where applicable |
 
-Runtime JSON (not committed): `Vari Listings/listingtabledata.json`, `Vari Listings/marketstate.json`.
+**Market data:** Marks come from **POST /api/quotes/indicative** only. There is **no** ``Vari Listings/`` pipeline in Varibot.
 
 ## Prerequisites
 
 - **Python**: 3.12 recommended (`runtime.txt`, `Dockerfile`). 3.9+ often works if dependencies install.
-- **API keys / env**: copy `Varibot/env.example` → `Varibot/.env` and set at least `VR_TOKEN` and `VR_WALLET_ADDRESS`. Optional: `COINGECKO_API_KEY` for CoinGecko Pro from `listingtable.py`.
+- **API keys / env**: copy `Varibot/env.example` → `Varibot/.env` and set at least `VR_TOKEN` and `VR_WALLET_ADDRESS`.
 - **Network**: Vari endpoints may need `HTTPS_PROXY` on some hosts (see comments in `env.example`).
 
 ## Install
 
 ```bash
 python3 -m pip install -r requirements.txt
-```
-
-## Refresh market data
-
-```bash
-python3 "Vari Listings/listingtable.py"
-python3 "Vari Listings/marketstate.py"
 ```
 
 ## Run Varibot
@@ -189,22 +185,26 @@ Default strategy env: `VARIBOT_STRATEGY` (default `gridstrat.py`). Keys **`grids
 
 ### Grid mode (`strategy/gridstrat.py`)
 
-Grid behaviour follows `gridbot.md` (buy rungs below mark, sell rungs above, buy re-arm only after an **upward cross** through the **first sell anchor**). Configure with environment variables before starting Varibot:
+Grid behaviour matches the rules in this doc (buy rungs below mark, sell rungs above, buy re-arm only after an **upward cross** through the **first sell anchor**). Configure with environment variables before starting Varibot:
 
 | Variable | Example | Meaning |
 |----------|---------|---------|
-| `GRID_ASSET` | `BTC` | Underlying from `listingtabledata.json` |
-| `GRID_LOWER` | `86000` | Lower bound of ladder |
-| `GRID_UPPER` | `89000` | Upper bound |
-| `GRID_NUM` | `30` | Number of interior rungs (see `build_price_ladder` in code) |
+| `GRID_ASSET` | `BTC` | Underlying; mark is refreshed from the venue into `strategy_listing_snapshot.json` |
+| `GRID_LOWER` / `GRID_UPPER` | `86000` / `89000` | Explicit price bracket (both required for fixed bounds) |
+| `GRID_BAND_PCT` | `0.5` | If **either** bound is unset: symmetric ±% band around mark; **pinned** in `gridstrat_state.json` so the bracket does not re-center every cycle (see `bot_flow.md` §2) |
+| `GRID_NUM` | `30` | Number of interior rungs (`build_price_ladder`) |
 | `GRID_TYPE` | `arithmetic` or `geometric` | Spacing mode |
 | `GRID_INVESTMENT_USD` | `300` | Base USDC (form “Investment”) |
-| `GRID_LEVERAGE` | `25` | Leverage multiplier for notional split |
+| `GRID_LEVERAGE` | `25` | Leverage multiplier for per-rung notional |
 | `GRID_MARK` | *(optional)* | Override mark; default reads `mark_price` for `GRID_ASSET` |
+| `GRID_MARKET_SIZING` | `qty` (default) or `usd` | **`qty`:** events carry base `qty` → multimarket **`--qty`**. **`usd`:** legacy **`--usd`** per rung notional |
+| `INDICATIVE_QTY_SIGFIGS` | `6` | Significant figures for indicative `qty` strings (not fixed decimals); used by `VariEndpoints` / CLI |
 | `GRIDSTRAT_RESET` | `1` | One-shot: reset persisted state on next cycle |
 | `GRIDSTRAT_STATE_PATH` | *(optional)* | Defaults to `Varibot/gridstrat_state.json` |
 
-**Execution note:** Vari endpoints in this repo place **market** orders (`multimarketorder.py`). The strategy uses **listing mark snapshots** each cycle to detect rung crosses; it is not the same as native resting limit orders on an exchange UI. Use a short `--period-min` if you need fresher marks between cycles.
+Varibot CLI: **`--grid-band-pct`** sets `GRID_BAND_PCT` for that process.
+
+**Execution note:** The default path places **market** orders via `multimarketorder.py`. The strategy uses **listing mark snapshots** each cycle to detect rung crosses (discrete model, not the exchange order book). Optional **`grid_limits_reconcile`** can maintain resting limits when limit mode is enabled elsewhere—see `bot_flow.md`. Use a short **`--period-min`** if you need fresher marks between cycles.
 
 ## Docker / Railway
 

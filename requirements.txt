@@ -2,7 +2,7 @@
 #
 # Covers:
 #   - Varibot/ (curl_cffi HTTP client, python-dotenv for .env)
-#   - Vari Listings/listingtable.py (requests; optional dotenv when run standalone)
+#   - requests (used by some scripts; optional dotenv when run standalone)
 #   - strategy/gridstrat.py (stdlib only)
 #
 # Install from repo root:

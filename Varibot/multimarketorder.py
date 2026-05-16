@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from variationalbot.config import load_config
 from variationalbot.domain import parse_portfolio_snapshot
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
-from variationalbot.vari.endpoints import Instrument
+from variationalbot.vari.endpoints import Instrument, format_qty_for_indicative_api
 
 # Varibot reads this after each run to substitute tickers on OI-skew / risk-cap rejects (near_median).
 MULTIMARKET_LAST_RESULT_JSON: str = os.path.join(
@@ -294,6 +294,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="USD notional per order (NOT token qty). If omitted, uses --im-target-pct or a built-in default.",
+    )
+    p.add_argument(
+        "--qty",
+        type=float,
+        default=None,
+        help=(
+            "Base-asset quantity per order (e.g. BTC). Indicative qty strings use significant figures "
+            "(see vari.endpoints.format_qty_for_indicative_api / INDICATIVE_QTY_SIGFIGS). "
+            "Mutually exclusive with --usd and --im-target-pct."
+        ),
     )
     p.add_argument(
         "--im-target-pct",
@@ -686,7 +696,11 @@ def main() -> int:
     args.set_leverage = not bool(getattr(args, "skip_set_leverage", False))
     if args.usd is not None and args.im_target_pct is not None:
         raise SystemExit("Pass at most one of --usd and --im-target-pct.")
-    if args.usd is None and args.im_target_pct is None:
+    qty_arg = getattr(args, "qty", None)
+    if qty_arg is not None:
+        if args.usd is not None or args.im_target_pct is not None:
+            raise SystemExit("Pass at most one of --qty, --usd, and --im-target-pct.")
+    if qty_arg is None and args.usd is None and args.im_target_pct is None:
         args.im_target_pct = DEFAULT_IM_TARGET_PCT
 
     cfg = load_config()
@@ -736,32 +750,40 @@ def main() -> int:
                 f">= cap {cap_pct:g}% — blocking new opens."
             )
 
-    if args.usd is None:
-        pct = float(args.im_target_pct)  # type: ignore[arg-type]
-        if pct <= 0:
-            raise SystemExit("--im-target-pct must be positive.")
-        raw_pf = ep.get_portfolio(compute_margin=True)
-        snap = parse_portfolio_snapshot(raw_pf)
-        pv = snap.portfolio_value_usd
-        if pv is None or float(pv) <= 0:
-            raise SystemExit(
-                "IM-target sizing needs portfolio_value_usd from /api/portfolio (missing or non-positive)."
+    use_fixed_qty = qty_arg is not None
+    qty_per_order: Optional[float] = float(qty_arg) if use_fixed_qty else None
+    usd_per_order: Optional[float] = None
+
+    if not use_fixed_qty:
+        if args.usd is None:
+            pct = float(args.im_target_pct)  # type: ignore[arg-type]
+            if pct <= 0:
+                raise SystemExit("--im-target-pct must be positive.")
+            raw_pf = ep.get_portfolio(compute_margin=True)
+            snap = parse_portfolio_snapshot(raw_pf)
+            pv = snap.portfolio_value_usd
+            if pv is None or float(pv) <= 0:
+                raise SystemExit(
+                    "IM-target sizing needs portfolio_value_usd from /api/portfolio (missing or non-positive)."
+                )
+            portfolio_value_for_sizing = float(pv)
+            lev = int(args.leverage)
+            slots = int(
+                getattr(args, "max_ticker_entries", int(DEFAULT_MAX_TICKER_ENTRIES))
+                or int(DEFAULT_MAX_TICKER_ENTRIES)
             )
-        portfolio_value_for_sizing = float(pv)
-        lev = int(args.leverage)
-        slots = int(getattr(args, "max_ticker_entries", int(DEFAULT_MAX_TICKER_ENTRIES)) or int(DEFAULT_MAX_TICKER_ENTRIES))
-        if slots <= 0:
-            raise SystemExit("--max-ticker-entries must be positive.")
-        raw_usd = (portfolio_value_for_sizing * float(lev) * (pct / 100.0)) / float(slots)
-        step = float(USD_NOTIONAL_ROUND_STEP)
-        usd_per_order = math.ceil(raw_usd / step) * step
-        print(
-            f"Sizing: portfolio_value_usd={portfolio_value_for_sizing} leverage={lev}x im_target_pct={pct}% "
-            f"max_ticker_entries={slots} -> ${raw_usd:.2f} raw -> "
-            f"${usd_per_order:.0f} per order (ceil to nearest ${step:g})"
-        )
-    else:
-        usd_per_order = float(args.usd)
+            if slots <= 0:
+                raise SystemExit("--max-ticker-entries must be positive.")
+            raw_usd = (portfolio_value_for_sizing * float(lev) * (pct / 100.0)) / float(slots)
+            step = float(USD_NOTIONAL_ROUND_STEP)
+            usd_per_order = math.ceil(raw_usd / step) * step
+            print(
+                f"Sizing: portfolio_value_usd={portfolio_value_for_sizing} leverage={lev}x im_target_pct={pct}% "
+                f"max_ticker_entries={slots} -> ${raw_usd:.2f} raw -> "
+                f"${usd_per_order:.0f} per order (ceil to nearest ${step:g})"
+            )
+        else:
+            usd_per_order = float(args.usd)
 
     leverage = int(args.leverage)
     max_slippage = (
@@ -780,8 +802,6 @@ def main() -> int:
         "reduce_only": bool(args.reduce_only),
         "leverage": int(leverage),
         "set_leverage_per_order": bool(args.set_leverage),
-        "usd_notional_per_asset": float(usd_per_order),
-        "sizing": ("im_target_pct" if args.usd is None else "fixed_usd"),
         "long": long_assets,
         "short": short_assets,
         "assets": flat_assets,
@@ -791,7 +811,13 @@ def main() -> int:
         "sleep_between_s": float(args.sleep_between_s),
         "orders": [],
     }
-    if args.usd is None:
+    if use_fixed_qty:
+        out["qty_per_order"] = float(qty_per_order or 0.0)
+        out["sizing"] = "fixed_qty"
+    else:
+        out["usd_notional_per_asset"] = float(usd_per_order or 0.0)
+        out["sizing"] = ("im_target_pct" if args.usd is None else "fixed_usd")
+    if not use_fixed_qty and args.usd is None:
         out["im_target_pct"] = float(args.im_target_pct)  # type: ignore[arg-type]
         out["im_target_mm_notional_scale"] = 1.0  # applied factor on (pv×lev×pct) per order in this script
         out["portfolio_value_usd_for_sizing"] = portfolio_value_for_sizing
@@ -800,13 +826,18 @@ def main() -> int:
 
     buying_s = ", ".join(long_assets)
     selling_s = ", ".join(short_assets)
-    usd_s = int(usd_per_order) if float(usd_per_order).is_integer() else float(usd_per_order)
+    if use_fixed_qty:
+        qty_s = format_qty_for_indicative_api(float(qty_per_order or 0.0))
+        sizing_disp = f"qty_per_order={qty_s}"
+    else:
+        usd_s = int(usd_per_order) if float(usd_per_order or 0).is_integer() else float(usd_per_order or 0)
+        sizing_disp = f"usd_per_order: {usd_s}"
     print(
         "Buying: "
         f"{buying_s}, "
         "Selling: "
         f"{selling_s}, "
-        f"usd_per_order: {usd_s}, "
+        f"{sizing_disp}, "
         f"max_slippage: {_fmt_slippage_pct(float(max_slippage))}, "
         f"live: {str(bool(args.live)).lower()}"
     )
@@ -853,14 +884,27 @@ def main() -> int:
             attempts: List[Dict[str, Any]] = []
             last_quote: Any = None
             qty_disp = "-"
-            value_disp = f"${int(usd_per_order)}" if float(usd_per_order).is_integer() else f"${usd_per_order}"
+            value_disp = (
+                format_qty_for_indicative_api(float(qty_per_order or 0.0))
+                if use_fixed_qty
+                else (
+                    f"${int(usd_per_order)}" if float(usd_per_order or 0).is_integer() else f"${usd_per_order}"
+                )
+            )
 
             if not args.live:
-                quote_id, quote = ep.quote_id_for_usd_notional(
-                    instrument=instrument,
-                    side=side,
-                    usd_notional=float(usd_per_order),
-                )
+                if use_fixed_qty:
+                    quote_id, quote = ep.quote_id_for_order_qty(
+                        instrument=instrument,
+                        side=side,
+                        order_qty=float(qty_per_order or 0.0),
+                    )
+                else:
+                    quote_id, quote = ep.quote_id_for_usd_notional(
+                        instrument=instrument,
+                        side=side,
+                        usd_notional=float(usd_per_order or 0.0),
+                    )
                 last_quote = quote
                 item["steps"]["quote"] = quote
                 item["steps"]["note"] = "Dry-run only. Re-run with --live to actually place orders."
@@ -875,11 +919,18 @@ def main() -> int:
                 for attempt in range(1, int(_MAX_LIVE_ATTEMPTS) + 1):
                     slip = base_slip + float(attempt - 1) * float(_SLIPPAGE_RETRY_INCREMENT)
                     try:
-                        quote_id, quote = ep.quote_id_for_usd_notional(
-                            instrument=instrument,
-                            side=side,
-                            usd_notional=float(usd_per_order),
-                        )
+                        if use_fixed_qty:
+                            quote_id, quote = ep.quote_id_for_order_qty(
+                                instrument=instrument,
+                                side=side,
+                                order_qty=float(qty_per_order or 0.0),
+                            )
+                        else:
+                            quote_id, quote = ep.quote_id_for_usd_notional(
+                                instrument=instrument,
+                                side=side,
+                                usd_notional=float(usd_per_order or 0.0),
+                            )
                         last_quote = quote
                         if isinstance(quote, dict) and quote.get("qty") is not None:
                             qty_disp = str(quote.get("qty"))
@@ -1103,11 +1154,18 @@ def main() -> int:
                     settlement_asset=str(args.settlement_asset),
                 )
                 try:
-                    quote_id, _quote = ep.quote_id_for_usd_notional(
-                        instrument=instrument,
-                        side=side,
-                        usd_notional=float(usd_per_order),
-                    )
+                    if use_fixed_qty:
+                        quote_id, _quote = ep.quote_id_for_order_qty(
+                            instrument=instrument,
+                            side=side,
+                            order_qty=float(qty_per_order or 0.0),
+                        )
+                    else:
+                        quote_id, _quote = ep.quote_id_for_usd_notional(
+                            instrument=instrument,
+                            side=side,
+                            usd_notional=float(usd_per_order or 0.0),
+                        )
                     resp2 = ep.place_order_market(
                         quote_id=quote_id,
                         side=side,

@@ -1,5 +1,5 @@
 # Railway config-as-code: https://docs.railway.app/reference/config-as-code
-# Repo root must be this folder (Vari/) so Varibot/ and Vari Listings/ paths work.
+# Repo root must be this folder (Vari/) so Varibot/ paths resolve.
 #
 # Use Docker (official python image) instead of Railpack/mise so builds do not
 # download CPython from the mise mirror on every deploy (avoids mirror timeouts).

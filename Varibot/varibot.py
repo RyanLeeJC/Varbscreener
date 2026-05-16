@@ -5,7 +5,7 @@ Varibot orchestrator — implements the VariBotFlowchart workflow:
 
   Auth (validate_vr_token) -> every T minutes: portfolio snapshot ->
   if positions -> PM / managers (see strategy); portfolio-wide TP close-all removed ->
-  if flat -> listingtable -> marketstate -> strategy -> multimarketorder
+  if flat -> venue listing snapshot -> strategy -> multimarketorder
 
 Run from the Varibot directory (or any cwd; this file fixes imports):
 
@@ -14,7 +14,6 @@ Run from the Varibot directory (or any cwd; this file fixes imports):
   python3 varibot.py --usd 20            # fixed USD per order instead
 
 Dependencies: repo layout
-  ../Vari Listings/listingtable.py, marketstate.py, *.json
   ../strategy/gridstrat.py, ./validate_vr_token.py, check_portfolio_stats.py,
   ./closeallpositions.py, ./multimarketorder.py (or *_cadence_1s.py)
 """
@@ -38,8 +37,10 @@ from zoneinfo import ZoneInfo
 # Imports assume sibling scripts + variationalbot live under this directory.
 _VARIBOT_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_VARIBOT_DIR, ".."))
-_LISTINGS_DIR = os.path.join(_REPO_ROOT, "Vari Listings")
-_DEFAULT_MARKETSTATE_JSON = os.path.join(_LISTINGS_DIR, "marketstate.json")
+# Grid / strategy JSON under Varibot (no ``Vari Listings`` pipeline).
+_STRATEGY_LISTING_SNAPSHOT_JSON = os.path.join(_VARIBOT_DIR, "strategy_listing_snapshot.json")
+_STRATEGY_MARKETSTATE_JSON = os.path.join(_VARIBOT_DIR, "strategy_marketstate.json")
+_DEFAULT_MARKETSTATE_JSON = _STRATEGY_MARKETSTATE_JSON
 _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json")
 
 # Check interval (minutes) between cycles/sessions when --period-min is not provided.
@@ -50,8 +51,11 @@ CHECK_INTERVAL_MIN: int = 15
 # Portfolio Manager (PM) for strategy near_median:
 # - Each CHECK_INTERVAL_MIN, PM can close (long,short) pairs when combined uPnL% clears a threshold.
 # - Default threshold: portfolio_manager_pairs.PAIR_TP_THRESHOLD_PCT_DEFAULT (imported below as PM_PAIR_...).
-# - Optionally refill closed slots by refreshing listingtable (pro) and opening replacements.
+# - Optionally refill closed slots by refreshing the Varibot strategy listing snapshot and opening replacements.
 PM_REFILL_DEFAULT_ON: bool = True
+
+# Grid (``strategy/gridstrat``): after each ``grid_mode`` tick, write ``Varibot/gridlimits.json`` via
+# ``sync_gridlimits_json`` for ``grid_limits_reconcile``. Set ``VARIBOT_SYNC_GRIDLIMITS_JSON=0`` to skip.
 
 # Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
 # then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).
@@ -116,11 +120,13 @@ if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
 from check_portfolio_stats import _build_out_dict  # noqa: E402
+from grid_limits_reconcile import sync_gridlimits_json  # noqa: E402
 from positions import _instrument_label  # noqa: E402
 from validate_vr_token import validate_vr_token  # noqa: E402
 from variationalbot.config import load_config  # noqa: E402
 from variationalbot.domain import parse_portfolio_snapshot  # noqa: E402
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints  # noqa: E402
+from variationalbot.vari.endpoints import Instrument, format_qty_for_indicative_api  # noqa: E402
 
 from multimarketorder import (  # noqa: E402
     DEFAULT_IM_TARGET_PCT,
@@ -587,7 +593,7 @@ def _parse_pct_str(v: Any) -> Optional[float]:
 
 def _ticker_abs_7d_from_listing_json(listing_json: str) -> Dict[str, float]:
     """
-    Best-effort map: ticker -> abs(7d change %), from listingtabledata.json.
+    Best-effort map: ticker -> abs(7d change %), from strategy listing JSON (often only ``GRID_ASSET`` has fields).
     """
     try:
         with open(listing_json, "r", encoding="utf-8") as f:
@@ -923,31 +929,84 @@ def _run_script(
     return int(proc.returncode)
 
 
-def run_listingtable_or_use_cache(*, timeout_s: float = 120.0) -> str:
-    plan = (os.getenv("VARIBOT_COINGECKO_PLAN", "pro") or "pro").strip().lower()
-    # listingtable.py now supports --plan; keep this function stable even if the old pro wrapper is removed.
-    script_name = "listingtable.py"
-    script = os.path.join(_LISTINGS_DIR, script_name)
-    json_path = os.path.join(_LISTINGS_DIR, "listingtabledata.json")
-    if not os.path.isfile(script):
-        raise FileNotFoundError(f"{script_name} not found: {script}")
-    rc = _run_script(script, cwd=_LISTINGS_DIR, args=["--plan", str(plan)], timeout_s=timeout_s)
-    if rc != 0 and os.path.isfile(json_path):
-        _log(f"{script_name} exited {rc}; using cached listingtabledata.json if present.")
-    elif rc != 0:
-        raise RuntimeError(f"{script_name} failed (code {rc}) and no cache at {json_path}")
-    if not os.path.isfile(json_path):
-        raise FileNotFoundError(f"Expected {json_path} after listingtable.")
-    return json_path
+def _resolve_marketstate_json_path(*, args: Optional[argparse.Namespace] = None) -> str:
+    if args is not None:
+        v = getattr(args, "marketstate_json", None)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    raw = (os.getenv("VARIBOT_MARKETSTATE_JSON") or "").strip()
+    if raw:
+        return raw
+    return _STRATEGY_MARKETSTATE_JSON
 
 
-def run_marketstate(*, timeout_s: float = 90.0) -> None:
-    script = os.path.join(_LISTINGS_DIR, "marketstate.py")
-    if not os.path.isfile(script):
-        raise FileNotFoundError(f"marketstate.py not found: {script}")
-    rc = _run_script(script, cwd=_LISTINGS_DIR, timeout_s=timeout_s)
-    if rc != 0:
-        raise RuntimeError(f"marketstate.py exited {rc}")
+def _ensure_strategy_marketstate_json(path: Optional[str] = None) -> str:
+    """Write a minimal ``marketstate.json`` (timestamp only) for ``run_strategy`` compatibility."""
+    out_path = (path or _STRATEGY_MARKETSTATE_JSON).strip() or _STRATEGY_MARKETSTATE_JSON
+    parent = os.path.dirname(os.path.abspath(out_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    doc: Dict[str, Any] = {"fetched_at_unix": int(time.time()), "source": "varibot"}
+    tmp = out_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2)
+    os.replace(tmp, out_path)
+    return out_path
+
+
+def _refresh_strategy_listing_snapshot_from_venue(
+    ep: VariEndpoints,
+    *,
+    asset_hint: Optional[str] = None,
+) -> str:
+    """
+    Write ``strategy_listing_snapshot.json`` with one row: ``GRID_ASSET`` (or hint) ``mark_price``
+    from POST /api/quotes/indicative (qty probe). No CoinGecko / Vari Listings.
+    """
+    asset = (asset_hint or os.getenv("GRID_ASSET") or "BTC").strip().upper()
+    inst = Instrument(
+        instrument_type="perpetual_future",
+        underlying=asset,
+        funding_interval_s=3600,
+        settlement_asset="USDC",
+    )
+    q = ep.quote_indicative_simple(instrument=inst, qty=1.0)
+    mark: Optional[float] = None
+    if isinstance(q, dict):
+        for k in ("mark_price", "index_price", "ask", "bid"):
+            if k in q and q[k] is not None:
+                try:
+                    mf = float(q[k])
+                    if mf > 0:
+                        mark = mf
+                        break
+                except (TypeError, ValueError):
+                    continue
+    if mark is None or mark <= 0:
+        raise RuntimeError(f"Could not read a positive mark for {asset} from indicative quote.")
+    doc: Dict[str, Any] = {
+        "fetched_at_unix": int(time.time()),
+        "source": "varibot_indicative",
+        "listings": [{"vari_ticker": asset, "mark_price": float(mark)}],
+    }
+    out_path = _STRATEGY_LISTING_SNAPSHOT_JSON
+    tmp = out_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2)
+    os.replace(tmp, out_path)
+    return out_path
+
+
+def _prepare_varibot_strategy_feed(
+    ep: VariEndpoints,
+    *,
+    args: Optional[argparse.Namespace] = None,
+    asset_hint: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Refresh listing snapshot + marketstate JSON under Varibot/. Returns (listing_json, marketstate_json)."""
+    listing_path = _refresh_strategy_listing_snapshot_from_venue(ep, asset_hint=asset_hint)
+    ms_path = _ensure_strategy_marketstate_json(_resolve_marketstate_json_path(args=args))
+    return listing_path, ms_path
 
 
 def run_strategy_pick_tickers(
@@ -955,10 +1014,15 @@ def run_strategy_pick_tickers(
     strategy_key: str,
     listing_json: str,
     top_n: int,
+    args: Optional[argparse.Namespace] = None,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
-    ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
-    if not os.path.isfile(ms_path):
-        raise FileNotFoundError(f"marketstate.json missing at {ms_path} (run marketstate.py).")
+    ms_path = _resolve_marketstate_json_path(args=args)
+    _ensure_strategy_marketstate_json(ms_path)
+    if not os.path.isfile(str(listing_json)):
+        raise FileNotFoundError(
+            f"Strategy listing snapshot missing: {listing_json}. "
+            "Call _prepare_varibot_strategy_feed(ep, ...) before run_strategy_pick_tickers."
+        )
     return strategies_mod.run_strategy(
         strategy_key=strategy_key,
         listing_json=listing_json,
@@ -1056,33 +1120,57 @@ def run_multimarket_asset_side(
     multi_script: str,
     asset: str,
     side: str,
-    usd: float,
+    usd: Optional[float] = None,
+    qty: Optional[float] = None,
     live: bool,
     extra_args: Optional[List[str]] = None,
 ) -> int:
-    """Single-asset market job: --assets ASSET --side buy|sell --usd (used by gridstrat events)."""
+    """Single-asset market job: --assets ASSET --side buy|sell with exactly one of --usd or --qty."""
     script = os.path.join(_VARIBOT_DIR, multi_script)
     if not os.path.isfile(script):
         raise FileNotFoundError(f"Multi-market script not found: {script}")
+    if (usd is None) == (qty is None):
+        raise ValueError("run_multimarket_asset_side: pass exactly one of usd= or qty=")
     sym = str(asset).strip().upper()
     sd = str(side).strip().lower()
     if sd not in ("buy", "sell"):
         raise ValueError("side must be buy or sell")
-    cmd_args: List[str] = [
-        "--usd",
-        str(float(usd)),
-        "--assets",
-        sym,
-        "--side",
-        sd,
-    ]
+    if qty is not None:
+        cmd_args: List[str] = [
+            "--qty",
+            format_qty_for_indicative_api(float(qty)),
+            "--assets",
+            sym,
+            "--side",
+            sd,
+        ]
+    else:
+        cmd_args = [
+            "--usd",
+            str(float(usd or 0.0)),
+            "--assets",
+            sym,
+            "--side",
+            sd,
+        ]
     if live:
         cmd_args.append("--live")
     cmd_args.extend(["--max-ticker-entries", str(int(INVERT_EXTREME_MAX_TICKER_ENTRIES))])
     if extra_args:
         cmd_args.extend(extra_args)
-    _log(f"Invoking {multi_script} asset={sym} side={sd} usd={usd} live={live}")
+    _log(f"Invoking {multi_script} asset={sym} side={sd} {'qty=' + cmd_args[1] if qty is not None else 'usd=' + str(usd)} live={live}")
     return _run_script(script, cwd=_VARIBOT_DIR, args=cmd_args, timeout_s=None)
+
+
+def _sync_gridlimits_json_if_grid(meta: Dict[str, Any]) -> None:
+    """Write ``gridlimits.json`` from strategy meta when ``grid_mode`` (paired or legacy)."""
+    if not meta.get("grid_mode"):
+        return
+    if (os.environ.get("VARIBOT_SYNC_GRIDLIMITS_JSON") or "").strip().lower() in ("0", "false", "no", "off"):
+        return
+    p = sync_gridlimits_json(meta=meta, varibot_dir=_VARIBOT_DIR)
+    if p:
+        _log(f"step: synced gridlimits.json -> {p}")
 
 
 def _execute_grid_market_events(meta: Dict[str, Any], *, args: argparse.Namespace) -> None:
@@ -1090,6 +1178,7 @@ def _execute_grid_market_events(meta: Dict[str, Any], *, args: argparse.Namespac
     if not evs:
         return
     script = str(args.multi_script)
+    sizing = str(meta.get("grid_market_sizing") or "qty").strip().lower()
     for raw in evs:
         if not isinstance(raw, dict):
             continue
@@ -1102,23 +1191,40 @@ def _execute_grid_market_events(meta: Dict[str, Any], *, args: argparse.Namespac
             continue
         if act not in ("open_buy", "open_sell"):
             continue
-        usd = float(raw.get("usd") or 0.0)
-        if usd <= 0:
-            continue
         asset = str(raw.get("asset") or meta.get("grid_asset") or "").strip().upper()
         if not asset:
             _log("gridstrat: skip event (missing asset)")
             continue
         side = "buy" if act == "open_buy" else "sell"
         px = raw.get("price")
-        _log(f"gridstrat: {act} {asset} usd={usd:g} mark_rung={px!r} live={bool(args.live)}")
-        rc = run_multimarket_asset_side(
-            multi_script=script,
-            asset=asset,
-            side=side,
-            usd=usd,
-            live=bool(args.live),
+        qty_ev = raw.get("qty")
+        use_qty = (
+            sizing != "usd"
+            and qty_ev is not None
+            and float(qty_ev) > 0.0
         )
+        if use_qty:
+            qf = float(qty_ev)
+            _log(f"gridstrat: {act} {asset} qty={format_qty_for_indicative_api(qf)} mark_rung={px!r} live={bool(args.live)}")
+            rc = run_multimarket_asset_side(
+                multi_script=script,
+                asset=asset,
+                side=side,
+                qty=qf,
+                live=bool(args.live),
+            )
+        else:
+            usd = float(raw.get("usd") or 0.0)
+            if usd <= 0:
+                continue
+            _log(f"gridstrat: {act} {asset} usd={usd:g} mark_rung={px!r} live={bool(args.live)}")
+            rc = run_multimarket_asset_side(
+                multi_script=script,
+                asset=asset,
+                side=side,
+                usd=usd,
+                live=bool(args.live),
+            )
         if rc != 0:
             _log(f"{script} grid event exited {rc}")
 
@@ -1237,10 +1343,12 @@ def _near_median_substitute_skew_rejected_multimarket(
 
         top_n = _top_n_for_strategy(strat_key)
         try:
+            listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
             longs, shorts, meta = run_strategy_pick_tickers(
                 strategy_key=strat_key,
                 listing_json=listing_json,
                 top_n=top_n,
+                args=args,
             )
         except Exception as e:
             _log(
@@ -1466,19 +1574,16 @@ def _near_median_pm_dry_run_refill_preview(
         f"(removed {len(closed_preview)} close-leg symbol(s) from current {len(open_syms)} open)."
     )
 
-    _log("PM(near_median): dry-run preview — refreshing listingtable (pro) + marketstate as needed...")
+    _log("PM(near_median): dry-run preview — refreshing strategy feed (venue mark → Varibot JSON)...")
     try:
-        listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
-        ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
-        if not os.path.isfile(ms_path):
-            _log("PM(near_median): dry-run preview — marketstate.json missing; running marketstate.py...")
-            run_marketstate(timeout_s=float(getattr(args, "marketstate_timeout_s", 90.0)))
+        listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
 
         top_n = _top_n_for_strategy(strat_key)
         longs, shorts, meta = run_strategy_pick_tickers(
             strategy_key=strat_key,
             listing_json=listing_json,
             top_n=top_n,
+            args=args,
         )
         need_each_side = int(n_pairs)
         repl_l, repl_s = filter_replacements(
@@ -1645,13 +1750,9 @@ def _near_median_pm_manager(
         return
     usd_run = float(leg_refill)
 
-    # Refresh listing cache (pro) and ensure marketstate exists (strategy runner requires it).
-    _log("PM(invert_extreme): refreshing listingtable (pro) for replacements...")
-    listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
-    ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
-    if not os.path.isfile(ms_path):
-        _log("PM(near_median): marketstate.json missing; running marketstate.py...")
-        run_marketstate(timeout_s=float(getattr(args, "marketstate_timeout_s", 90.0)))
+    # Refresh strategy listing snapshot (venue mark) for replacement picks.
+    _log("PM(invert_extreme): refreshing strategy feed for replacements...")
+    listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
 
     # Disallow: closed this cycle + currently open positions (post-close).
     open_syms: Set[str] = set()
@@ -1663,7 +1764,9 @@ def _near_median_pm_manager(
     disallow = set(open_syms) | set(closed_syms)
 
     top_n = _top_n_for_strategy(strat_key)
-    longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
+    longs, shorts, meta = run_strategy_pick_tickers(
+        strategy_key=strat_key, listing_json=listing_json, top_n=top_n, args=args
+    )
 
     # Pick per-side replacements.
     repl_l = filter_replacements_one_side(candidates=longs, disallow=disallow, need=int(closed_long_n))
@@ -1671,7 +1774,7 @@ def _near_median_pm_manager(
 
     # Never open more replacement tickers than slots remaining under max book size (e.g. 60).
     # If both long and short refills were planned but only one slot remains, keep the candidate
-    # with larger abs(7d change %) from listingtabledata.json (tie: earlier in sorted list wins).
+    # with larger abs(7d change %) from strategy listing JSON (tie: earlier in sorted list wins).
     max_open_tickers = int(INVERT_EXTREME_MAX_TICKER_ENTRIES)
     slot_budget = max(0, max_open_tickers - len(open_syms))
     planned_n = len(repl_l) + len(repl_s)
@@ -1823,17 +1926,16 @@ def _invert_extreme_topup_if_needed(
 
     if not bool(args.live):
         _log(
-            "PM(invert_extreme): dry-run — running listingtable + strategy picks + multimarketorder "
+            "PM(invert_extreme): dry-run — refreshing strategy feed + strategy picks + multimarketorder "
             "(no --live; prints sizing line and per-ticker quote dry-run)."
         )
 
-    listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
-    ms_path = os.path.join(_LISTINGS_DIR, "marketstate.json")
-    if not os.path.isfile(ms_path):
-        run_marketstate(timeout_s=float(getattr(args, "marketstate_timeout_s", 90.0)))
+    listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
 
     top_n = _top_n_for_strategy(strat_key)
-    longs, shorts, meta = run_strategy_pick_tickers(strategy_key=strat_key, listing_json=listing_json, top_n=top_n)
+    longs, shorts, meta = run_strategy_pick_tickers(
+        strategy_key=strat_key, listing_json=listing_json, top_n=top_n, args=args
+    )
     disallow = set(open_syms)
 
     # Fill by global priority: biggest abs(7d chg%) first (ties: keep strategy order/ticker).
@@ -1929,22 +2031,17 @@ def one_cycle(
 
     if not has_pos:
         _clear_position_latch()
-        _log("No open positions -> listingtable -> marketstate -> strategy -> multimarket")
-        cg_plan = (os.getenv("VARIBOT_COINGECKO_PLAN", "pro") or "pro").strip().lower()
-        _log(
-            f"step: running listingtable ({'CoinGecko Pro' if cg_plan == 'pro' else 'CoinGecko Free'}) "
-            f"(may take a while)..."
-        )
-        listing_json = run_listingtable_or_use_cache(timeout_s=float(args.listing_timeout_s))
-        _log("step: running marketstate.py...")
-        run_marketstate(timeout_s=float(args.marketstate_timeout_s))
+        _log("No open positions -> venue listing snapshot -> strategy -> multimarket")
+        _log("step: refreshing strategy feed (indicative mark → Varibot JSON)...")
+        listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
         top_n = _top_n_for_strategy(strat_key)
         longs, shorts, meta = run_strategy_pick_tickers(
             strategy_key=strat_key,
             listing_json=listing_json,
             top_n=top_n,
+            args=args,
         )
-        _log("step: marketstate finished")
+        _log("step: strategy feed ready")
         _log(f"step: strategy finished (strategy={meta.get('strategy')}, longs={len(longs)}, shorts={len(shorts)})")
 
         if _should_write_strategy_output():
@@ -1966,7 +2063,22 @@ def one_cycle(
         if meta.get("grid_mode"):
             n_ev = len(meta.get("grid_market_events") or [])
             _log(f"step: gridstrat grid_mode events={n_ev}")
+            if meta.get("grid_paired_limit_mode"):
+                n_b = len(meta.get("grid_buy_rungs") or [])
+                n_s = len(meta.get("grid_sell_rungs") or [])
+                _log(f"step: gridstrat paired_limit open_rungs buy={n_b} sell={n_s}")
+            if meta.get("grid_bounds_explicit"):
+                _log(
+                    f"step: gridstrat bounds explicit lower={meta.get('grid_lower')} "
+                    f"upper={meta.get('grid_upper')}"
+                )
+            elif meta.get("grid_band_pct") is not None:
+                _log(
+                    f"step: gridstrat bounds ±{meta.get('grid_band_pct')}% (pinned) "
+                    f"lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
+                )
             _execute_grid_market_events(meta, args=args)
+            _sync_gridlimits_json_if_grid(meta)
             return False
 
         if not longs and not shorts:
@@ -2014,23 +2126,28 @@ def one_cycle(
     strat_norm = _strategy_key_normalized(strat_key)
 
     if _is_grid_like_strategy(strat_key):
-        listing_grid = os.path.join(_LISTINGS_DIR, "listingtabledata.json")
-        if os.path.isfile(listing_grid):
-            try:
-                top_n_g = _top_n_for_strategy(strat_key)
-                _, _, meta_g = run_strategy_pick_tickers(
-                    strategy_key=strat_key,
-                    listing_json=listing_grid,
-                    top_n=top_n_g,
-                )
-                if meta_g.get("grid_mode"):
-                    n_ev = len(meta_g.get("grid_market_events") or [])
-                    if n_ev:
-                        _log(f"gridstrat (open positions): events={n_ev}")
-                    _execute_grid_market_events(meta_g, args=args)
-                    return False
-            except Exception as e:
-                _log(f"WARNING: gridstrat cycle with open positions ({type(e).__name__}: {e})")
+        try:
+            listing_grid, _ = _prepare_varibot_strategy_feed(ep, args=args)
+            top_n_g = _top_n_for_strategy(strat_key)
+            _, _, meta_g = run_strategy_pick_tickers(
+                strategy_key=strat_key,
+                listing_json=listing_grid,
+                top_n=top_n_g,
+                args=args,
+            )
+            if meta_g.get("grid_mode"):
+                n_ev = len(meta_g.get("grid_market_events") or [])
+                if n_ev:
+                    _log(f"gridstrat (open positions): events={n_ev}")
+                if meta_g.get("grid_paired_limit_mode"):
+                    n_b = len(meta_g.get("grid_buy_rungs") or [])
+                    n_s = len(meta_g.get("grid_sell_rungs") or [])
+                    _log(f"gridstrat (open positions): paired_limit rungs buy={n_b} sell={n_s}")
+                _execute_grid_market_events(meta_g, args=args)
+                _sync_gridlimits_json_if_grid(meta_g)
+                return False
+        except Exception as e:
+            _log(f"WARNING: gridstrat cycle with open positions ({type(e).__name__}: {e})")
 
     # Log oldest open position (helps sanity-check time-kill / holds).
     if strat_norm == "invert_extreme":
@@ -2131,7 +2248,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--pm-refill",
         action="store_true",
-        help="Portfolio Manager: after closing eligible pairs, refresh listingtable_pro and open replacements.",
+        help="Portfolio Manager: after closing eligible pairs, refresh strategy feed and open replacements.",
     )
     p.add_argument(
         "--pm-no-refill",
@@ -2149,15 +2266,15 @@ def parse_args() -> argparse.Namespace:
         choices=("marketstate", "auto", "latch", "orders"),
         default="marketstate",
         help=(
-            "Time-in-position clock: marketstate=Vari Listings/marketstate.json "
-            "(fetched_at_unix / fetched_at from the run just before orders; default); "
+            "Time-in-position clock: marketstate=Varibot strategy_marketstate.json "
+            "(fetched_at_unix from the feed refresh before orders; default); "
             "auto=marketstate then orders then latch; latch|orders=see help text."
         ),
     )
     p.add_argument(
         "--marketstate-json",
         default=None,
-        help="Override path to marketstate.json for time-in-position (default: Vari Listings/marketstate.json).",
+        help="Override path to marketstate JSON for time-in-position (default: Varibot/strategy_marketstate.json).",
     )
     p.add_argument(
         "--usd",
@@ -2188,8 +2305,17 @@ def parse_args() -> argparse.Namespace:
         default=Strategy,
         help=f"Strategy key to use when flat (default {Strategy!r}; see strategy/gridstrat.py).",
     )
-    p.add_argument("--listing-timeout-s", type=float, default=120.0)
-    p.add_argument("--marketstate-timeout-s", type=float, default=90.0)
+    p.add_argument(
+        "--grid-band-pct",
+        type=float,
+        default=None,
+        dest="grid_band_pct",
+        metavar="PCT",
+        help=(
+            "Grid only: set GRID_BAND_PCT for this process (symmetric ±%% bracket when "
+            "GRID_LOWER/GRID_UPPER are not both set; see strategy/gridstrat.py)."
+        ),
+    )
     p.add_argument("--once", action="store_true", help="Run a single cycle then exit (no sleep loop).")
     p.add_argument(
         "--no-align",
@@ -2217,6 +2343,8 @@ def parse_args() -> argparse.Namespace:
 
 def _child_main() -> int:
     args = parse_args()
+    if getattr(args, "grid_band_pct", None) is not None:
+        os.environ["GRID_BAND_PCT"] = str(float(args.grid_band_pct))
     probe_ticker = (getattr(args, "mm_probe_short", None) or "").strip()
     if probe_ticker:
         if not bool(args.live):
@@ -2225,7 +2353,7 @@ def _child_main() -> int:
         run_auth_or_exit()
         cfg, ep = build_endpoints()
         usd_probe = float(args.usd) if args.usd is not None else float(getattr(args, "mm_probe_usd", 100.0) or 100.0)
-        listing_json = run_listingtable_or_use_cache(timeout_s=float(getattr(args, "listing_timeout_s", 120.0)))
+        listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args, asset_hint=sym_u)
         strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
         sym_u = probe_ticker.upper()
         _log(
