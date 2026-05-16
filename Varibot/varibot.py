@@ -122,6 +122,7 @@ if _VARIBOT_DIR not in sys.path:
 
 from check_portfolio_stats import _build_out_dict  # noqa: E402
 from grid_limits_reconcile import (  # noqa: E402
+    _position_qty_summary,
     fetch_pending_limit_keys_for_asset,
     run_grid_limits_bootstrap,
 )
@@ -142,6 +143,7 @@ from multimarketorder import (  # noqa: E402
 import strategy.gridstrat as strategies_mod  # noqa: E402
 from strategy.gridstrat import (  # noqa: E402
     DEFAULT_MAX_TICKER_ENTRIES as INVERT_EXTREME_MAX_TICKER_ENTRIES,
+    grid_trading_ticker_band_pcts,
 )
 from portfolio_manager_pairs import (
     PAIR_TP_THRESHOLD_PCT_DEFAULT as PM_PAIR_TP_THRESHOLD_PCT_DEFAULT,
@@ -1025,6 +1027,9 @@ def run_strategy_pick_tickers(
     venue_pending_keys: Optional[Set[Tuple[str, str]]] = None,
     venue_mark: Optional[float] = None,
     account_flat: bool = False,
+    venue_pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
+    venue_marks_by_asset: Optional[Dict[str, float]] = None,
+    account_flat_by_asset: Optional[Dict[str, bool]] = None,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
     ms_path = _resolve_marketstate_json_path(args=args)
     _ensure_strategy_marketstate_json(ms_path)
@@ -1042,25 +1047,99 @@ def run_strategy_pick_tickers(
         venue_pending_keys=venue_pending_keys,
         venue_mark=venue_mark,
         account_flat=bool(account_flat),
+        venue_pending_by_asset=venue_pending_by_asset,
+        venue_marks_by_asset=venue_marks_by_asset,
+        account_flat_by_asset=account_flat_by_asset,
     )
 
 
-def _fetch_venue_pending_for_grid(ep: VariEndpoints) -> Optional[Set[Tuple[str, str]]]:
-    """Pending limit keys for GRID_ASSET (live paired_limit venue sync)."""
-    asset = str(os.environ.get("GRID_ASSET") or "BTC").strip().upper()
+def _fetch_venue_pending_for_grid(
+    ep: VariEndpoints, *, asset: str
+) -> Optional[Set[Tuple[str, str]]]:
+    """Pending limit keys for one grid ticker (live paired_limit venue sync)."""
+    sym = str(asset).strip().upper()
     try:
-        return fetch_pending_limit_keys_for_asset(ep, asset=asset)
+        return fetch_pending_limit_keys_for_asset(ep, asset=sym)
     except Exception as e:
-        _log(f"gridlimits: pending fetch before strategy failed ({type(e).__name__}: {e})")
+        _log(f"gridlimits[{sym}]: pending fetch before strategy failed ({type(e).__name__}: {e})")
         return None
 
 
+def _grid_venue_inputs_for_cycle(
+    ep: VariEndpoints,
+    *,
+    args: argparse.Namespace,
+    positions_raw: Any,
+) -> Tuple[Dict[str, float], Dict[str, Set[Tuple[str, str]]], Dict[str, bool]]:
+    """Per-ticker venue marks, pending limit keys, and flat flags for ``pick_tickers``."""
+    marks: Dict[str, float] = {}
+    pending_by: Dict[str, Set[Tuple[str, str]]] = {}
+    flat_by: Dict[str, bool] = {}
+    for asset in grid_trading_ticker_band_pcts():
+        if bool(args.live):
+            try:
+                marks[asset] = float(_fetch_venue_mark_for_asset(ep, asset=asset))
+            except Exception as e:
+                _log(f"gridlimits[{asset}]: venue mark failed ({type(e).__name__}: {e})")
+            pk = _fetch_venue_pending_for_grid(ep, asset=asset)
+            pending_by[asset] = pk if pk is not None else set()
+        else:
+            pending_by[asset] = set()
+        pos_s = _position_qty_summary(positions_raw or {}, asset=asset)
+        flat_by[asset] = not bool(pos_s.get("has_position")) and len(pending_by.get(asset) or ()) == 0
+    return marks, pending_by, flat_by
+
+
 def _log_gridstrat_paired_step(meta: Dict[str, Any], *, prefix: str) -> None:
+    by_asset = meta.get("grid_by_asset")
+    if isinstance(by_asset, dict) and by_asset:
+        for sym, am in by_asset.items():
+            if not isinstance(am, dict):
+                continue
+            logs = am.get("grid_paired_step_logs")
+            if not isinstance(logs, list) or not logs:
+                continue
+            for line in logs[-6:]:
+                _log(f"{prefix}[{sym}]: {line}")
+        return
     logs = meta.get("grid_paired_step_logs")
     if not isinstance(logs, list) or not logs:
         return
     for line in logs[-8:]:
         _log(f"{prefix}: {line}")
+
+
+def _log_gridstrat_step_summary(meta: Dict[str, Any], *, positions_label: str) -> None:
+    by_asset = meta.get("grid_by_asset")
+    if isinstance(by_asset, dict) and by_asset:
+        for sym, am in by_asset.items():
+            if not isinstance(am, dict):
+                continue
+            n_b = len(am.get("grid_buy_rungs") or [])
+            n_s = len(am.get("grid_sell_rungs") or [])
+            _log(
+                f"step: gridstrat[{sym}] ({positions_label}) rungs buy={n_b} sell={n_s} "
+                f"mark={am.get('grid_mark')!r} band=±{am.get('grid_band_pct')}% "
+                f"source={am.get('grid_mark_source')!r}"
+            )
+            if am.get("grid_bounds_explicit"):
+                _log(
+                    f"step: gridstrat[{sym}] bounds explicit lower={am.get('grid_lower')} "
+                    f"upper={am.get('grid_upper')}"
+                )
+            elif am.get("grid_band_pct") is not None:
+                _log(
+                    f"step: gridstrat[{sym}] bounds ±{am.get('grid_band_pct')}% (pinned) "
+                    f"lower={am.get('grid_lower')} upper={am.get('grid_upper')}"
+                )
+        return
+    if meta.get("grid_paired_limit_mode"):
+        n_b = len(meta.get("grid_buy_rungs") or [])
+        n_s = len(meta.get("grid_sell_rungs") or [])
+        _log(
+            f"step: gridstrat paired_limit open_rungs buy={n_b} sell={n_s} "
+            f"mark={meta.get('grid_mark')!r} source={meta.get('grid_mark_source')!r}"
+        )
 
 
 def _top_n_for_strategy(strategy_key: str) -> int:
@@ -2151,20 +2230,23 @@ def one_cycle(
         _log("step: refreshing strategy feed (indicative mark → Varibot JSON)...")
         listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
         top_n = _top_n_for_strategy(strat_key)
-        grid_asset = str(os.environ.get("GRID_ASSET") or "BTC").strip().upper()
-        venue_mark_live: Optional[float] = None
-        venue_pending = None
-        if bool(args.live) and _is_grid_like_strategy(strat_key):
-            venue_mark_live = _fetch_venue_mark_for_asset(ep, asset=grid_asset)
-            _log(f"step: venue indicative mark {grid_asset}={venue_mark_live:g}")
-            venue_pending = _fetch_venue_pending_for_grid(ep)
+        marks_by: Dict[str, float] = {}
+        pending_by: Dict[str, Set[Tuple[str, str]]] = {}
+        flat_by: Dict[str, bool] = {}
+        if _is_grid_like_strategy(strat_key):
+            marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
+                ep, args=args, positions_raw=raw_pos
+            )
+            for sym, mk in sorted(marks_by.items()):
+                _log(f"step: venue indicative mark {sym}={mk:g}")
         longs, shorts, meta = run_strategy_pick_tickers(
             strategy_key=strat_key,
             listing_json=listing_json,
             top_n=top_n,
             args=args,
-            venue_pending_keys=venue_pending,
-            venue_mark=venue_mark_live,
+            venue_marks_by_asset=marks_by or None,
+            venue_pending_by_asset=pending_by or None,
+            account_flat_by_asset=flat_by or None,
             account_flat=True,
         )
         _log("step: strategy feed ready")
@@ -2194,22 +2276,7 @@ def one_cycle(
             n_ev = len(meta.get("grid_market_events") or [])
             _log(f"step: gridstrat grid_mode events={n_ev}")
             if meta.get("grid_paired_limit_mode"):
-                n_b = len(meta.get("grid_buy_rungs") or [])
-                n_s = len(meta.get("grid_sell_rungs") or [])
-                _log(
-                    f"step: gridstrat paired_limit open_rungs buy={n_b} sell={n_s} "
-                    f"mark={meta.get('grid_mark')!r} source={meta.get('grid_mark_source')!r}"
-                )
-            if meta.get("grid_bounds_explicit"):
-                _log(
-                    f"step: gridstrat bounds explicit lower={meta.get('grid_lower')} "
-                    f"upper={meta.get('grid_upper')}"
-                )
-            elif meta.get("grid_band_pct") is not None:
-                _log(
-                    f"step: gridstrat bounds ±{meta.get('grid_band_pct')}% (pinned) "
-                    f"lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
-                )
+                _log_gridstrat_step_summary(meta, positions_label="flat")
             _run_grid_limits_bootstrap_if_grid(
                 ep=ep,
                 meta=meta,
@@ -2268,19 +2335,17 @@ def one_cycle(
         try:
             listing_grid, _ = _prepare_varibot_strategy_feed(ep, args=args)
             top_n_g = _top_n_for_strategy(strat_key)
-            grid_asset = str(os.environ.get("GRID_ASSET") or "BTC").strip().upper()
-            venue_mark_live = None
-            venue_pending = None
-            if bool(args.live):
-                venue_mark_live = _fetch_venue_mark_for_asset(ep, asset=grid_asset)
-                venue_pending = _fetch_venue_pending_for_grid(ep)
+            marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
+                ep, args=args, positions_raw=raw_pos
+            )
             _, _, meta_g = run_strategy_pick_tickers(
                 strategy_key=strat_key,
                 listing_json=listing_grid,
                 top_n=top_n_g,
                 args=args,
-                venue_pending_keys=venue_pending,
-                venue_mark=venue_mark_live,
+                venue_marks_by_asset=marks_by,
+                venue_pending_by_asset=pending_by,
+                account_flat_by_asset=flat_by,
                 account_flat=False,
             )
             if meta_g.get("grid_mode"):
@@ -2290,9 +2355,7 @@ def one_cycle(
                 if meta_g.get("grid_fresh_flat_start"):
                     _log("gridstrat (open positions): fresh flat reinit skipped — has position")
                 if meta_g.get("grid_paired_limit_mode"):
-                    n_b = len(meta_g.get("grid_buy_rungs") or [])
-                    n_s = len(meta_g.get("grid_sell_rungs") or [])
-                    _log(f"gridstrat (open positions): paired_limit rungs buy={n_b} sell={n_s}")
+                    _log_gridstrat_step_summary(meta_g, positions_label="open positions")
                     _log_gridstrat_paired_step(meta_g, prefix="gridstrat")
                 _run_grid_limits_bootstrap_if_grid(
                     ep=ep,

@@ -14,10 +14,10 @@ Configure via environment variables (override file-level ``DEFAULT_*`` constants
 
   GRID_EXECUTION=paired_limit   # paired_limit (default) | legacy_market
   GRID_REARM_ON_BREACH=reanchor # reanchor | slide (same as reanchor) | halt — paired mode only
-  GRID_ASSET=BTC
+  GRID_ASSET=BTC              # legacy single-ticker fallback when GRID_TRADING_TICKERS is empty
   GRID_LOWER=86000
   GRID_UPPER=89000
-  GRID_BAND_PCT=0.5        # symmetric ±% around mark when either GRID_LOWER or GRID_UPPER is unset (see DEFAULT_GRID_BAND_PCT)
+  GRID_BAND_PCT=0.5        # optional global override of per-ticker band % in GRID_TRADING_TICKERS
   GRID_NUM=30              # equal steps across [lower, upper] for paired spacing = (upper-lower)/GRID_NUM
   GRID_TYPE=arithmetic     # or geometric (paired ladder uses arithmetic spacing only)
   GRID_INVESTMENT_USD=300
@@ -76,16 +76,66 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "reanchor"
 DEFAULT_GRID_ASSET: str = "BTC"
 DEFAULT_GRID_INVESTMENT_USD: float = 10.0
 DEFAULT_GRID_LEVERAGE: float = 50.0
-DEFAULT_GRID_NUM: int = 10  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
+DEFAULT_GRID_NUM: int = 4  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
 DEFAULT_GRID_MARKET_SIZING: str = "qty"  # legacy market mode only: "qty" | "usd"
-DEFAULT_GRID_BAND_PCT: float = 0.2 # Symmetric bracket around mark when explicit GRID_LOWER+GRID_UPPER are not both set (see resolve_grid_bounds).
+DEFAULT_GRID_BAND_PCT: float = 0.2  # fallback band % when a ticker is not listed below
 DEFAULT_GRID_LOWER: float = float("nan")  # set both bounds finite to pin explicit bracket
 DEFAULT_GRID_UPPER: float = float("nan")
 DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses arithmetic spacing)
 
+# -----------------------------------------------------------------------------
+# Multi-ticker grid — edit here: each ticker is managed independently (own state + gridlimits).
+# Shared (full notional each): GRID_INVESTMENT_USD, GRID_NUM, GRID_LEVERAGE via env / defaults above.
+# Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
+# -----------------------------------------------------------------------------
+GRID_TRADING_TICKERS: Dict[str, float] = {
+    "BTC": 0.2,
+    "ETH": 0.35,
+}
+
+ROOT_STATE_SCHEMA_VERSION: int = 4
+
+
+def grid_trading_ticker_band_pcts() -> Dict[str, float]:
+    """Active tickers → default ±band % (uppercased keys)."""
+    if not GRID_TRADING_TICKERS:
+        asset = (os.environ.get("GRID_ASSET") or DEFAULT_GRID_ASSET).strip().upper()
+        return {asset: float(DEFAULT_GRID_BAND_PCT)}
+    out: Dict[str, float] = {}
+    for k, v in GRID_TRADING_TICKERS.items():
+        sym = str(k).strip().upper()
+        if not sym:
+            continue
+        try:
+            out[sym] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return out or {DEFAULT_GRID_ASSET: float(DEFAULT_GRID_BAND_PCT)}
+
+
+def grid_band_pct_for_asset(asset: str) -> float:
+    sym = str(asset).strip().upper()
+    tickers = grid_trading_ticker_band_pcts()
+    if sym in tickers:
+        return float(tickers[sym])
+    return float(DEFAULT_GRID_BAND_PCT)
+
+
+def iter_grid_asset_metas(meta: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+    """(ASSET, per-ticker meta) from combined ``pick_tickers`` output."""
+    by = meta.get("grid_by_asset")
+    if isinstance(by, dict) and by:
+        out: List[Tuple[str, Dict[str, Any]]] = []
+        for k, v in by.items():
+            if isinstance(v, dict):
+                out.append((str(k).strip().upper(), v))
+        return out
+    asset = str(meta.get("grid_asset") or DEFAULT_GRID_ASSET).strip().upper()
+    return [(asset, meta)]
+
 
 # multimarketorder.py imports this as sizing divisor fallback when strategy import succeeds.
-DEFAULT_MAX_TICKER_ENTRIES: int = 1
+DEFAULT_MAX_TICKER_ENTRIES: int = max(1, len(GRID_TRADING_TICKERS) or 1)
 
 TRADE_THESIS: str = (
     "Default: paired arithmetic limit grid (sim-aligned) with optional breach re-anchor; "
@@ -131,6 +181,7 @@ def breach_reanchors_on_breach() -> bool:
 
 
 def env_grid_band_pct() -> float:
+    """Global ``GRID_BAND_PCT`` override (applies to all tickers when set)."""
     raw = (os.environ.get("GRID_BAND_PCT") or "").strip()
     if not raw:
         return float(DEFAULT_GRID_BAND_PCT)
@@ -140,11 +191,40 @@ def env_grid_band_pct() -> float:
         return float(DEFAULT_GRID_BAND_PCT)
 
 
+def env_grid_band_pct_for_asset(asset: str) -> float:
+    raw = (os.environ.get("GRID_BAND_PCT") or "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    return grid_band_pct_for_asset(asset)
+
+
+def _normalize_root_state(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Migrate legacy single-ticker state file → ``schema_version`` 4 multi-asset map."""
+    if int(raw.get("schema_version") or 0) == ROOT_STATE_SCHEMA_VERSION and isinstance(
+        raw.get("assets"), dict
+    ):
+        return raw
+    assets: Dict[str, Any] = {}
+    if isinstance(raw.get("assets"), dict):
+        assets = dict(raw["assets"])
+    elif int(raw.get("schema_version") or 0) == 3 and isinstance(raw.get("orders"), list):
+        legacy_asset = (os.environ.get("GRID_ASSET") or DEFAULT_GRID_ASSET).strip().upper()
+        assets[legacy_asset] = dict(raw)
+    elif raw:
+        legacy_asset = (os.environ.get("GRID_ASSET") or DEFAULT_GRID_ASSET).strip().upper()
+        assets[legacy_asset] = dict(raw)
+    return {"schema_version": ROOT_STATE_SCHEMA_VERSION, "assets": assets}
+
+
 def resolve_grid_bounds(
     *,
     mark: float,
     cfg: GridConfig,
     state: Dict[str, Any],
+    band_pct: Optional[float] = None,
 ) -> Tuple[float, float, bool, Optional[float], Dict[str, float], List[str]]:
     """
     Resolve effective lower/upper for the ladder.
@@ -162,7 +242,7 @@ def resolve_grid_bounds(
     if explicit:
         return lo_c, hi_c, True, None, {}, ["pinned_lower", "pinned_upper", "pinned_band_pct"]
 
-    band = float(env_grid_band_pct())
+    band = float(band_pct) if band_pct is not None else float(env_grid_band_pct_for_asset(cfg.asset))
     reset = _truthy_env("GRIDSTRAT_RESET")
 
     pin_lo = state.get("pinned_lower")
@@ -239,8 +319,12 @@ class GridConfig:
     mark_override: Optional[float]
 
     @classmethod
-    def from_env(cls) -> "GridConfig":
-        asset = (os.environ.get("GRID_ASSET") or DEFAULT_GRID_ASSET).strip().upper()
+    def from_env(cls, asset: Optional[str] = None) -> "GridConfig":
+        asset = (
+            str(asset).strip().upper()
+            if asset
+            else (os.environ.get("GRID_ASSET") or DEFAULT_GRID_ASSET).strip().upper()
+        )
         raw_lo = (os.environ.get("GRID_LOWER") or "").strip()
         raw_hi = (os.environ.get("GRID_UPPER") or "").strip()
         lower = float(raw_lo) if raw_lo else float(DEFAULT_GRID_LOWER)
@@ -272,7 +356,7 @@ class GridConfig:
             if self.upper <= self.lower:
                 return "GRID_UPPER must be > GRID_LOWER."
         else:
-            pct = env_grid_band_pct()
+            pct = env_grid_band_pct_for_asset(self.asset)
             if pct <= 0:
                 return "GRID_BAND_PCT must be > 0 when GRID_LOWER and GRID_UPPER are not both set."
         if self.n_grids < 2:
@@ -418,7 +502,6 @@ def advance_grid_state(
             if _pk in state:
                 new_state[_pk] = state[_pk]
         state = new_state
-        save_state(_default_state_path(), state)
         os.environ.pop("GRIDSTRAT_RESET", None)
         return events, state
 
@@ -475,37 +558,31 @@ def advance_grid_state(
     state["sell_armed"] = sorted(sell_armed)
     state["last_mark"] = float(mark)
     state["levels_template"] = levels_stored
-    save_state(_default_state_path(), state)
     return events, state
 
 
-def pick_tickers(
+def _pick_tickers_one_asset(
     *,
+    asset: str,
+    band_pct: float,
     listing_json: str,
-    marketstate_json: Optional[str] = None,
-    top_n: Optional[int] = None,
+    state: Dict[str, Any],
     venue_pending_keys: Optional[Set[Tuple[str, str]]] = None,
     venue_mark: Optional[float] = None,
     account_flat: bool = False,
-) -> Tuple[List[str], List[str], Dict[str, Any]]:
-    _ = top_n
-    _ = marketstate_json
-    cfg = GridConfig.from_env()
+    reset_flag: bool,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Run grid logic for one ticker; returns (updated per-asset state, per-asset meta)."""
+    cfg = GridConfig.from_env(asset)
     err = cfg.validate()
-    state_path = _default_state_path()
-    state = load_state(state_path)
     if err:
-        return (
-            [],
-            [],
-            {
-                "strategy": STRATEGY_NAME,
-                "thesis": TRADE_THESIS,
-                "error": err,
-                "grid_market_events": [],
-                "grid_mode": True,
-            },
-        )
+        return state, {
+            "strategy": STRATEGY_NAME,
+            "error": err,
+            "grid_market_events": [],
+            "grid_mode": True,
+            "grid_asset": cfg.asset,
+        }
 
     mark_source = "listing_json"
     if cfg.mark_override is not None:
@@ -519,24 +596,19 @@ def pick_tickers(
         mark_source = "listing_json"
     fresh_flat_start = False
     if mark is None or mark <= 0:
-        return (
-            [],
-            [],
-            {
-                "strategy": STRATEGY_NAME,
-                "thesis": TRADE_THESIS,
-                "error": f"No mark_price for {cfg.asset} in listing json.",
-                "grid_market_events": [],
-                "grid_mode": True,
-            },
-        )
+        return state, {
+            "strategy": STRATEGY_NAME,
+            "error": f"No mark_price for {cfg.asset} in listing json.",
+            "grid_market_events": [],
+            "grid_mode": True,
+            "grid_asset": cfg.asset,
+        }
 
-    # Flat venue account + no resting limits: new symmetric 5+5 session (ignore stale sim inventory).
     if (
         bool(account_flat)
         and venue_pending_keys is not None
         and len(venue_pending_keys) == 0
-        and not _truthy_env("GRIDSTRAT_RESET")
+        and not reset_flag
     ):
         fresh_flat_start = True
         for _pk in ("pinned_lower", "pinned_upper", "pinned_band_pct"):
@@ -545,12 +617,16 @@ def pick_tickers(
         state["inventory_cost"] = 0.0
 
     eff_lo, eff_hi, explicit_bounds, band_pct_used, pin_updates, pin_delete_keys = resolve_grid_bounds(
-        mark=float(mark), cfg=cfg, state=state
+        mark=float(mark),
+        cfg=cfg,
+        state=state,
+        band_pct=float(band_pct),
     )
     for _k in pin_delete_keys:
         state.pop(_k, None)
     state.update(pin_updates)
     cfg_eff = replace(cfg, lower=float(eff_lo), upper=float(eff_hi))
+    state_path = _default_state_path()
 
     if grid_execution_mode() == "legacy_market":
         levels = build_price_ladder(
@@ -564,18 +640,15 @@ def pick_tickers(
         lm = state.get("last_mark")
         if isinstance(lm, (int, float)):
             prev_mark_f = float(lm)
-
-        events, new_state = advance_grid_state(
+        events, state = advance_grid_state(
             cfg=cfg_eff,
             mark=float(mark),
             prev_mark=prev_mark_f,
             levels_template=levels,
             state=state,
         )
-
-        meta: Dict[str, Any] = {
+        meta = {
             "strategy": STRATEGY_NAME,
-            "thesis": TRADE_THESIS,
             "grid_mode": True,
             "grid_execution": "legacy_market",
             "grid_paired_limit_mode": False,
@@ -597,12 +670,10 @@ def pick_tickers(
                 n_rungs=max(1, len(levels)),
             ),
             "grid_state_path": os.path.abspath(state_path),
-            "first_sell_anchor": new_state.get("first_sell_price"),
+            "first_sell_anchor": state.get("first_sell_price"),
             "grid_market_sizing": grid_market_sizing_mode(),
-            "long_count": 0,
-            "short_count": 0,
         }
-        return [], [], meta
+        return state, meta
 
     breach_re = breach_reanchors_on_breach()
     fp = _paired_state_fingerprint(
@@ -611,9 +682,6 @@ def pick_tickers(
         eff_hi=float(eff_hi),
         breach_reanchor=breach_re,
     )
-    reset_flag = _truthy_env("GRIDSTRAT_RESET")
-    if reset_flag:
-        os.environ.pop("GRIDSTRAT_RESET", None)
 
     anchor = (float(eff_lo) + float(eff_hi)) / 2.0
     pcfg = PairedGridNumericConfig(
@@ -640,7 +708,7 @@ def pick_tickers(
     if fresh_flat_start:
         paired_step_logs.append(
             f"fresh flat start: reinit paired ladder at mark {float(mark):g} "
-            f"(source={mark_source}, venue pending empty, account flat)"
+            f"(source={mark_source}, venue pending empty, flat)"
         )
     if reinit:
         paired = init_paired_state(params=params, tick=0)
@@ -672,7 +740,6 @@ def pick_tickers(
         state["grid_reset"] = bool(breach_re)
 
     paired_step_logs.extend(ensure_bracket_rungs_around_mark(state, mark=float(mark)))
-    save_state(state_path, state)
 
     buys, sells = open_rungs_for_meta(state)
     qty_pg = float(state.get("qty_per_grid") or params["qty_per_grid"])
@@ -683,10 +750,8 @@ def pick_tickers(
     )
     meta = {
         "strategy": STRATEGY_NAME,
-        "thesis": TRADE_THESIS,
         "grid_mode": True,
         "grid_execution": "paired_limit",
-        # Varibot ``grid_limits_reconcile.run_grid_limits_bootstrap`` treats this as live limit mode.
         "grid_order_execution": "limit",
         "grid_paired_limit_mode": True,
         "grid_rearm_on_breach": "reanchor" if breach_re else "halt",
@@ -714,10 +779,96 @@ def pick_tickers(
         "grid_reset_count": int(state.get("reset_count") or 0),
         "grid_paired_step_logs": paired_step_logs[-30:] if paired_step_logs else [],
         "grid_fresh_flat_start": bool(fresh_flat_start),
+    }
+    return state, meta
+
+
+def pick_tickers(
+    *,
+    listing_json: str,
+    marketstate_json: Optional[str] = None,
+    top_n: Optional[int] = None,
+    venue_pending_keys: Optional[Set[Tuple[str, str]]] = None,
+    venue_mark: Optional[float] = None,
+    account_flat: bool = False,
+    venue_pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
+    venue_marks_by_asset: Optional[Dict[str, float]] = None,
+    account_flat_by_asset: Optional[Dict[str, bool]] = None,
+) -> Tuple[List[str], List[str], Dict[str, Any]]:
+    _ = top_n
+    _ = marketstate_json
+    tickers = grid_trading_ticker_band_pcts()
+    state_path = _default_state_path()
+    root = _normalize_root_state(load_state(state_path))
+    assets_map: Dict[str, Any] = dict(root.get("assets") or {})
+    reset_flag = _truthy_env("GRIDSTRAT_RESET")
+    if reset_flag:
+        os.environ.pop("GRIDSTRAT_RESET", None)
+
+    grid_by_asset: Dict[str, Dict[str, Any]] = {}
+    all_events: List[Dict[str, Any]] = []
+    errors: List[str] = []
+
+    for asset, band in tickers.items():
+        asset_state = assets_map.get(asset)
+        if not isinstance(asset_state, dict):
+            asset_state = {}
+        pending = None
+        if venue_pending_by_asset is not None:
+            pending = venue_pending_by_asset.get(asset)
+        elif venue_pending_keys is not None and len(tickers) == 1:
+            pending = venue_pending_keys
+        mark_v = None
+        if venue_marks_by_asset is not None:
+            mark_v = venue_marks_by_asset.get(asset)
+        elif venue_mark is not None and len(tickers) == 1:
+            mark_v = float(venue_mark)
+        flat = bool(account_flat)
+        if account_flat_by_asset is not None:
+            flat = bool(account_flat_by_asset.get(asset, account_flat))
+
+        asset_state, ameta = _pick_tickers_one_asset(
+            asset=asset,
+            band_pct=float(band),
+            listing_json=listing_json,
+            state=asset_state,
+            venue_pending_keys=pending,
+            venue_mark=mark_v,
+            account_flat=flat,
+            reset_flag=reset_flag,
+        )
+        assets_map[asset] = asset_state
+        grid_by_asset[asset] = ameta
+        err = ameta.get("error")
+        if isinstance(err, str) and err.strip():
+            errors.append(f"{asset}: {err.strip()}")
+        evs = ameta.get("grid_market_events") or []
+        if isinstance(evs, list):
+            all_events.extend(evs)
+
+    root["assets"] = assets_map
+    save_state(state_path, root)
+
+    primary = next(iter(tickers.keys()), DEFAULT_GRID_ASSET)
+    primary_meta = grid_by_asset.get(primary) or {}
+    combined: Dict[str, Any] = {
+        "strategy": STRATEGY_NAME,
+        "thesis": TRADE_THESIS,
+        "grid_mode": True,
+        "grid_multi_asset": len(tickers) > 1,
+        "grid_assets": list(tickers.keys()),
+        "grid_by_asset": grid_by_asset,
+        "grid_market_events": all_events,
         "long_count": 0,
         "short_count": 0,
     }
-    return [], [], meta
+    if errors:
+        combined["error"] = "; ".join(errors)
+    for k, v in primary_meta.items():
+        if k not in combined:
+            combined[k] = v
+    combined["grid_asset"] = primary
+    return [], [], combined
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -906,18 +1057,29 @@ def write_strategy_output_txt(
     body.extend(header_lines)
     body.append("")
     if meta.get("grid_mode"):
-        body.append(f"grid_asset={meta.get('grid_asset')} mark={meta.get('grid_mark')}")
-        if meta.get("grid_bounds_explicit"):
-            body.append(
-                f"grid_bounds=explicit lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
-            )
+        by_asset = meta.get("grid_by_asset")
+        if isinstance(by_asset, dict) and by_asset:
+            for sym, am in by_asset.items():
+                if not isinstance(am, dict):
+                    continue
+                body.append(f"--- {sym} mark={am.get('grid_mark')} band_pct={am.get('grid_band_pct')}")
+                body.append(
+                    f"  bounds lower={am.get('grid_lower')} upper={am.get('grid_upper')} "
+                    f"rungs buy={len(am.get('grid_buy_rungs') or [])} sell={len(am.get('grid_sell_rungs') or [])}"
+                )
         else:
-            bp = meta.get("grid_band_pct")
-            body.append(
-                f"grid_bounds=±{bp}% (pinned) lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
-                if bp is not None
-                else f"grid_bounds=percent_band lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
-            )
+            body.append(f"grid_asset={meta.get('grid_asset')} mark={meta.get('grid_mark')}")
+            if meta.get("grid_bounds_explicit"):
+                body.append(
+                    f"grid_bounds=explicit lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
+                )
+            else:
+                bp = meta.get("grid_band_pct")
+                body.append(
+                    f"grid_bounds=±{bp}% (pinned) lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
+                    if bp is not None
+                    else f"grid_bounds=percent_band lower={meta.get('grid_lower')} upper={meta.get('grid_upper')}"
+                )
         body.append(f"grid_events_this_cycle={json.dumps(meta.get('grid_market_events') or [])}")
         body.append("")
     if not rows:
@@ -959,6 +1121,9 @@ def run_strategy(
     venue_pending_keys: Optional[Set[Tuple[str, str]]] = None,
     venue_mark: Optional[float] = None,
     account_flat: bool = False,
+    venue_pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
+    venue_marks_by_asset: Optional[Dict[str, float]] = None,
+    account_flat_by_asset: Optional[Dict[str, bool]] = None,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
     mod = load_strategy_module(strategy_key)
     if not hasattr(mod, "pick_tickers"):
@@ -975,6 +1140,12 @@ def run_strategy(
     if venue_mark is not None:
         pick_kw["venue_mark"] = float(venue_mark)
     pick_kw["account_flat"] = bool(account_flat)
+    if venue_pending_by_asset is not None:
+        pick_kw["venue_pending_by_asset"] = venue_pending_by_asset
+    if venue_marks_by_asset is not None:
+        pick_kw["venue_marks_by_asset"] = venue_marks_by_asset
+    if account_flat_by_asset is not None:
+        pick_kw["account_flat_by_asset"] = account_flat_by_asset
     longs, shorts, meta = mod.pick_tickers(**pick_kw)
     if not isinstance(meta, dict):
         meta = {"strategy": str(getattr(mod, "STRATEGY_NAME", mod.__name__))}

@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from strategy.gridstrat import _default_state_path
+from strategy.gridstrat import ROOT_STATE_SCHEMA_VERSION, _default_state_path, iter_grid_asset_metas
 
 from variationalbot.vari.endpoints import VariEndpoints
 
@@ -23,7 +23,7 @@ ENV_GRID_LIMITS_DRIFT_CANCEL: str = "VARIBOT_GRID_LIMITS_DRIFT_CANCEL"
 ENV_GRID_LIMITS_DRIFT_REFILL: str = "VARIBOT_GRID_LIMITS_DRIFT_REFILL"
 ENV_GRID_LIMITS_RECONCILE_WITH_POSITIONS: str = "VARIBOT_GRID_LIMITS_RECONCILE_WITH_POSITIONS"
 ENV_GRID_LIMITS_CANCEL_SLEEP_S: str = "VARIBOT_GRID_LIMITS_CANCEL_SLEEP_S"
-# Set to 1 to fetch paginated order history and log the mental map every cycle (noisy / API heavy).
+# Set to 1 to fetch paginated order history every cycle (noisy / API heavy).
 ENV_GRID_LIMITS_MAP_EACH_CYCLE: str = "VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE"
 ENV_GRID_ORDERS_HISTORY_DAYS: str = "VARIBOT_GRID_ORDERS_HISTORY_DAYS"
 ENV_GRID_ORDERS_PAGE_LIMIT: str = "VARIBOT_GRID_ORDERS_PAGE_LIMIT"
@@ -144,7 +144,19 @@ def _meta_fingerprint(meta: Dict[str, Any]) -> str:
     return json.dumps(doc, sort_keys=True, default=str)
 
 
-def build_gridlimits_doc(
+def _gridlimits_tickers_from_file(gl: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Read ticker sections from v3 multi file or migrate legacy v2 single-asset doc."""
+    if not gl:
+        return {}
+    if int(gl.get("version") or 0) == 3 and isinstance(gl.get("tickers"), dict):
+        return {str(k).strip().upper(): v for k, v in gl["tickers"].items() if isinstance(v, dict)}
+    if gl.get("grid_asset"):
+        sym = str(gl["grid_asset"]).strip().upper()
+        return {sym: dict(gl)}
+    return {}
+
+
+def build_gridlimits_ticker_doc(
     meta: Dict[str, Any],
     *,
     venue_snapshot: Optional[Dict[str, Any]] = None,
@@ -195,18 +207,40 @@ def build_gridlimits_doc(
     return doc
 
 
+def build_gridlimits_doc(
+    meta: Dict[str, Any],
+    *,
+    venue_snapshot: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Legacy single-ticker wrapper (prefer ``sync_gridlimits_json`` v3 multi file)."""
+    return build_gridlimits_ticker_doc(meta, venue_snapshot=venue_snapshot)
+
+
 def sync_gridlimits_json(
     *,
     meta: Dict[str, Any],
     varibot_dir: str,
     venue_snapshot: Optional[Dict[str, Any]] = None,
+    venue_snapshots_by_asset: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Optional[str]:
-    """Write ``gridlimits.json`` from strategy meta plus optional venue snapshot. Returns path or None."""
+    """Write ``gridlimits.json`` (v3: ``tickers`` map) from strategy meta. Returns path or None."""
     if not meta.get("grid_mode"):
         return None
     path = _grid_limits_json_path(varibot_dir)
-    doc = build_gridlimits_doc(meta, venue_snapshot=venue_snapshot)
-    doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+    existing = _load_gridlimits(path) or {}
+    tickers = _gridlimits_tickers_from_file(existing)
+    for asset, ameta in iter_grid_asset_metas(meta):
+        snap: Optional[Dict[str, Any]] = None
+        if venue_snapshots_by_asset is not None:
+            snap = venue_snapshots_by_asset.get(asset)
+        elif venue_snapshot is not None:
+            snap = venue_snapshot
+        tickers[asset] = build_gridlimits_ticker_doc(ameta, venue_snapshot=snap)
+    doc: Dict[str, Any] = {
+        "version": 3,
+        "tickers": tickers,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
     try:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -551,11 +585,19 @@ def _build_venue_snapshot(
         notes.append("Pending book keys match template rung keys (within round(price,2)).")
 
     gs_fp: Any = None
+    want_asset = str(asset).strip().upper()
     try:
         with open(_default_state_path(), "r", encoding="utf-8") as f:
             st = json.load(f)
         if isinstance(st, dict):
-            gs_fp = st.get("fingerprint")
+            if int(st.get("schema_version") or 0) == ROOT_STATE_SCHEMA_VERSION and isinstance(
+                st.get("assets"), dict
+            ):
+                asset_st = st["assets"].get(want_asset)
+                if isinstance(asset_st, dict):
+                    gs_fp = asset_st.get("cfg_fingerprint")
+            else:
+                gs_fp = st.get("cfg_fingerprint")
     except (OSError, json.JSONDecodeError, TypeError):
         pass
 
@@ -580,6 +622,116 @@ def _build_venue_snapshot(
     return snap
 
 
+def _limits_rows_for_asset(gl: Dict[str, Any], asset: str) -> List[Any]:
+    tickers = _gridlimits_tickers_from_file(gl)
+    sec = tickers.get(str(asset).strip().upper()) or {}
+    lims = sec.get("limits")
+    return lims if isinstance(lims, list) else []
+
+
+def _reconcile_one_ticker(
+    *,
+    ep: VariEndpoints,
+    asset: str,
+    ameta: Dict[str, Any],
+    combined_meta: Dict[str, Any],
+    varibot_dir: str,
+    pending_keys: Set[Tuple[str, str]],
+    mark_f: float,
+    has_positions: bool,
+    n_ev: int,
+    reconcile_on: bool,
+    drift_on: bool,
+    log: Callable[[str], None],
+    place_limit: Callable[..., int],
+) -> None:
+    gl = _load_gridlimits(_grid_limits_json_path(varibot_dir)) or {}
+    lims = _limits_rows_for_asset(gl, asset)
+    template_keys = _template_limit_keys_from_meta(ameta)
+    pending_orphans = pending_keys - template_keys
+    template_missing = template_keys - pending_keys
+    has_drift = bool(pending_orphans or template_missing)
+    reset_n = ameta.get("grid_reset_count")
+    paired_drift = bool(ameta.get("grid_paired_limit_mode"))
+    tag = f"[{asset}]"
+
+    if has_positions and not _reconcile_with_positions_allowed(combined_meta):
+        log(
+            f"gridlimits{tag} reconcile: skip (open positions); paired_limit auto-sync needs "
+            "VARIBOT_GRID_LIMITS_RECONCILE=1 (or VARIBOT_GRID_LIMITS_RECONCILE_WITH_POSITIONS=1)."
+        )
+        return
+
+    if drift_on and has_drift:
+        log(
+            f"gridlimits{tag} re-arm: template/venue mismatch "
+            f"(orphans={len(pending_orphans)} missing={len(template_missing)}"
+            f"{f' grid_reset_count={reset_n}' if reset_n is not None else ''})"
+        )
+        if _drift_cancel_enabled(combined_meta) and pending_orphans:
+            n_cancel = _cancel_pending_orphans(
+                ep, asset=asset, orphan_keys=pending_orphans, log=log
+            )
+            log(f"gridlimits{tag} drift: canceled {n_cancel}/{len(pending_orphans)} orphan limit(s).")
+            try:
+                pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
+            except Exception as e:
+                log(f"gridlimits{tag} drift: pending refresh failed ({type(e).__name__}: {e})")
+        if _drift_refill_enabled(combined_meta):
+            want_post = _collect_want_post_limits(
+                lims=lims,
+                pending_keys=pending_keys,
+                mark_f=mark_f,
+                apply_mark_filter=not paired_drift,
+            )
+            if want_post:
+                _post_missing_limits(
+                    meta=ameta,
+                    asset=asset,
+                    want_post=want_post,
+                    place_limit=place_limit,
+                    log=log,
+                    log_prefix=f"gridlimits{tag} re-arm",
+                )
+            elif template_missing:
+                log(
+                    f"gridlimits{tag} re-arm: template rungs still missing on venue "
+                    "(nothing to post after filters)."
+                )
+        return
+
+    if not reconcile_on:
+        return
+    if n_ev > 0:
+        log(f"gridlimits{tag} reconcile: skip refill (gridstrat has events this cycle).")
+        return
+
+    want_post = _collect_want_post_limits(lims=lims, pending_keys=pending_keys, mark_f=mark_f)
+    if not want_post:
+        if has_drift and ameta.get("grid_paired_limit_mode"):
+            log(
+                f"gridlimits{tag} reconcile: re-arm drift detected; enable VARIBOT_GRID_LIMITS_RECONCILE=1 "
+                "to post missing sim rungs on venue."
+            )
+        elif has_drift:
+            log(
+                f"gridlimits{tag} reconcile: drift detected; set VARIBOT_GRID_LIMITS_DRIFT_RECONCILE=1 "
+                "to cancel orphans and refill."
+            )
+        else:
+            log(f"gridlimits{tag} reconcile: no missing buy/sell limits to refill (vs template + mark).")
+        return
+
+    _post_missing_limits(
+        meta=ameta,
+        asset=asset,
+        want_post=want_post,
+        place_limit=place_limit,
+        log=log,
+        log_prefix=f"gridlimits{tag} reconcile",
+    )
+
+
 def run_grid_limits_bootstrap(
     *,
     ep: VariEndpoints,
@@ -597,10 +749,9 @@ def run_grid_limits_bootstrap(
        on first cycle(s) or when ``VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE`` is set.
     2) Persist ``gridlimits.json`` from strategy meta **and** embed a ``venue_snapshot`` (template vs
        pending keys, optional history summary, gridstrat state hints) so restarts show leftover grid.
-    3) Log a compact mental map when the heavy map path runs.
-    4) If ``VARIBOT_GRID_LIMITS_RECONCILE`` and live and limit mode and gridstrat emitted
+    3) If ``VARIBOT_GRID_LIMITS_RECONCILE`` and live and limit mode and gridstrat emitted
        0 events: POST missing template limits from ``gridlimits.json``.
-    5) If ``VARIBOT_GRID_LIMITS_DRIFT_RECONCILE``: on template/venue key drift, cancel
+    4) If ``VARIBOT_GRID_LIMITS_DRIFT_RECONCILE``: on template/venue key drift, cancel
        ``pending_keys_not_in_template`` then post ``template_keys_missing_on_venue`` (works with
        open positions when drift reconcile is enabled).
     """
@@ -608,24 +759,16 @@ def run_grid_limits_bootstrap(
     if not meta.get("grid_mode"):
         return
 
-    asset = str(meta.get("grid_asset") or os.environ.get("GRID_ASSET") or "BTC").strip().upper()
+    asset_metas = iter_grid_asset_metas(meta)
+    if not asset_metas:
+        return
+
     is_limit = str(meta.get("grid_order_execution") or "").strip().lower() == "limit"
-    n_ev = len(meta.get("grid_market_events") or [])
+    all_events = meta.get("grid_market_events") or []
     each = _truthy_env(ENV_GRID_LIMITS_MAP_EACH_CYCLE)
     heavy_map = (cycle_index or 0) <= 1 or each
 
-    mark = meta.get("grid_mark")
-    try:
-        mark_f = float(mark) if mark is not None else None
-    except (TypeError, ValueError):
-        mark_f = None
-
     pos_raw: Any = None
-    pos_s: Optional[Dict[str, Any]] = None
-    pending_keys: Set[Tuple[str, str]] = set()
-    hist: List[Dict[str, Any]] = []
-    hsum: Optional[Dict[str, Any]] = None
-
     if heavy_map:
         try:
             pos_raw = ep.get_positions()
@@ -633,59 +776,62 @@ def run_grid_limits_bootstrap(
             log(f"gridlimits map: GET /api/positions failed ({type(e).__name__}: {e})")
             pos_raw = None
 
-        pos_s = _position_qty_summary(pos_raw or {}, asset=asset)
+    venue_snapshots_by_asset: Dict[str, Dict[str, Any]] = {}
+    pending_by_asset: Dict[str, Set[Tuple[str, str]]] = {}
 
+    for asset, ameta in asset_metas:
+        mark = ameta.get("grid_mark")
         try:
-            pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
-        except Exception as e:
-            log(f"gridlimits map: pending fetch failed ({type(e).__name__}: {e})")
-            pending_keys = set()
+            mark_f = float(mark) if mark is not None else None
+        except (TypeError, ValueError):
+            mark_f = None
 
-        inst = _instrument_param(asset)
-        try:
-            hist = fetch_orders_v2_history_pages(ep, instrument=inst)
-        except Exception as e:
-            log(f"gridlimits map: history fetch failed ({type(e).__name__}: {e})")
-            hist = []
+        pos_s: Optional[Dict[str, Any]] = None
+        pending_keys: Set[Tuple[str, str]] = set()
+        hsum: Optional[Dict[str, Any]] = None
 
-        hsum = _summarize_history(hist, asset=asset)
-    elif live and is_limit:
-        try:
-            pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
-        except Exception as e:
-            log(f"gridlimits map: pending fetch failed ({type(e).__name__}: {e})")
-            pending_keys = set()
+        if heavy_map:
+            pos_s = _position_qty_summary(pos_raw or {}, asset=asset)
+            try:
+                pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
+            except Exception as e:
+                log(f"gridlimits[{asset}] map: pending fetch failed ({type(e).__name__}: {e})")
+                pending_keys = set()
+            inst = _instrument_param(asset)
+            try:
+                hist = fetch_orders_v2_history_pages(ep, instrument=inst)
+            except Exception as e:
+                log(f"gridlimits[{asset}] map: history fetch failed ({type(e).__name__}: {e})")
+                hist = []
+            hsum = _summarize_history(hist, asset=asset)
+        elif live and is_limit:
+            try:
+                pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
+            except Exception as e:
+                log(f"gridlimits[{asset}] map: pending fetch failed ({type(e).__name__}: {e})")
+                pending_keys = set()
 
-    venue_snapshot: Optional[Dict[str, Any]] = None
-    if live and is_limit:
-        venue_snapshot = _build_venue_snapshot(
-            meta=meta,
-            asset=asset,
-            pending_keys=pending_keys,
-            pos_s=pos_s,
-            history_summary=hsum,
-            has_positions=has_positions,
-            mark_f=mark_f,
-        )
+        pending_by_asset[asset] = pending_keys
+        has_pos_asset = bool(pos_s.get("has_position")) if pos_s else has_positions
 
-    path = sync_gridlimits_json(meta=meta, varibot_dir=varibot_dir, venue_snapshot=venue_snapshot)
+        if live and is_limit:
+            venue_snapshots_by_asset[asset] = _build_venue_snapshot(
+                meta=ameta,
+                asset=asset,
+                pending_keys=pending_keys,
+                pos_s=pos_s,
+                history_summary=hsum,
+                has_positions=has_pos_asset,
+                mark_f=mark_f,
+            )
+
+    path = sync_gridlimits_json(
+        meta=meta,
+        varibot_dir=varibot_dir,
+        venue_snapshots_by_asset=venue_snapshots_by_asset,
+    )
     if path:
-        log(f"gridlimits: synced template + venue snapshot → {path}")
-
-    n_lims = len(meta.get("grid_buy_rungs") or []) + len(meta.get("grid_sell_rungs") or [])
-    if heavy_map:
-        mental = {
-            "grid_asset": asset,
-            "grid_mark": mark_f,
-            "has_positions": bool(has_positions),
-            "position": pos_s,
-            "pending_limit_keys_count": len(pending_keys),
-            "history_window_days": float(os.environ.get(ENV_GRID_ORDERS_HISTORY_DAYS, "7") or "7"),
-            "history_summary": hsum,
-            "gridlimits_template_rows": n_lims,
-            "gridstrat_events_this_cycle": n_ev,
-        }
-        log(f"gridlimits mental_map: {json.dumps(mental, default=str)}")
+        log(f"gridlimits: synced {len(asset_metas)} ticker(s) → {path}")
 
     reconcile_on = _truthy_env(ENV_GRID_LIMITS_RECONCILE)
     drift_on = _drift_reconcile_enabled(meta)
@@ -699,91 +845,42 @@ def run_grid_limits_bootstrap(
     if not live or not is_limit:
         return
 
-    if has_positions and not _reconcile_with_positions_allowed(meta):
-        log(
-            "gridlimits reconcile: skip (open positions); paired_limit auto-sync needs "
-            "VARIBOT_GRID_LIMITS_RECONCILE=1 (or VARIBOT_GRID_LIMITS_RECONCILE_WITH_POSITIONS=1)."
+    for asset, ameta in asset_metas:
+        mark = ameta.get("grid_mark")
+        try:
+            mark_f = float(mark) if mark is not None else None
+        except (TypeError, ValueError):
+            mark_f = None
+        if mark_f is None:
+            log(f"gridlimits[{asset}] reconcile: skip (no grid_mark).")
+            continue
+
+        pos_s = _position_qty_summary(pos_raw or {}, asset=asset) if pos_raw is not None else None
+        has_pos_asset = bool(pos_s.get("has_position")) if pos_s else has_positions
+        pending_keys = pending_by_asset.get(asset, set())
+        n_ev = len(
+            [
+                e
+                for e in all_events
+                if isinstance(e, dict)
+                and str(e.get("asset") or "").strip().upper() in ("", asset)
+            ]
         )
-        return
+        if n_ev == 0:
+            n_ev = len(ameta.get("grid_market_events") or [])
 
-    if mark_f is None:
-        log("gridlimits reconcile: skip (no grid_mark).")
-        return
-
-    gl = _load_gridlimits(_grid_limits_json_path(varibot_dir)) or {}
-    lims = gl.get("limits") if isinstance(gl.get("limits"), list) else []
-    template_keys = _template_limit_keys_from_meta(meta)
-    pending_orphans = pending_keys - template_keys
-    template_missing = template_keys - pending_keys
-    has_drift = bool(pending_orphans or template_missing)
-
-    reset_n = meta.get("grid_reset_count")
-    paired_drift = bool(meta.get("grid_paired_limit_mode"))
-    if drift_on and has_drift:
-        log(
-            f"gridlimits re-arm: template/venue mismatch "
-            f"(orphans={len(pending_orphans)} missing={len(template_missing)}"
-            f"{f' grid_reset_count={reset_n}' if reset_n is not None else ''})"
+        _reconcile_one_ticker(
+            ep=ep,
+            asset=asset,
+            ameta=ameta,
+            combined_meta=meta,
+            varibot_dir=varibot_dir,
+            pending_keys=pending_keys,
+            mark_f=mark_f,
+            has_positions=has_pos_asset,
+            n_ev=n_ev,
+            reconcile_on=reconcile_on,
+            drift_on=drift_on,
+            log=log,
+            place_limit=place_limit,
         )
-        if _drift_cancel_enabled(meta) and pending_orphans:
-            n_cancel = _cancel_pending_orphans(
-                ep, asset=asset, orphan_keys=pending_orphans, log=log
-            )
-            log(f"gridlimits drift: canceled {n_cancel}/{len(pending_orphans)} orphan limit(s).")
-            try:
-                pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
-            except Exception as e:
-                log(f"gridlimits drift: pending refresh failed ({type(e).__name__}: {e})")
-        if _drift_refill_enabled(meta):
-            want_post = _collect_want_post_limits(
-                lims=lims,
-                pending_keys=pending_keys,
-                mark_f=mark_f,
-                apply_mark_filter=not paired_drift,
-            )
-            if want_post:
-                _post_missing_limits(
-                    meta=meta,
-                    asset=asset,
-                    want_post=want_post,
-                    place_limit=place_limit,
-                    log=log,
-                    log_prefix="gridlimits re-arm",
-                )
-            elif template_missing:
-                log(
-                    "gridlimits re-arm: template rungs still missing on venue "
-                    "(nothing to post after filters)."
-                )
-        return
-
-    if not reconcile_on:
-        return
-    if n_ev > 0:
-        log("gridlimits reconcile: skip refill (gridstrat has events this cycle).")
-        return
-
-    want_post = _collect_want_post_limits(lims=lims, pending_keys=pending_keys, mark_f=mark_f)
-    if not want_post:
-        if has_drift and meta.get("grid_paired_limit_mode"):
-            log(
-                "gridlimits reconcile: re-arm drift detected; enable VARIBOT_GRID_LIMITS_RECONCILE=1 "
-                "to post missing sim rungs on venue."
-            )
-        elif has_drift:
-            log(
-                "gridlimits reconcile: drift detected; set VARIBOT_GRID_LIMITS_DRIFT_RECONCILE=1 "
-                "to cancel orphans and refill."
-            )
-        else:
-            log("gridlimits reconcile: no missing buy/sell limits to refill (vs template + mark).")
-        return
-
-    _post_missing_limits(
-        meta=meta,
-        asset=asset,
-        want_post=want_post,
-        place_limit=place_limit,
-        log=log,
-        log_prefix="gridlimits reconcile",
-    )
