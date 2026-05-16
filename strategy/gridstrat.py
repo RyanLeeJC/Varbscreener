@@ -10,14 +10,14 @@ limits are written to ``Varibot/gridlimits.json`` via ``sync_gridlimits_json`` f
 **Legacy (``GRID_EXECUTION=legacy_market``):** discrete mark snapshots → ``grid_market_events`` market
 legs (interior ladder + buy restoration gate). See ``advance_grid_state``.
 
-Configure via environment variables (mirrors the order form):
+Configure via environment variables (override file-level ``DEFAULT_*`` constants in this module):
 
   GRID_EXECUTION=paired_limit   # paired_limit (default) | legacy_market
   GRID_REARM_ON_BREACH=reanchor # reanchor | slide (same as reanchor) | halt — paired mode only
   GRID_ASSET=BTC
   GRID_LOWER=86000
   GRID_UPPER=89000
-  GRID_BAND_PCT=0.5        # symmetric ±% around mark when either GRID_LOWER or GRID_UPPER is unset (default 0.5)
+  GRID_BAND_PCT=0.5        # symmetric ±% around mark when either GRID_LOWER or GRID_UPPER is unset (see DEFAULT_GRID_BAND_PCT)
   GRID_NUM=30              # equal steps across [lower, upper] for paired spacing = (upper-lower)/GRID_NUM
   GRID_TYPE=arithmetic     # or geometric (paired ladder uses arithmetic spacing only)
   GRID_INVESTMENT_USD=300
@@ -57,8 +57,20 @@ GRID_EXECUTION_DEFAULT: str = "paired_limit"
 # Paired mode: ``reanchor`` / ``slide`` = reset ladder on band breach (sim default); ``halt`` = no reset.
 GRID_REARM_ON_BREACH_DEFAULT: str = "reanchor"
 
-# Symmetric bracket around mark when explicit GRID_LOWER+GRID_UPPER are not both set (see resolve_grid_bounds).
-DEFAULT_GRID_BAND_PCT: float = 0.5
+# -----------------------------------------------------------------------------
+# Edit these defaults here; ``GRID_*`` environment variables override when set.
+# (Same idea as ``DEFAULT_GRID_BAND_PCT`` — leave bounds NaN to use ±band around mark.)
+# -----------------------------------------------------------------------------
+DEFAULT_GRID_ASSET: str = "BTC"
+DEFAULT_GRID_INVESTMENT_USD: float = 100.0
+DEFAULT_GRID_LEVERAGE: float = 50.0
+DEFAULT_GRID_NUM: int = 10  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
+DEFAULT_GRID_MARKET_SIZING: str = "qty"  # legacy market mode only: "qty" | "usd"
+DEFAULT_GRID_BAND_PCT: float = 0.5 # Symmetric bracket around mark when explicit GRID_LOWER+GRID_UPPER are not both set (see resolve_grid_bounds).
+DEFAULT_GRID_LOWER: float = float("nan")  # set both bounds finite to pin explicit bracket
+DEFAULT_GRID_UPPER: float = float("nan")
+DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses arithmetic spacing)
+
 
 # multimarketorder.py imports this as sizing divisor fallback when strategy import succeeds.
 DEFAULT_MAX_TICKER_ENTRIES: int = 1
@@ -189,8 +201,11 @@ GridType = Literal["arithmetic", "geometric"]
 
 def grid_market_sizing_mode() -> str:
     """``qty`` (default) or ``usd`` — how grid market events size multimarket (see Varibot)."""
-    v = (os.environ.get("GRID_MARKET_SIZING") or "qty").strip().lower()
-    return "usd" if v == "usd" else "qty"
+    v = (os.environ.get("GRID_MARKET_SIZING") or "").strip().lower()
+    if v in ("qty", "usd"):
+        return "usd" if v == "usd" else "qty"
+    d = (DEFAULT_GRID_MARKET_SIZING or "qty").strip().lower()
+    return "usd" if d == "usd" else "qty"
 
 
 def _grid_open_leg_fields(*, usd_leg: float, mark: float) -> Dict[str, Any]:
@@ -213,14 +228,19 @@ class GridConfig:
 
     @classmethod
     def from_env(cls) -> "GridConfig":
-        asset = (os.environ.get("GRID_ASSET") or "BTC").strip().upper()
-        lower = float(os.environ.get("GRID_LOWER", "nan"))
-        upper = float(os.environ.get("GRID_UPPER", "nan"))
-        n_grids = int(os.environ.get("GRID_NUM", "0"))
-        gt = (os.environ.get("GRID_TYPE") or "arithmetic").strip().lower()
+        asset = (os.environ.get("GRID_ASSET") or DEFAULT_GRID_ASSET).strip().upper()
+        raw_lo = (os.environ.get("GRID_LOWER") or "").strip()
+        raw_hi = (os.environ.get("GRID_UPPER") or "").strip()
+        lower = float(raw_lo) if raw_lo else float(DEFAULT_GRID_LOWER)
+        upper = float(raw_hi) if raw_hi else float(DEFAULT_GRID_UPPER)
+        raw_n = (os.environ.get("GRID_NUM") or "").strip()
+        n_grids = int(raw_n) if raw_n else int(DEFAULT_GRID_NUM)
+        gt = (os.environ.get("GRID_TYPE") or DEFAULT_GRID_TYPE).strip().lower()
         grid_type: GridType = "geometric" if gt == "geometric" else "arithmetic"
-        inv = float(os.environ.get("GRID_INVESTMENT_USD", "nan"))
-        lev = float(os.environ.get("GRID_LEVERAGE", "nan"))
+        raw_inv = (os.environ.get("GRID_INVESTMENT_USD") or "").strip()
+        inv = float(raw_inv) if raw_inv else float(DEFAULT_GRID_INVESTMENT_USD)
+        raw_lev = (os.environ.get("GRID_LEVERAGE") or "").strip()
+        lev = float(raw_lev) if raw_lev else float(DEFAULT_GRID_LEVERAGE)
         mo = (os.environ.get("GRID_MARK") or "").strip()
         mark_override = float(mo) if mo else None
         return cls(
