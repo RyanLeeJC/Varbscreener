@@ -61,7 +61,14 @@ except ImportError:
         qf = float(qty)
         if not math.isfinite(qf) or qf == 0.0:
             return "0"
-        return format(qf, ".4g")
+        s = format(qf, ".4g")
+        if "e" not in s.lower():
+            return s
+        exp = int(math.floor(math.log10(abs(qf))))
+        decimals = max(0, min(8, 4 - exp - 1))
+        rounded = round(qf, decimals)
+        out = f"{rounded:.{decimals}f}"
+        return out.rstrip("0").rstrip(".") if "." in out else out
 from strategy.gridstrat_state import load_state, save_state
 
 STRATEGY_NAME: str = "vari_grid"
@@ -76,9 +83,9 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "reanchor"
 # (Same idea as ``DEFAULT_GRID_BAND_PCT`` — leave bounds NaN to use ±band around mark.)
 # -----------------------------------------------------------------------------
 DEFAULT_GRID_ASSET: str = "BTC"
-DEFAULT_GRID_INVESTMENT_USD: float = 300.0
-DEFAULT_GRID_LEVERAGE: float = 30.0
-DEFAULT_GRID_NUM: int = 30  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
+DEFAULT_GRID_INVESTMENT_USD: float = 50.0
+DEFAULT_GRID_LEVERAGE: float = 40.0
+DEFAULT_GRID_NUM: int = 10  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
 DEFAULT_GRID_MARKET_SIZING: str = "qty"  # legacy market mode only: "qty" | "usd"
 DEFAULT_GRID_BAND_PCT: float = 0.2  # fallback band % when a ticker is not listed below
 DEFAULT_GRID_LOWER: float = float("nan")  # set both bounds finite to pin explicit bracket
@@ -91,10 +98,9 @@ DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses
 # Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
 # -----------------------------------------------------------------------------
 GRID_TRADING_TICKERS: Dict[str, float] = {
-    "ETH": 1.5,
-    "HYPE":1.5,
-    "XMR":1.5,
-    
+    "XRP": 1.0,
+    "MON": 1.0,
+    "SUI": 1.0,
 }
 
 ROOT_STATE_SCHEMA_VERSION: int = 4

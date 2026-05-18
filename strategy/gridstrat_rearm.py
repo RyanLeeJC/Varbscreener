@@ -22,6 +22,14 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
+try:
+    from variationalbot.vari.endpoints import grid_limit_price_key
+except ImportError:
+
+    def grid_limit_price_key(price: float) -> str:  # type: ignore[misc]
+        return f"{round(float(price), 2):.2f}"
+
+
 Side = Literal["buy", "sell"]
 
 
@@ -259,7 +267,7 @@ def apply_venue_cleared_limits_as_fills(
         side = str(ord_.get("side") or "")
         try:
             lv = float(ord_["level"])
-            pxk = f"{round(lv, 2):.2f}"
+            pxk = grid_limit_price_key(lv)
         except (TypeError, ValueError):
             continue
         if (side, pxk) in pending_keys:

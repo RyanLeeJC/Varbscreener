@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from strategy.gridstrat import ROOT_STATE_SCHEMA_VERSION, _default_state_path, iter_grid_asset_metas
 
-from variationalbot.vari.endpoints import VariEndpoints
+from variationalbot.vari.endpoints import VariEndpoints, limit_price_key
 
 # Canonical ladder template for mid-session recovery (written from strategy meta).
 DEFAULT_GRID_LIMITS_PATH_ENV: str = "GRID_LIMITS_JSON_PATH"
@@ -131,12 +131,13 @@ def _limit_price_key(row: Dict[str, Any]) -> Optional[Tuple[str, str]]:
         return None
     lp = row.get("limit_price")
     if lp is None:
+        lp = row.get("trigger_price")
+    if lp is None:
         return None
     try:
-        p = round(float(lp), 2)
+        return limit_price_key(side, float(lp))
     except (TypeError, ValueError):
         return None
-    return (side, f"{p:.2f}")
 
 
 def _meta_fingerprint(meta: Dict[str, Any]) -> str:
@@ -354,6 +355,7 @@ def _collect_want_post_limits(
     the venue lacks — same ladder as ``open_rungs_for_meta`` / simulator.
     """
     want_post: List[Tuple[str, float, float, Optional[str]]] = []
+    seen_keys: Set[Tuple[str, str]] = set()
     for row in lims:
         if not isinstance(row, dict):
             continue
@@ -369,9 +371,10 @@ def _collect_want_post_limits(
             continue
         rq = row.get("qty")
         lq = str(rq).strip() if rq is not None and str(rq).strip() else None
-        key = (side, f"{round(px, 2):.2f}")
-        if key in pending_keys:
+        key = limit_price_key(side, px)
+        if key in pending_keys or key in seen_keys:
             continue
+        seen_keys.add(key)
         if apply_mark_filter:
             if side == "buy" and not (px < mark_f):
                 continue
@@ -549,12 +552,12 @@ def _template_limit_keys_from_meta(meta: Dict[str, Any]) -> Set[Tuple[str, str]]
     out: Set[Tuple[str, str]] = set()
     for px in meta.get("grid_buy_rungs") or []:
         try:
-            out.add(("buy", f"{round(float(px), 2):.2f}"))
+            out.add(limit_price_key("buy", float(px)))
         except (TypeError, ValueError):
             continue
     for px in meta.get("grid_sell_rungs") or []:
         try:
-            out.add(("sell", f"{round(float(px), 2):.2f}"))
+            out.add(limit_price_key("sell", float(px)))
         except (TypeError, ValueError):
             continue
     return out
@@ -590,7 +593,9 @@ def _build_venue_snapshot(
     elif template_missing and not pending_keys and not has_positions:
         notes.append("No pending limits on venue for this asset; full template ladder may need seeding or refill.")
     elif template_keys and pending_keys == template_keys:
-        notes.append("Pending book keys match template rung keys (within round(price,2)).")
+        notes.append(
+            "Pending book keys match template rung keys (grid_limit_price_decimals / GRID_LIMIT_PRICE_DECIMALS)."
+        )
 
     gs_fp: Any = None
     want_asset = str(asset).strip().upper()

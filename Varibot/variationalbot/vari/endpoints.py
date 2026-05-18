@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 import math
 import os
+import re
+import time
 from decimal import Decimal, ROUND_DOWN
 from urllib.parse import urlencode
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from .client import VariClient
+from .errors import VariUnexpectedResponse
 
 
 def indicative_qty_sigfigs() -> int:
@@ -42,9 +46,93 @@ def grid_limit_qty_sigfigs() -> int:
         return 4
 
 
+def grid_limit_price_decimals(price: float) -> int:
+    """
+    Decimal places for grid limit prices and (side, price) reconcile keys.
+
+    Two decimals collapses sub-$1 rungs (e.g. MON ~0.027 → all ``0.03``), causing duplicate
+    posts and false venue-sync fills. Override with ``GRID_LIMIT_PRICE_DECIMALS``.
+    """
+    raw = (os.environ.get("GRID_LIMIT_PRICE_DECIMALS") or "").strip()
+    if raw:
+        try:
+            return max(0, min(12, int(raw)))
+        except ValueError:
+            pass
+    p = abs(float(price))
+    if not math.isfinite(p) or p <= 0:
+        return 2
+    if p >= 1000:
+        return 2
+    if p >= 100:
+        return 2
+    if p >= 10:
+        return 3
+    if p >= 1:
+        return 4
+    if p >= 0.1:
+        return 5
+    if p >= 0.01:
+        return 5
+    return 6
+
+
+def format_grid_limit_price(price: float) -> str:
+    """Rounded limit price string for POST /api/orders/new/limit and reconcile keys."""
+    d = grid_limit_price_decimals(price)
+    return f"{round(float(price), d):.{d}f}"
+
+
+def grid_limit_price_key(price: float) -> str:
+    """Normalized price component of a pending/template limit key."""
+    return format_grid_limit_price(price)
+
+
+def limit_price_key(side: str, price: float) -> Tuple[str, str]:
+    """(buy|sell, normalized_price) for template ↔ venue pending matching."""
+    return (str(side).strip().lower(), grid_limit_price_key(price))
+
+
 def format_qty_for_grid_limit(qty: float) -> str:
     """Format base-asset qty for POST /api/orders/new/limit (grid / reconcile path)."""
-    return format_qty_for_indicative_api(qty, significant=grid_limit_qty_sigfigs())
+    n = grid_limit_qty_sigfigs()
+    qf = float(qty)
+    if not math.isfinite(qf) or qf == 0.0:
+        return "0"
+    s = format(qf, f".{int(n)}g")
+    if "e" not in s.lower():
+        return s
+    # Avoid scientific notation (e.g. MON ``1.108e+04``) in limit API / gridlimits.json.
+    exp = int(math.floor(math.log10(abs(qf))))
+    decimals = max(0, min(8, n - exp - 1))
+    rounded = round(qf, decimals)
+    out = f"{rounded:.{decimals}f}"
+    return out.rstrip("0").rstrip(".") if "." in out else out
+
+
+def parse_cancel_ban_wait_seconds(exc: BaseException) -> Optional[float]:
+    """
+    Seconds to sleep after HTTP 418 cancel-ban (``/api/orders/cancel``).
+
+    Omni body example::
+        {"endpoint":"cancels","error":"banned","wait_until_seconds":11,...}
+    """
+    msg = str(exc)
+    if "418" not in msg and "banned" not in msg.lower():
+        return None
+    try:
+        idx = msg.index("{")
+        body = json.loads(msg[idx:])
+        if isinstance(body, dict):
+            w = body.get("wait_until_seconds")
+            if w is not None:
+                return max(1.0, float(w))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        pass
+    m = re.search(r"wait\s+(\d+)\s+seconds", msg, re.I)
+    if m:
+        return max(1.0, float(m.group(1)))
+    return 12.0
 
 
 def align_order_qty_to_quote_limits(*, q1: Dict[str, Any], side: str, qty_raw: float) -> float:
@@ -121,6 +209,42 @@ class VariEndpoints:
         if not rid:
             raise ValueError("rfq_id is empty")
         return self.client.request_json("POST", "/api/orders/cancel", json_body={"rfq_id": rid})
+
+    def cancel_order_rfq_resilient(
+        self,
+        *,
+        rfq_id: str,
+        max_attempts: int = 12,
+        buffer_s: float = 0.75,
+        on_wait: Optional[Callable[..., None]] = None,
+    ) -> Any:
+        """
+        Cancel with retries when Omni returns HTTP 418 cancel-ban
+        (``wait_until_seconds`` in JSON body).
+        """
+        rid = str(rfq_id).strip()
+        if not rid:
+            raise ValueError("rfq_id is empty")
+        last_err: Optional[Exception] = None
+        for attempt in range(max(1, int(max_attempts))):
+            try:
+                return self.cancel_order_rfq(rfq_id=rid)
+            except VariUnexpectedResponse as e:
+                wait_s = parse_cancel_ban_wait_seconds(e)
+                if wait_s is None:
+                    raise
+                last_err = e
+                if attempt >= int(max_attempts) - 1:
+                    break
+                sleep_s = float(wait_s) + float(buffer_s)
+                if on_wait is not None:
+                    try:
+                        on_wait(sleep_s, attempt + 1, rid)
+                    except TypeError:
+                        on_wait(sleep_s)
+                time.sleep(sleep_s)
+        assert last_err is not None
+        raise last_err
 
     def set_leverage(self, *, asset: str, leverage: int) -> LeverageResult:
         body = {"asset": asset, "leverage": str(int(leverage))}
@@ -299,10 +423,10 @@ class VariEndpoints:
         is_auto_resize: bool = False,
     ) -> Dict[str, Any]:
         """POST /api/orders/new/limit (Omni RFQ flow)."""
-        lp = round(float(limit_price), 2)
+        lp_s = format_grid_limit_price(limit_price)
         body: Dict[str, Any] = {
             "order_type": "limit",
-            "limit_price": f"{lp:.2f}",
+            "limit_price": lp_s,
             "side": str(side).strip().lower(),
             "instrument": {
                 "instrument_type": instrument.instrument_type,

@@ -2,12 +2,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from variationalbot.config import load_config
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
+from variationalbot.vari.endpoints import parse_cancel_ban_wait_seconds
+from variationalbot.vari.errors import VariUnexpectedResponse
+
+
+def _default_sleep_between_s() -> float:
+    raw = (os.environ.get("CANCEL_ALL_SLEEP_BETWEEN_S") or "1.5").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 1.5
+
+
+def _default_max_cancel_retries() -> int:
+    raw = (os.environ.get("CANCEL_ALL_MAX_RETRIES") or "12").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 12
 
 
 def _orders_v2_result_items(raw: Any) -> List[Dict[str, Any]]:
@@ -85,11 +104,41 @@ def _pending_limit_rows_with_rfq(rows: List[Dict[str, Any]]) -> List[Dict[str, A
     return out
 
 
+def _cancel_one(
+    ep: VariEndpoints,
+    *,
+    row: Dict[str, Any],
+    max_attempts: int,
+    buffer_s: float,
+    verbose: bool,
+) -> None:
+    rid = _row_rfq_id(row)
+    if not rid:
+        raise ValueError("missing rfq_id")
+    sym = _order_row_underlying(row) or "?"
+
+    def on_wait(sleep_s: float, attempt: int, rfq: str) -> None:
+        if verbose:
+            print(
+                f"cancel ban: wait {sleep_s:.1f}s before retry "
+                f"({attempt}/{max_attempts}) {sym} rfq_id={rfq[:8]}…",
+                file=sys.stderr,
+            )
+
+    ep.cancel_order_rfq_resilient(
+        rfq_id=rid,
+        max_attempts=max_attempts,
+        buffer_s=buffer_s,
+        on_wait=on_wait,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
             "List or cancel all pending limit orders (GET /api/orders/v2?status=pending, "
-            "then POST /api/orders/cancel per rfq_id)."
+            "then POST /api/orders/cancel per rfq_id). Honors Omni cancel-ban (HTTP 418) "
+            "via wait_until_seconds retries."
         )
     )
     p.add_argument(
@@ -105,13 +154,39 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--sleep-between-s",
         type=float,
-        default=0.2,
-        help="Seconds to sleep between cancel calls (default 0.2; respects VARI rate limits).",
+        default=None,
+        help=(
+            "Seconds between successful cancel calls (default 1.5, or CANCEL_ALL_SLEEP_BETWEEN_S). "
+            "418 cancel-ban waits are handled separately."
+        ),
+    )
+    p.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        help="Max cancel attempts per order when temporarily banned (default 12, or CANCEL_ALL_MAX_RETRIES).",
+    )
+    p.add_argument(
+        "--ban-buffer-s",
+        type=float,
+        default=0.75,
+        help="Extra seconds added to API wait_until_seconds on 418 (default 0.75).",
+    )
+    p.add_argument(
+        "--passes",
+        type=int,
+        default=2,
+        help="How many full passes over remaining failures (default 2).",
     )
     p.add_argument(
         "--print-json",
         action="store_true",
         help="Print raw GET rows and each cancel response as JSON.",
+    )
+    p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress cancel-ban wait messages on stderr.",
     )
     return p
 
@@ -119,6 +194,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     cfg = load_config()
+    sleep_between = (
+        float(args.sleep_between_s)
+        if args.sleep_between_s is not None
+        else _default_sleep_between_s()
+    )
+    max_retries = (
+        int(args.max_retries) if args.max_retries is not None else _default_max_cancel_retries()
+    )
+    passes = max(1, int(args.passes))
+    verbose = not bool(args.quiet)
 
     ep = VariEndpoints(
         VariClient(
@@ -138,6 +223,11 @@ def main() -> int:
         print(json.dumps({"pending_limit_with_rfq": targets}, indent=2, default=str))
     else:
         print(f"Found {len(targets)} pending limit order(s).")
+        if args.live and targets:
+            print(
+                f"Live cancel: sleep_between={sleep_between:g}s "
+                f"max_retries={max_retries} passes={passes}",
+            )
 
     if not targets:
         return 0
@@ -170,21 +260,53 @@ def main() -> int:
         print("Dry-run only. Re-run with --live to POST /api/orders/cancel for each row.")
         return 0
 
+    pending: List[Dict[str, Any]] = list(targets)
     errors: List[Tuple[str, str]] = []
-    for i, row in enumerate(targets):
-        rid = _row_rfq_id(row)
-        assert rid is not None
-        sym = _order_row_underlying(row) or "?"
-        try:
-            resp = ep.cancel_order_rfq(rfq_id=rid)
-            if args.print_json:
-                print(json.dumps({"rfq_id": rid, "response": resp}, indent=2, default=str))
-        except Exception as e:
-            msg = f"{type(e).__name__}: {e}"
-            errors.append((rid, msg))
-            print(f"ERROR cancel {sym} rfq_id={rid}: {msg}", file=sys.stderr)
-        if i < len(targets) - 1 and float(args.sleep_between_s) > 0:
-            time.sleep(float(args.sleep_between_s))
+
+    for pass_n in range(1, passes + 1):
+        if pass_n > 1:
+            if not errors:
+                break
+            if verbose:
+                print(
+                    f"Pass {pass_n}/{passes}: retrying {len(errors)} failed cancel(s)…",
+                    file=sys.stderr,
+                )
+            err_ids = {rid for rid, _ in errors}
+            errors = []
+            pending = [r for r in pending if (_row_rfq_id(r) or "") in err_ids]
+            if not pending:
+                break
+            time.sleep(max(sleep_between, 2.0))
+
+        for i, row in enumerate(pending):
+            rid = _row_rfq_id(row)
+            if not rid:
+                continue
+            sym = _order_row_underlying(row) or "?"
+            try:
+                _cancel_one(
+                    ep,
+                    row=row,
+                    max_attempts=max_retries,
+                    buffer_s=float(args.ban_buffer_s),
+                    verbose=verbose,
+                )
+                if args.print_json:
+                    print(json.dumps({"rfq_id": rid, "canceled": True}, indent=2))
+            except VariUnexpectedResponse as e:
+                wait_s = parse_cancel_ban_wait_seconds(e)
+                msg = f"{type(e).__name__}: {e}"
+                errors.append((rid, msg))
+                print(f"ERROR cancel {sym} rfq_id={rid}: {msg}", file=sys.stderr)
+                if wait_s is not None and i < len(pending) - 1:
+                    time.sleep(float(wait_s) + float(args.ban_buffer_s))
+            except Exception as e:
+                msg = f"{type(e).__name__}: {e}"
+                errors.append((rid, msg))
+                print(f"ERROR cancel {sym} rfq_id={rid}: {msg}", file=sys.stderr)
+            if i < len(pending) - 1 and sleep_between > 0:
+                time.sleep(sleep_between)
 
     if not args.print_json:
         n_ok = len(targets) - len(errors)
