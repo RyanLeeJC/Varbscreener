@@ -28,6 +28,8 @@ Configure via environment variables (override file-level ``DEFAULT_*`` constants
   GRIDSTRAT_RESET=1        # one-shot: re-init engine state on next pick_tickers
   GRIDSTRAT_IGNORE_VENUE_POSITIONS=1  # default on: Varibot/grid treats account as flat for grid
                                         # (manual pre-positions do not block fresh-book init)
+  GRIDSTRAT_FLAT_REBALANCE=1         # default on: while grid inventory is flat, reinit symmetric
+                                        # paired ladder at mark (fixes lopsided venue limits)
 
 Optional compatibility: strategy key ``invert_extreme`` still resolves to this module on the GridBot
 branch.
@@ -113,6 +115,8 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
 ROOT_STATE_SCHEMA_VERSION: int = 4
 
 ENV_GRIDSTRAT_IGNORE_VENUE_POSITIONS: str = "GRIDSTRAT_IGNORE_VENUE_POSITIONS"
+ENV_GRIDSTRAT_FLAT_REBALANCE: str = "GRIDSTRAT_FLAT_REBALANCE"
+INVENTORY_FLAT_EPS: float = 1e-10
 
 
 def gridstrat_ignore_venue_positions() -> bool:
@@ -126,6 +130,18 @@ def gridstrat_ignore_venue_positions() -> bool:
     if raw in ("0", "false", "no", "off"):
         return False
     return True
+
+
+def gridstrat_flat_rebalance_enabled() -> bool:
+    """When True (default), re-init symmetric paired ladder at mark while grid inventory is flat."""
+    raw = (os.environ.get(ENV_GRIDSTRAT_FLAT_REBALANCE) or "1").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
+def _inventory_is_flat(state: Dict[str, Any]) -> bool:
+    return abs(float(state.get("inventory") or 0.0)) < INVENTORY_FLAT_EPS
 
 
 def _tickers_from_env_list(raw: str, *, default_band: float) -> Dict[str, float]:
@@ -655,6 +671,7 @@ def _pick_tickers_one_asset(
         mark = _mark_from_listing(listing_json, cfg.asset)
         mark_source = "listing_json"
     fresh_flat_start = False
+    flat_inventory_rebalance = False
     if mark is None or mark <= 0:
         return state, {
             "strategy": STRATEGY_NAME,
@@ -671,6 +688,18 @@ def _pick_tickers_one_asset(
         and not reset_flag
     ):
         fresh_flat_start = True
+
+    if (
+        gridstrat_flat_rebalance_enabled()
+        and grid_execution_mode() == "paired_limit"
+        and bool(account_flat)
+        and _inventory_is_flat(state)
+        and not reset_flag
+        and not fresh_flat_start
+    ):
+        flat_inventory_rebalance = True
+
+    if fresh_flat_start or flat_inventory_rebalance:
         for _pk in ("pinned_lower", "pinned_upper", "pinned_band_pct"):
             state.pop(_pk, None)
         state["inventory"] = 0.0
@@ -760,6 +789,7 @@ def _pick_tickers_one_asset(
     reinit = (
         reset_flag
         or fresh_flat_start
+        or flat_inventory_rebalance
         or int(state.get("schema_version") or 0) != 3
         or str(state.get("cfg_fingerprint") or "") != fp
         or not isinstance(state.get("orders"), list)
@@ -769,6 +799,11 @@ def _pick_tickers_one_asset(
         paired_step_logs.append(
             f"fresh flat start: reinit paired ladder at mark {float(mark):g} "
             f"(source={mark_source}, venue pending empty, flat)"
+        )
+    if flat_inventory_rebalance:
+        paired_step_logs.append(
+            f"flat inventory rebalance: reinit symmetric paired ladder at mark {float(mark):g} "
+            f"(source={mark_source}, grid inventory flat)"
         )
     if reinit:
         paired = init_paired_state(params=params, tick=0)
@@ -839,6 +874,7 @@ def _pick_tickers_one_asset(
         "grid_reset_count": int(state.get("reset_count") or 0),
         "grid_paired_step_logs": paired_step_logs[-30:] if paired_step_logs else [],
         "grid_fresh_flat_start": bool(fresh_flat_start),
+        "grid_flat_inventory_rebalance": bool(flat_inventory_rebalance),
     }
     return state, meta
 

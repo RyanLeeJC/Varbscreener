@@ -1123,13 +1123,24 @@ def _grid_venue_inputs_for_cycle(
             pending_by[asset] = pk if pk is not None else set()
         else:
             pending_by[asset] = set()
-        pending_empty = len(pending_by.get(asset) or ()) == 0
         if ignore_venue_positions:
-            flat_by[asset] = pending_empty
+            # Grid session is flat-path; pending limits must not block flat rebalance logic.
+            flat_by[asset] = True
         else:
             pos_s = _position_qty_summary(positions_raw or {}, asset=asset)
-            flat_by[asset] = not bool(pos_s.get("has_position")) and pending_empty
+            flat_by[asset] = not bool(pos_s.get("has_position"))
     return marks, pending_by, flat_by
+
+
+def _meta_flag_any_asset(meta: Dict[str, Any], key: str) -> bool:
+    if bool(meta.get(key)):
+        return True
+    by = meta.get("grid_by_asset")
+    if isinstance(by, dict):
+        for am in by.values():
+            if isinstance(am, dict) and bool(am.get(key)):
+                return True
+    return False
 
 
 def _log_gridstrat_paired_step(meta: Dict[str, Any], *, prefix: str) -> None:
@@ -2443,6 +2454,11 @@ def one_cycle(
         _log(f"step: strategy finished (strategy={meta.get('strategy')}, longs={len(longs)}, shorts={len(shorts)})")
         if meta.get("grid_fresh_flat_start"):
             _log("gridstrat: fresh flat session — symmetric paired ladder reinit at current mark")
+        if _meta_flag_any_asset(meta, "grid_flat_inventory_rebalance"):
+            _log(
+                "gridstrat: flat inventory — rebalancing buy/sell limits symmetrically around venue mark "
+                "(drift reconcile will cancel lopsided venue limits)"
+            )
         if meta.get("grid_paired_limit_mode"):
             _log_gridstrat_paired_step(meta, prefix="gridstrat")
 
