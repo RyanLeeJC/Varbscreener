@@ -76,9 +76,9 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "reanchor"
 # (Same idea as ``DEFAULT_GRID_BAND_PCT`` — leave bounds NaN to use ±band around mark.)
 # -----------------------------------------------------------------------------
 DEFAULT_GRID_ASSET: str = "BTC"
-DEFAULT_GRID_INVESTMENT_USD: float = 400.0
+DEFAULT_GRID_INVESTMENT_USD: float = 300.0
 DEFAULT_GRID_LEVERAGE: float = 30.0
-DEFAULT_GRID_NUM: int = 40  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
+DEFAULT_GRID_NUM: int = 30  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
 DEFAULT_GRID_MARKET_SIZING: str = "qty"  # legacy market mode only: "qty" | "usd"
 DEFAULT_GRID_BAND_PCT: float = 0.2  # fallback band % when a ticker is not listed below
 DEFAULT_GRID_LOWER: float = float("nan")  # set both bounds finite to pin explicit bracket
@@ -91,8 +91,9 @@ DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses
 # Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
 # -----------------------------------------------------------------------------
 GRID_TRADING_TICKERS: Dict[str, float] = {
-    "ETH": 1.0,
-    "LINK": 1.5,
+    "ETH": 1.5,
+    "HYPE":1.5,
+    "XMR":1.5,
     
 }
 
