@@ -79,7 +79,7 @@ TIME_KILL_POSITION_HOURS: float = 12.0
 # or IM% exceeds INTERVAL_RISK_IM_PCT, reduce each open position by INTERVAL_RISK_REDUCE_FRACTION
 # via multimarketorder (--reduce-only) before the rest of the cycle.
 INTERVAL_RISK_UPNL_LOSS_PCT: float = 5.0
-INTERVAL_RISK_IM_PCT: float = 75.0
+INTERVAL_RISK_IM_PCT: float = 50.0
 INTERVAL_RISK_REDUCE_FRACTION: float = 0.5
 
 # User setting: which strategy to run when flat.
