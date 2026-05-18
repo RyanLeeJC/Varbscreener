@@ -45,7 +45,7 @@ _DEFAULT_MARKETSTATE_JSON = _STRATEGY_MARKETSTATE_JSON
 _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json")
 
 # Check interval (minutes) between cycles/sessions when --period-min is not provided.
-CHECK_INTERVAL_MIN: int = 1
+CHECK_INTERVAL_MIN: int = 2
 
 # --- User-tunable settings (surface here for quick edits) ---
 #
