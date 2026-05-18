@@ -102,14 +102,14 @@ DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses
 GRID_TRADING_TICKERS: Dict[str, float] = {
     "ETH": 1.0,
     "HYPE": 1.0,
-    "XMR": 1.0,
+    "XMR": 1.5,
     "SOL": 1.0,
     "XRP": 1.0,
-    "AVAX": 1.0,
-    "SUI": 1.0,
-    "DOGE": 1.0,
-    "NEAR": 1.0,
-    "LINK": 1.0,
+    "AVAX": 1.5,
+    "SUI": 1.5,
+    "DOGE": 1.5,
+    "NEAR": 1.5,
+    "LINK": 1.5,
 }
 
 ROOT_STATE_SCHEMA_VERSION: int = 4
