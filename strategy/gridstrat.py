@@ -83,8 +83,8 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "reanchor"
 # (Same idea as ``DEFAULT_GRID_BAND_PCT`` — leave bounds NaN to use ±band around mark.)
 # -----------------------------------------------------------------------------
 DEFAULT_GRID_ASSET: str = "BTC"
-DEFAULT_GRID_INVESTMENT_USD: float = 50.0
-DEFAULT_GRID_LEVERAGE: float = 40.0
+DEFAULT_GRID_INVESTMENT_USD: float = 20.0
+DEFAULT_GRID_LEVERAGE: float = 50.0
 DEFAULT_GRID_NUM: int = 10  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
 DEFAULT_GRID_MARKET_SIZING: str = "qty"  # legacy market mode only: "qty" | "usd"
 DEFAULT_GRID_BAND_PCT: float = 0.2  # fallback band % when a ticker is not listed below
@@ -98,9 +98,16 @@ DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses
 # Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
 # -----------------------------------------------------------------------------
 GRID_TRADING_TICKERS: Dict[str, float] = {
+    "ETH": 1.0,
+    "HYPE": 1.0,
+    "XMR": 1.0,
+    "SOL": 1.0,
     "XRP": 1.0,
-    "MON": 1.0,
+    "AVAX": 1.0,
     "SUI": 1.0,
+    "DOGE": 1.0,
+    "NEAR": 1.0,
+    "LINK": 1.0,
 }
 
 ROOT_STATE_SCHEMA_VERSION: int = 4
@@ -121,8 +128,36 @@ def gridstrat_ignore_venue_positions() -> bool:
     return True
 
 
+def _tickers_from_env_list(raw: str, *, default_band: float) -> Dict[str, float]:
+    """Parse ``GRID_TRADING_TICKERS`` env: ``DOGE:1,ETH`` or ``DOGE,ETH`` (band uses *default_band*)."""
+    out: Dict[str, float] = {}
+    for part in str(raw).replace(";", ",").split(","):
+        piece = part.strip()
+        if not piece:
+            continue
+        if ":" in piece:
+            sym_s, band_s = piece.split(":", 1)
+            sym = sym_s.strip().upper()
+            try:
+                band = float(band_s.strip())
+            except (TypeError, ValueError):
+                band = float(default_band)
+        else:
+            sym = piece.strip().upper()
+            band = float(default_band)
+        if sym:
+            out[sym] = band
+    return out
+
+
 def grid_trading_ticker_band_pcts() -> Dict[str, float]:
     """Active tickers → default ±band % (uppercased keys)."""
+    env_tickers = (os.environ.get("GRID_TRADING_TICKERS") or "").strip()
+    if env_tickers:
+        band_default = env_grid_band_pct()
+        parsed = _tickers_from_env_list(env_tickers, default_band=band_default)
+        if parsed:
+            return parsed
     if not GRID_TRADING_TICKERS:
         asset = (os.environ.get("GRID_ASSET") or DEFAULT_GRID_ASSET).strip().upper()
         return {asset: float(DEFAULT_GRID_BAND_PCT)}

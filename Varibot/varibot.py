@@ -74,6 +74,14 @@ _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-positi
 # close all positions (live only) at the start of the "have positions" cycle.
 TIME_KILL_POSITION_HOURS: float = 12.0
 
+# Interval risk de-risk (every cycle when venue has open positions):
+# If account uPnL loss exceeds INTERVAL_RISK_UPNL_LOSS_PCT of portfolio value (e.g. -6%),
+# or IM% exceeds INTERVAL_RISK_IM_PCT, reduce each open position by INTERVAL_RISK_REDUCE_FRACTION
+# via multimarketorder (--reduce-only) before the rest of the cycle.
+INTERVAL_RISK_UPNL_LOSS_PCT: float = 5.0
+INTERVAL_RISK_IM_PCT: float = 75.0
+INTERVAL_RISK_REDUCE_FRACTION: float = 0.5
+
 # User setting: which strategy to run when flat.
 # You can put a module name (preferred) or a filename:
 #   "gridstrat" or "gridstrat.py" (Vari price-ladder grid; see strategy/gridstrat.py + GRID_* env)
@@ -2242,6 +2250,115 @@ def _invert_extreme_topup_if_needed(
         )
 
 
+def _interval_risk_upnl_vs_portfolio_pct(snap: Any) -> Optional[float]:
+    """Account uPnL as % of portfolio value (negative when in loss)."""
+    pv = getattr(snap, "portfolio_value_usd", None)
+    upnl = getattr(snap, "unrealized_pnl_usd", None)
+    if pv is None or upnl is None:
+        return None
+    try:
+        pv_f = float(pv)
+        if pv_f <= 0:
+            return None
+        return (float(upnl) / pv_f) * 100.0
+    except (TypeError, ValueError):
+        return None
+
+
+def _interval_risk_thresholds() -> Tuple[float, float, float]:
+    """(upnl_loss_pct, im_pct, reduce_fraction) with optional env overrides."""
+    upnl_thr = float(INTERVAL_RISK_UPNL_LOSS_PCT)
+    im_thr = float(INTERVAL_RISK_IM_PCT)
+    frac = float(INTERVAL_RISK_REDUCE_FRACTION)
+    try:
+        v = (os.getenv("VARIBOT_INTERVAL_RISK_UPNL_LOSS_PCT", "") or "").strip()
+        if v:
+            upnl_thr = float(v)
+    except Exception:
+        pass
+    try:
+        v = (os.getenv("VARIBOT_INTERVAL_RISK_IM_PCT", "") or "").strip()
+        if v:
+            im_thr = float(v)
+    except Exception:
+        pass
+    try:
+        v = (os.getenv("VARIBOT_INTERVAL_RISK_REDUCE_FRACTION", "") or "").strip()
+        if v:
+            frac = float(v)
+    except Exception:
+        pass
+    return upnl_thr, im_thr, max(0.0, min(1.0, frac))
+
+
+def _interval_risk_should_half_reduce(snap: Any) -> Tuple[bool, str]:
+    upnl_thr, im_thr, _ = _interval_risk_thresholds()
+    reasons: List[str] = []
+    upnl_pct = _interval_risk_upnl_vs_portfolio_pct(snap)
+    if upnl_pct is not None and upnl_pct < -float(upnl_thr):
+        reasons.append(f"uPnL vs portfolio={upnl_pct:.2f}% (< -{upnl_thr:g}%)")
+    im_usage = getattr(snap, "im_usage", None)
+    if im_usage is not None and float(im_usage) * 100.0 > float(im_thr):
+        reasons.append(f"IM%={float(im_usage) * 100.0:.2f}% (> {im_thr:g}%)")
+    return bool(reasons), "; ".join(reasons)
+
+
+def _interval_risk_half_reduce_positions(
+    *,
+    args: argparse.Namespace,
+    positions_raw: Any,
+    live: bool,
+) -> bool:
+    """Reduce each open position by INTERVAL_RISK_REDUCE_FRACTION via multimarketorder. Returns True if jobs ran."""
+    _, _, frac = _interval_risk_thresholds()
+    if frac <= 0:
+        return False
+    reduce_extra = ["--reduce-only"]
+    jobs: List[Tuple[str, str, float]] = []
+    for p in _positions_list(positions_raw):
+        sym = _instrument_label(p).strip().upper()
+        q = _position_qty(p)
+        if not sym or sym == "UNKNOWN" or q is None:
+            continue
+        qty = float(q)
+        if abs(qty) <= 1e-12:
+            continue
+        cut = abs(qty) * float(frac)
+        if cut <= 1e-12:
+            continue
+        side = "sell" if qty > 0 else "buy"
+        jobs.append((sym, side, cut))
+    if not jobs:
+        _log("interval risk: triggered but no open positions with size — skip reduce.")
+        return False
+
+    pct = int(round(float(frac) * 100.0))
+    _log(
+        f"interval risk: {pct}% reduce on {len(jobs)} ticker(s) via {args.multi_script} "
+        f"({'LIVE' if live else 'dry-run'})..."
+    )
+    rc_worst = 0
+    for sym, side, cut in jobs:
+        qty_s = format_qty_for_indicative_api(float(cut))
+        if not live:
+            _log(f"interval risk: dry-run {side} {sym} qty={qty_s} reduce-only")
+            continue
+        rc = run_multimarket_asset_side(
+            multi_script=str(args.multi_script),
+            asset=sym,
+            side=side,
+            qty=float(cut),
+            live=True,
+            extra_args=reduce_extra,
+        )
+        if int(rc) != 0:
+            rc_worst = int(rc)
+            _log(f"interval risk: {args.multi_script} {sym} exited {rc}")
+    if live and rc_worst == 0:
+        time.sleep(POST_MULTIMARKET_POSITIONS_POLL_S)
+    return True
+
+
 def one_cycle(
     *,
     ep: VariEndpoints,
@@ -2264,6 +2381,28 @@ def one_cycle(
     _log(_fmt_portfolio_snapshot_line(out))
 
     has_pos = has_open_positions(raw_pos)
+    if has_pos:
+        triggered, why = _interval_risk_should_half_reduce(snap)
+        if triggered:
+            _log(f"interval risk: triggered ({why})")
+            _interval_risk_half_reduce_positions(
+                args=args,
+                positions_raw=raw_pos,
+                live=bool(args.live),
+            )
+            try:
+                raw_pf = ep.get_portfolio(compute_margin=True)
+                snap = parse_portfolio_snapshot(raw_pf)
+                out = _build_out_dict(cfg=cfg, snap=snap)
+                raw_pos = ep.get_positions()
+                _log(f"interval risk: post-reduce — {_fmt_portfolio_snapshot_line(out)}")
+            except Exception as e:
+                _log(
+                    f"WARNING: interval risk post-reduce refresh failed ({type(e).__name__}: {e}); "
+                    "continuing with pre-reduce snapshot/positions."
+                )
+            has_pos = has_open_positions(raw_pos)
+
     grid_ignore_pos = _gridstrat_ignores_venue_positions(strat_key)
 
     if not has_pos or grid_ignore_pos:
