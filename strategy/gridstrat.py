@@ -108,8 +108,13 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     "AVAX": 1.5,
     "SUI": 1.5,
     "DOGE": 1.5,
-    "NEAR": 3.0,
     "LINK": 1.5,
+    "LDO": 1.5,
+    "ENA": 1.5,
+    "AAVE": 1.5,
+    "TAO": 1.5,
+    "ONDO": 2.0,
+    "PENDLE": 2.5,
 }
 
 ROOT_STATE_SCHEMA_VERSION: int = 4

@@ -89,6 +89,26 @@ Strategy: str = os.getenv("VARIBOT_STRATEGY", "gridstrat.py").strip()
 if not Strategy:
     Strategy = "gridstrat.py"
 
+# Grid universe: ticker → symmetric ±band % (7d DB backtest targets; synced into gridstrat on load).
+# Override entirely with env GRID_TRADING_TICKERS=SYM:1.5,... if set.
+GRID_TRADING_TICKERS: Dict[str, float] = {
+    "ETH": 1.0,
+    "HYPE": 1.0,
+    "XMR": 1.5,
+    "SOL": 1.0,
+    "XRP": 1.0,
+    "AVAX": 1.5,
+    "SUI": 1.5,
+    "DOGE": 1.5,
+    "LINK": 1.5,
+    "LDO": 1.5,
+    "ENA": 1.5,
+    "AAVE": 1.5,
+    "TAO": 1.5,
+    "ONDO": 2.0,
+    "PENDLE": 2.5,
+}
+
 # Rolling log (wrapper mode): varibot.py can self-wrap to prefix lines and keep a rolling logfile,
 # so you can run just `python3 varibot.py --live` and still get the run_varibot_logged behavior.
 _VARIBOT_LOG_MAX_LINES: int = 1000
@@ -156,6 +176,13 @@ from strategy.gridstrat import (  # noqa: E402
     grid_trading_ticker_band_pcts,
     gridstrat_ignore_venue_positions,
 )
+
+if GRID_TRADING_TICKERS and not (os.environ.get("GRID_TRADING_TICKERS") or "").strip():
+    strategies_mod.GRID_TRADING_TICKERS.clear()
+    strategies_mod.GRID_TRADING_TICKERS.update(GRID_TRADING_TICKERS)
+    _n_grid_tickers = max(1, len(GRID_TRADING_TICKERS))
+    strategies_mod.DEFAULT_MAX_TICKER_ENTRIES = _n_grid_tickers
+    INVERT_EXTREME_MAX_TICKER_ENTRIES = _n_grid_tickers
 from portfolio_manager_pairs import (
     PAIR_TP_THRESHOLD_PCT_DEFAULT as PM_PAIR_TP_THRESHOLD_PCT_DEFAULT,
     PairCandidate,
