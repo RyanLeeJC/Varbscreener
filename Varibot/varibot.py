@@ -58,7 +58,8 @@ PM_REFILL_DEFAULT_ON: bool = True
 # Grid (``strategy/gridstrat``): after each ``grid_mode`` tick, write ``Varibot/gridlimits.json`` via
 # ``sync_gridlimits_json`` for ``grid_limits_reconcile``. Set ``VARIBOT_SYNC_GRIDLIMITS_JSON=0`` to skip.
 # Live limit reconcile defaults ON (``grid_limits_reconcile.GRID_LIMITS_RECONCILE_DEFAULT``); no Railway env
-# required. Set ``VARIBOT_GRID_LIMITS_RECONCILE=0`` to disable. Drift cancel/refill auto-on with paired_limit.
+# required. Set ``VARIBOT_GRID_LIMITS_RECONCILE=0`` to disable. Drift refill auto-on with paired_limit;
+# drift cancel defaults off (refill missing rungs after fills; see grid_limits_reconcile).
 
 # Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
 # then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).

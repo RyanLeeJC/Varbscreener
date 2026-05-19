@@ -28,8 +28,8 @@ Configure via environment variables (override file-level ``DEFAULT_*`` constants
   GRIDSTRAT_RESET=1        # one-shot: re-init engine state on next pick_tickers
   GRIDSTRAT_IGNORE_VENUE_POSITIONS=1  # default on: Varibot/grid treats account as flat for grid
                                         # (manual pre-positions do not block fresh-book init)
-  GRIDSTRAT_FLAT_REBALANCE=1         # default on: while grid inventory is flat, reinit symmetric
-                                        # paired ladder at mark (fixes lopsided venue limits)
+  GRIDSTRAT_FLAT_REBALANCE=0         # default off: keep fixed ladder; fill/re-arm via paired sim path
+                                        # set 1 to reinit whole ladder at mark each cycle while flat
   GRID_RWA_TICKERS=XAU,CL,...    # optional override; default = ``GRID_RWA_COMMODITY_TICKERS`` below
                                     # (Omni ``perpetual_rwa_future`` + ``kind: commodity`` for API calls)
 
@@ -165,8 +165,8 @@ def gridstrat_ignore_venue_positions() -> bool:
 
 
 def gridstrat_flat_rebalance_enabled() -> bool:
-    """When True (default), re-init symmetric paired ladder at mark while grid inventory is flat."""
-    raw = (os.environ.get(ENV_GRIDSTRAT_FLAT_REBALANCE) or "1").strip().lower()
+    """When True, re-init symmetric paired ladder at mark each cycle while grid inventory is flat."""
+    raw = (os.environ.get(ENV_GRIDSTRAT_FLAT_REBALANCE) or "0").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return False
     return True

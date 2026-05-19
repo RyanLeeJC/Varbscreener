@@ -18,9 +18,9 @@ DEFAULT_GRID_LIMITS_FILENAME: str = "gridlimits.json"
 # Default ON when unset (Railway-friendly). Set VARIBOT_GRID_LIMITS_RECONCILE=0 to disable.
 ENV_GRID_LIMITS_RECONCILE: str = "VARIBOT_GRID_LIMITS_RECONCILE"
 GRID_LIMITS_RECONCILE_DEFAULT: bool = True
-# Set to 1 to cancel venue limits not in the strategy template and post missing template rungs (sim drift).
+# Post missing sim/template limits when venue book drifts (fills, re-arms). Cancel leg is opt-in.
 ENV_GRID_LIMITS_DRIFT_RECONCILE: str = "VARIBOT_GRID_LIMITS_DRIFT_RECONCILE"
-# Sub-gates (default on when drift reconcile is on): set to 0/false to disable one leg only.
+# Sub-gates: cancel defaults off (refill-only between cycles); set to 1 to cancel stray venue limits.
 ENV_GRID_LIMITS_DRIFT_CANCEL: str = "VARIBOT_GRID_LIMITS_DRIFT_CANCEL"
 ENV_GRID_LIMITS_DRIFT_REFILL: str = "VARIBOT_GRID_LIMITS_DRIFT_REFILL"
 ENV_GRID_LIMITS_RECONCILE_WITH_POSITIONS: str = "VARIBOT_GRID_LIMITS_RECONCILE_WITH_POSITIONS"
@@ -61,9 +61,8 @@ def _drift_reconcile_enabled(meta: Optional[Dict[str, Any]] = None) -> bool:
 
 
 def _drift_cancel_enabled(meta: Optional[Dict[str, Any]] = None) -> bool:
-    return _env_bool_default(
-        ENV_GRID_LIMITS_DRIFT_CANCEL, default_when_unset=_drift_reconcile_enabled(meta)
-    )
+    _ = meta
+    return _env_bool_default(ENV_GRID_LIMITS_DRIFT_CANCEL, default_when_unset=False)
 
 
 def _drift_refill_enabled(meta: Optional[Dict[str, Any]] = None) -> bool:
@@ -637,6 +636,65 @@ def _build_venue_snapshot(
     return snap
 
 
+def _load_gridstrat_asset_state(asset: str) -> Optional[Dict[str, Any]]:
+    """Per-asset slice from ``gridstrat_state.json`` (multi-asset v4 or legacy single-asset)."""
+    want = str(asset).strip().upper()
+    try:
+        with open(_default_state_path(), "r", encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(st, dict):
+        return None
+    if int(st.get("schema_version") or 0) == ROOT_STATE_SCHEMA_VERSION and isinstance(
+        st.get("assets"), dict
+    ):
+        asset_st = st["assets"].get(want)
+        return asset_st if isinstance(asset_st, dict) else None
+    legacy = (os.environ.get("GRID_ASSET") or "BTC").strip().upper()
+    if want == legacy or not st.get("assets"):
+        return st
+    return None
+
+
+def _state_open_limit_keys(asset: str) -> Set[Tuple[str, str]]:
+    """Open (side, price) keys from persisted paired sim — venue limits on these are not canceled."""
+    state = _load_gridstrat_asset_state(asset)
+    if not state:
+        return set()
+    out: Set[Tuple[str, str]] = set()
+    for o in state.get("orders") or []:
+        if not isinstance(o, dict) or o.get("status") != "open":
+            continue
+        side = str(o.get("side") or "").strip().lower()
+        if side not in ("buy", "sell"):
+            continue
+        try:
+            out.add(limit_price_key(side, float(o["level"])))
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out
+
+
+def _drift_cancel_orphan_keys(
+    *,
+    asset: str,
+    pending_orphans: Set[Tuple[str, str]],
+    ameta: Dict[str, Any],
+) -> Set[Tuple[str, str]]:
+    """
+    Orphans to cancel on drift.
+
+    Default: only limits not in gridstrat open-book (manual / stray). Sim open rungs are kept
+    even when this-cycle meta template differs. Full cancel when ``grid_flat_inventory_rebalance``.
+    """
+    if not pending_orphans:
+        return set()
+    if ameta.get("grid_flat_inventory_rebalance"):
+        return set(pending_orphans)
+    return pending_orphans - _state_open_limit_keys(asset)
+
+
 def _limits_rows_for_asset(gl: Dict[str, Any], asset: str) -> List[Any]:
     tickers = _gridlimits_tickers_from_file(gl)
     sec = tickers.get(str(asset).strip().upper()) or {}
@@ -683,11 +741,28 @@ def _reconcile_one_ticker(
             f"(orphans={len(pending_orphans)} missing={len(template_missing)}"
             f"{f' grid_reset_count={reset_n}' if reset_n is not None else ''})"
         )
-        if _drift_cancel_enabled(combined_meta) and pending_orphans:
-            n_cancel = _cancel_pending_orphans(
-                ep, asset=asset, orphan_keys=pending_orphans, log=log
+        if pending_orphans:
+            cancel_keys = _drift_cancel_orphan_keys(
+                asset=asset, pending_orphans=pending_orphans, ameta=ameta
             )
-            log(f"gridlimits{tag} drift: canceled {n_cancel}/{len(pending_orphans)} orphan limit(s).")
+            protected_n = len(pending_orphans) - len(cancel_keys)
+            if protected_n > 0:
+                log(
+                    f"gridlimits{tag} drift: keep {protected_n} venue limit(s) on sim open book "
+                    "(skip cancel on mark-only / paired ladder)."
+                )
+            if _drift_cancel_enabled(combined_meta) and cancel_keys:
+                n_cancel = _cancel_pending_orphans(
+                    ep, asset=asset, orphan_keys=cancel_keys, log=log
+                )
+                log(
+                    f"gridlimits{tag} drift: canceled {n_cancel}/{len(cancel_keys)} stray limit(s)."
+                )
+            elif cancel_keys:
+                log(
+                    f"gridlimits{tag} drift: {len(cancel_keys)} stray limit(s) on venue "
+                    f"(set {ENV_GRID_LIMITS_DRIFT_CANCEL}=1 to cancel)."
+                )
             try:
                 pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
             except Exception as e:
@@ -766,9 +841,9 @@ def run_grid_limits_bootstrap(
        pending keys, optional history summary, gridstrat state hints) so restarts show leftover grid.
     3) If ``VARIBOT_GRID_LIMITS_RECONCILE`` and live and limit mode and gridstrat emitted
        0 events: POST missing template limits from ``gridlimits.json``.
-    4) If ``VARIBOT_GRID_LIMITS_DRIFT_RECONCILE``: on template/venue key drift, cancel
-       ``pending_keys_not_in_template`` then post ``template_keys_missing_on_venue`` (works with
-       open positions when drift reconcile is enabled).
+    4) If ``VARIBOT_GRID_LIMITS_DRIFT_RECONCILE``: on template/venue key drift, post missing sim
+       rungs (refill after fills/re-arms). Cancel is opt-in (``VARIBOT_GRID_LIMITS_DRIFT_CANCEL``)
+       and skips limits still open in ``gridstrat_state.json`` unless flat-inventory rebalance ran.
     """
     _ = multi_script
     if not meta.get("grid_mode"):
