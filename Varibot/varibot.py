@@ -1141,7 +1141,10 @@ def _grid_venue_inputs_for_cycle(
             except Exception as e:
                 _log(f"gridlimits[{asset}]: venue mark failed ({type(e).__name__}: {e})")
             pk = _fetch_venue_pending_for_grid(ep, asset=asset)
-            pending_by[asset] = pk if pk is not None else set()
+            # Fetch failure → omit key (gridstrat sees pending=None). Do not use set() or
+            # fresh_flat_start wrongly assumes an empty venue book (RWA instrument query 400).
+            if pk is not None:
+                pending_by[asset] = pk
         else:
             pending_by[asset] = set()
         if ignore_venue_positions:

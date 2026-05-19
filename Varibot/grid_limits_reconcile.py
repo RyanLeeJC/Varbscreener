@@ -61,8 +61,9 @@ def _drift_reconcile_enabled(meta: Optional[Dict[str, Any]] = None) -> bool:
 
 
 def _drift_cancel_enabled(meta: Optional[Dict[str, Any]] = None) -> bool:
+    """Default on: cancel venue limits not on sim open book before refill (avoids double ladder)."""
     _ = meta
-    return _env_bool_default(ENV_GRID_LIMITS_DRIFT_CANCEL, default_when_unset=False)
+    return _env_bool_default(ENV_GRID_LIMITS_DRIFT_CANCEL, default_when_unset=True)
 
 
 def _drift_refill_enabled(meta: Optional[Dict[str, Any]] = None) -> bool:
@@ -93,7 +94,7 @@ def _grid_limits_json_path(varibot_dir: str) -> str:
     return os.path.join(varibot_dir, DEFAULT_GRID_LIMITS_FILENAME)
 
 
-def _instrument_param(asset: str) -> str:
+def _instrument_param(asset: str) -> Optional[str]:
     from variationalbot.vari.endpoints import instrument_query_param
 
     return instrument_query_param(asset)
@@ -279,8 +280,10 @@ def _row_rfq_id(row: Dict[str, Any]) -> Optional[str]:
 
 
 def _fetch_pending_limit_rows(ep: VariEndpoints, *, asset: str) -> List[Dict[str, Any]]:
+    from variationalbot.vari.endpoints import fetch_orders_v2_pending
+
     inst = _instrument_param(asset)
-    raw = ep.client.request_json("GET", f"/api/orders/v2?status=pending&instrument={inst}")
+    raw = fetch_orders_v2_pending(ep.client, instrument=inst, status="pending")
     want = str(asset).strip().upper()
     out: List[Dict[str, Any]] = []
     for row in _orders_result_rows(raw):
@@ -749,20 +752,22 @@ def _reconcile_one_ticker(
             if protected_n > 0:
                 log(
                     f"gridlimits{tag} drift: keep {protected_n} venue limit(s) on sim open book "
-                    "(skip cancel on mark-only / paired ladder)."
+                    "(still open in gridstrat_state.json)."
                 )
-            if _drift_cancel_enabled(combined_meta) and cancel_keys:
-                n_cancel = _cancel_pending_orphans(
-                    ep, asset=asset, orphan_keys=cancel_keys, log=log
-                )
-                log(
-                    f"gridlimits{tag} drift: canceled {n_cancel}/{len(cancel_keys)} stray limit(s)."
-                )
-            elif cancel_keys:
-                log(
-                    f"gridlimits{tag} drift: {len(cancel_keys)} stray limit(s) on venue "
-                    f"(set {ENV_GRID_LIMITS_DRIFT_CANCEL}=1 to cancel)."
-                )
+            if cancel_keys:
+                if _drift_cancel_enabled(combined_meta):
+                    n_cancel = _cancel_pending_orphans(
+                        ep, asset=asset, orphan_keys=cancel_keys, log=log
+                    )
+                    log(
+                        f"gridlimits{tag} drift: canceled {n_cancel}/{len(cancel_keys)} "
+                        "superseded limit(s) (not on sim book)."
+                    )
+                else:
+                    log(
+                        f"gridlimits{tag} drift: {len(cancel_keys)} superseded limit(s) on venue "
+                        f"(set {ENV_GRID_LIMITS_DRIFT_CANCEL}=1 to clear before refill)."
+                    )
             try:
                 pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
             except Exception as e:

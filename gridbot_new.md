@@ -318,6 +318,51 @@ cd Varibot && python3 rebalance_run.py --live --force
 `varibot.py --live` also calls the same logic at the start of each cycle when positions exist (respects latch).
 
 ---
+
+## Railway — Cloudflare error after deploy
+
+After a **git push** deploy, logs may show:
+
+```text
+VariCloudflareError: Cloudflare HTML challenge for GET /api/portfolio?compute_margin=true
+```
+
+Vari’s API returned a Cloudflare/WAF HTML page instead of JSON (common on cloud egress IPs). The bot may still print `cycle: complete` and sleep until the next interval, but API calls will keep failing until the challenge is cleared.
+
+### Fix (do this)
+
+1. In Railway, open the **Gridbot** service.
+2. **Remove deployment** (delete the active deployment / service instance — not just restart).
+3. **Deploy again** (new deployment from the same branch, e.g. `GridBot`).
+
+That gives you a **fresh** runtime and often a new egress path, which clears the challenge.
+
+### Do not do this
+
+- **Redeploy** (re-run the same deployment in place) — usually **does not** clear the Cloudflare challenge; you will keep seeing the same error.
+
+### RWA pending orders (`XAU`, `CL`, `XAG`, `COPPER`)
+
+If logs show:
+
+```text
+GET /api/orders/v2?instrument=P-XAU-USDC … 400 Incorrect number of fields provided
+```
+
+Omni expects **four** hyphen segments for crypto (`P-ETH-USDC-3600`). Commodity perps reject `P-XAU-USDC` (three segments). The bot **omits** the `instrument` query param for RWA and filters by underlying client-side.
+
+To confirm the correct filter string (if Vari adds one later), in DevTools → Network → filter `orders/v2` → copy the **`instrument`** query value from a working pending-orders request on an RWA market (e.g. XAU). Send that full string; we can wire it into `instrument_query_param()` in `variationalbot/vari/endpoints.py`.
+
+### Optional hardening
+
+If challenges recur, set a proxy Cloudflare accepts (see `Varibot/env.example`):
+
+```bash
+HTTPS_PROXY=https://user:pass@host:port
+```
+
+---
+
 Phase 2 development
 
 When doing gridbot trading on single ticker, or on 2 tickers, at this time, there's not way to hedge the inventory.

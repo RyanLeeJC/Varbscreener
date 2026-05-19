@@ -227,12 +227,32 @@ class Instrument:
         )
 
 
-def instrument_query_param(asset: str) -> str:
-    """GET /api/orders/v2 ``instrument`` query value (crypto vs RWA commodity)."""
+def instrument_query_param(asset: str) -> Optional[str]:
+    """
+    GET /api/orders/v2 ``instrument`` filter (crypto perps only).
+
+  Crypto (DevTools): ``P-BTC-USDC-3600`` — four segments after ``P-``.
+  RWA commodity (``perpetual_rwa_future``): ``P-XAU-USDC`` returns HTTP 400
+  ``Incorrect number of fields provided``. Omit the query param and filter by
+  ``instrument.underlying`` client-side (see ``grid_limits_reconcile``).
+    """
     sym = str(asset).strip().upper()
     if sym in rwa_commodity_underlyings():
-        return f"P-{sym}-USDC"
+        return None
     return f"P-{sym}-USDC-3600"
+
+
+def fetch_orders_v2_pending(
+    client: VariClient,
+    *,
+    instrument: Optional[str] = None,
+    status: str = "pending",
+) -> Any:
+    """GET /api/orders/v2 with optional instrument filter (omit when ``instrument`` is None)."""
+    path = f"/api/orders/v2?status={status}"
+    if instrument:
+        path = f"{path}&instrument={instrument}"
+    return client.request_json("GET", path)
 
 
 class VariEndpoints:

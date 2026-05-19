@@ -14,6 +14,16 @@ from grid_limits_reconcile import (
     _state_open_limit_keys,
 )
 from strategy.gridstrat import gridstrat_flat_rebalance_enabled
+from variationalbot.vari.endpoints import instrument_query_param
+
+
+class TestInstrumentQueryParam(unittest.TestCase):
+    def test_crypto_has_four_segment_filter(self) -> None:
+        self.assertEqual(instrument_query_param("ETH"), "P-ETH-USDC-3600")
+
+    def test_rwa_omits_filter(self) -> None:
+        self.assertIsNone(instrument_query_param("XAU"))
+        self.assertIsNone(instrument_query_param("COPPER"))
 
 
 class TestFlatRebalanceDefault(unittest.TestCase):
@@ -24,10 +34,10 @@ class TestFlatRebalanceDefault(unittest.TestCase):
 
 
 class TestDriftCancelDefaults(unittest.TestCase):
-    def test_drift_cancel_default_off(self) -> None:
+    def test_drift_cancel_default_on(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("VARIBOT_GRID_LIMITS_DRIFT_CANCEL", None)
-            self.assertFalse(_drift_cancel_enabled())
+            self.assertTrue(_drift_cancel_enabled())
 
 
 class TestDriftCancelOrphanKeys(unittest.TestCase):
