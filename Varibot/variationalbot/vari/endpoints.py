@@ -171,12 +171,68 @@ class LeverageResult:
     max: int
 
 
+_DEFAULT_RWA_COMMODITY_UNDERLYINGS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COPPER"})
+
+
+def rwa_commodity_underlyings() -> frozenset[str]:
+    """
+    RWA commodity perps (``perpetual_rwa_future``).
+
+    Primary source: ``GRID_RWA_TICKERS`` env (set from ``strategy.gridstrat.GRID_RWA_COMMODITY_TICKERS``
+    on import). Falls back to ``_DEFAULT_RWA_COMMODITY_UNDERLYINGS`` if unset.
+    """
+    raw = (os.environ.get("GRID_RWA_TICKERS") or "").strip()
+    if raw:
+        return frozenset({p.strip().upper() for p in raw.replace(";", ",").split(",") if p.strip()})
+    return _DEFAULT_RWA_COMMODITY_UNDERLYINGS
+
+
 @dataclass(frozen=True)
 class Instrument:
     instrument_type: str
     underlying: str
-    funding_interval_s: int = 3600
     settlement_asset: str = "USDC"
+    funding_interval_s: Optional[int] = 3600
+    kind: Optional[str] = None
+
+    def to_api_dict(self) -> Dict[str, Any]:
+        """Serialize for POST /api/quotes/indicative and /api/orders/new/limit."""
+        d: Dict[str, Any] = {
+            "instrument_type": self.instrument_type,
+            "underlying": str(self.underlying).strip().upper(),
+            "settlement_asset": self.settlement_asset,
+        }
+        if self.kind:
+            d["kind"] = self.kind
+        if self.instrument_type == "perpetual_future" and self.funding_interval_s is not None:
+            d["funding_interval_s"] = int(self.funding_interval_s)
+        return d
+
+    @classmethod
+    def for_underlying(cls, underlying: str) -> "Instrument":
+        sym = str(underlying).strip().upper()
+        if sym in rwa_commodity_underlyings():
+            return cls(
+                instrument_type="perpetual_rwa_future",
+                underlying=sym,
+                settlement_asset="USDC",
+                funding_interval_s=None,
+                kind="commodity",
+            )
+        return cls(
+            instrument_type="perpetual_future",
+            underlying=sym,
+            funding_interval_s=3600,
+            settlement_asset="USDC",
+        )
+
+
+def instrument_query_param(asset: str) -> str:
+    """GET /api/orders/v2 ``instrument`` query value (crypto vs RWA commodity)."""
+    sym = str(asset).strip().upper()
+    if sym in rwa_commodity_underlyings():
+        return f"P-{sym}-USDC"
+    return f"P-{sym}-USDC-3600"
 
 
 class VariEndpoints:
@@ -285,12 +341,7 @@ class VariEndpoints:
         qty: float,
     ) -> Dict[str, Any]:
         payload = {
-            "instrument": {
-                "instrument_type": instrument.instrument_type,
-                "underlying": instrument.underlying,
-                "funding_interval_s": int(instrument.funding_interval_s),
-                "settlement_asset": instrument.settlement_asset,
-            },
+            "instrument": instrument.to_api_dict(),
             "qty": format_qty_for_indicative_api(float(qty)),
         }
         return self.quote_indicative(payload=payload)
@@ -428,12 +479,7 @@ class VariEndpoints:
             "order_type": "limit",
             "limit_price": lp_s,
             "side": str(side).strip().lower(),
-            "instrument": {
-                "instrument_type": instrument.instrument_type,
-                "underlying": instrument.underlying,
-                "funding_interval_s": int(instrument.funding_interval_s),
-                "settlement_asset": instrument.settlement_asset,
-            },
+            "instrument": instrument.to_api_dict(),
             "qty": str(qty).strip(),
             "slippage_limit": str(float(slippage_limit)),
             "use_mark_price": bool(use_mark_price),

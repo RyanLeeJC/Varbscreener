@@ -844,22 +844,19 @@ def main() -> int:
     for i, job in enumerate(jobs):
         asset = job["asset"]
         side = job["side"]
-        instrument = Instrument(
-            instrument_type="perpetual_future",
-            underlying=asset,
-            funding_interval_s=int(args.funding_interval_s),
-            settlement_asset=str(args.settlement_asset),
-        )
+        instrument = Instrument.for_underlying(asset)
+        if instrument.instrument_type == "perpetual_future":
+            instrument = Instrument(
+                instrument_type="perpetual_future",
+                underlying=asset,
+                funding_interval_s=int(args.funding_interval_s),
+                settlement_asset=str(args.settlement_asset),
+            )
 
         item: Dict[str, Any] = {
             "asset": asset,
             "side": side,
-            "instrument": {
-                "instrument_type": instrument.instrument_type,
-                "underlying": instrument.underlying,
-                "funding_interval_s": instrument.funding_interval_s,
-                "settlement_asset": instrument.settlement_asset,
-            },
+            "instrument": instrument.to_api_dict(),
             "steps": {},
         }
 
@@ -1147,12 +1144,14 @@ def main() -> int:
                     if str(j.get("asset") or "").strip().upper() == sym:
                         side = str(j.get("side") or "buy")
                         break
-                instrument = Instrument(
-                    instrument_type="perpetual_future",
-                    underlying=sym,
-                    funding_interval_s=int(args.funding_interval_s),
-                    settlement_asset=str(args.settlement_asset),
-                )
+                instrument = Instrument.for_underlying(sym)
+                if instrument.instrument_type == "perpetual_future":
+                    instrument = Instrument(
+                        instrument_type="perpetual_future",
+                        underlying=sym,
+                        funding_interval_s=int(args.funding_interval_s),
+                        settlement_asset=str(args.settlement_asset),
+                    )
                 try:
                     if use_fixed_qty:
                         quote_id, _quote = ep.quote_id_for_order_qty(

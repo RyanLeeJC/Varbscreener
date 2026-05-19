@@ -268,6 +268,56 @@ function process_fill_and_rearm(fill, state):
 Write `gridstrat_rearm.py` first and test it standalone before touching the exchange adapter — that's where the bugs will be, and it's the only part that has to be perfectly correct.
 
 ---
+
+## Interval risk rebalance (MM ≥ 50%)
+
+When maintenance margin usage hits **50%**, the bot can rebalance all live positions to equal **target notional** per leg (7 long / 7 short on 14 tickers when N=15, smallest dropped). One **market order per ticker** (net delta, not reduce-only). Pending grid limits are **not** canceled. Rebalance runs **once per MM episode** (latch until MM drops below trigger).
+
+### Run live from terminal
+
+From repo root (needs `Varibot/.env` with `VR_TOKEN`, `VR_WALLET_ADDRESS`):
+
+```bash
+cd Varibot
+python3 rebalance_run.py --live --force
+```
+
+- `--live` — place real market orders  
+- `--force` — skip the `yes` confirmation prompt  
+- Without `--force`: `python3 rebalance_run.py --live` prompts `Type yes to continue:`
+
+### Dry-run (plan only, no orders)
+
+```bash
+cd Varibot
+python3 rebalance_run.py
+```
+
+### Run again after a previous rebalance
+
+Latch file blocks repeat runs while MM stays above trigger. Clear it only if you intend another full rebalance:
+
+```bash
+rm -f Varibot/.varibot_rebalance_latch.json
+cd Varibot && python3 rebalance_run.py --live --force
+```
+
+### Env overrides (optional)
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `VARIBOT_REBALANCE_MM_TRIGGER` | `0.50` | Fire when MM usage ≥ this |
+| `VARIBOT_REBALANCE_IM_TRIGGER` | *(deprecated)* | Alias for MM trigger if `MM_TRIGGER` unset |
+| `VARIBOT_REBALANCE_IM_TARGET` | `0.20` | Target sizing IM in notional formula |
+| `VARIBOT_REBALANCE_ROUND_TO` | `10` | Round target notional to nearest $10 |
+| `VARIBOT_REBALANCE_MIN_ORDER_USD` | `5` | Skip legs smaller than this |
+| `VARIBOT_REBALANCE_ORDER_INTERVAL_S` | *(auto)* | Seconds between each ticker’s market order; default ≈3.2s at Vari 10 req/10s (3 HTTP calls per leg) |
+| `VARI_RATE_LIMIT_MAX` / `VARI_RATE_LIMIT_WINDOW_S` | `10` / `10` | Per-IP cap used to compute default pacing (also enforced on every HTTP call) |
+| `MAX_SLIPPAGE` | `0.002` | Market order slippage cap |
+
+`varibot.py --live` also calls the same logic at the start of each cycle when positions exist (respects latch).
+
+---
 Phase 2 development
 
 When doing gridbot trading on single ticker, or on 2 tickers, at this time, there's not way to hedge the inventory.

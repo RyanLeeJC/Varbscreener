@@ -74,14 +74,6 @@ _TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-positi
 # close all positions (live only) at the start of the "have positions" cycle.
 TIME_KILL_POSITION_HOURS: float = 12.0
 
-# Interval risk de-risk (every cycle when venue has open positions):
-# If account uPnL loss exceeds INTERVAL_RISK_UPNL_LOSS_PCT of portfolio value (e.g. -6%),
-# or IM% exceeds INTERVAL_RISK_IM_PCT, reduce each open position by INTERVAL_RISK_REDUCE_FRACTION
-# via multimarketorder (--reduce-only) before the rest of the cycle.
-INTERVAL_RISK_UPNL_LOSS_PCT: float = 10.0
-INTERVAL_RISK_IM_PCT: float = 50.0
-INTERVAL_RISK_REDUCE_FRACTION: float = 0.5
-
 # User setting: which strategy to run when flat.
 # You can put a module name (preferred) or a filename:
 #   "gridstrat" or "gridstrat.py" (Vari price-ladder grid; see strategy/gridstrat.py + GRID_* env)
@@ -94,6 +86,7 @@ if not Strategy:
 GRID_TRADING_TICKERS: Dict[str, float] = {
     "ETH": 1.0,
     "HYPE": 1.0,
+    "ADA": 1.0,
     "XMR": 1.5,
     "SOL": 1.0,
     "XRP": 1.0,
@@ -107,6 +100,10 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     "TAO": 1.5,
     "ONDO": 2.0,
     "PENDLE": 2.5,
+    "XAU": 1.5,
+    "CL": 1.5,
+    "XAG": 1.5,
+    "COPPER": 1.5,
 }
 
 # Rolling log (wrapper mode): varibot.py can self-wrap to prefix lines and keep a rolling logfile,
@@ -151,6 +148,7 @@ if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
 from check_portfolio_stats import _build_out_dict  # noqa: E402
+from portfolio_rebalance import rebalance_portfolio  # noqa: E402
 from grid_limits_reconcile import (  # noqa: E402
     _position_qty_summary,
     fetch_pending_limit_keys_for_asset,
@@ -1001,12 +999,7 @@ def _ensure_strategy_marketstate_json(path: Optional[str] = None) -> str:
 def _fetch_venue_mark_for_asset(ep: VariEndpoints, *, asset: str) -> float:
     """Live mark from POST /api/quotes/indicative (not cached listing files)."""
     sym = str(asset).strip().upper()
-    inst = Instrument(
-        instrument_type="perpetual_future",
-        underlying=sym,
-        funding_interval_s=3600,
-        settlement_asset="USDC",
-    )
+    inst = Instrument.for_underlying(sym)
     q = ep.quote_indicative_simple(instrument=inst, qty=1.0)
     if isinstance(q, dict):
         for k in ("mark_price", "index_price", "ask", "bid"):
@@ -1386,12 +1379,7 @@ def _grid_limits_place_limit_fn(
         sd = str(side).strip().lower()
         if sd not in ("buy", "sell"):
             return 1
-        inst = Instrument(
-            instrument_type="perpetual_future",
-            underlying=sym,
-            funding_interval_s=3600,
-            settlement_asset="USDC",
-        )
+        inst = Instrument.for_underlying(sym)
         lev_raw = (os.environ.get("GRID_LEVERAGE") or "").strip()
         if lev_raw:
             try:
@@ -2288,115 +2276,6 @@ def _invert_extreme_topup_if_needed(
         )
 
 
-def _interval_risk_upnl_vs_portfolio_pct(snap: Any) -> Optional[float]:
-    """Account uPnL as % of portfolio value (negative when in loss)."""
-    pv = getattr(snap, "portfolio_value_usd", None)
-    upnl = getattr(snap, "unrealized_pnl_usd", None)
-    if pv is None or upnl is None:
-        return None
-    try:
-        pv_f = float(pv)
-        if pv_f <= 0:
-            return None
-        return (float(upnl) / pv_f) * 100.0
-    except (TypeError, ValueError):
-        return None
-
-
-def _interval_risk_thresholds() -> Tuple[float, float, float]:
-    """(upnl_loss_pct, im_pct, reduce_fraction) with optional env overrides."""
-    upnl_thr = float(INTERVAL_RISK_UPNL_LOSS_PCT)
-    im_thr = float(INTERVAL_RISK_IM_PCT)
-    frac = float(INTERVAL_RISK_REDUCE_FRACTION)
-    try:
-        v = (os.getenv("VARIBOT_INTERVAL_RISK_UPNL_LOSS_PCT", "") or "").strip()
-        if v:
-            upnl_thr = float(v)
-    except Exception:
-        pass
-    try:
-        v = (os.getenv("VARIBOT_INTERVAL_RISK_IM_PCT", "") or "").strip()
-        if v:
-            im_thr = float(v)
-    except Exception:
-        pass
-    try:
-        v = (os.getenv("VARIBOT_INTERVAL_RISK_REDUCE_FRACTION", "") or "").strip()
-        if v:
-            frac = float(v)
-    except Exception:
-        pass
-    return upnl_thr, im_thr, max(0.0, min(1.0, frac))
-
-
-def _interval_risk_should_half_reduce(snap: Any) -> Tuple[bool, str]:
-    upnl_thr, im_thr, _ = _interval_risk_thresholds()
-    reasons: List[str] = []
-    upnl_pct = _interval_risk_upnl_vs_portfolio_pct(snap)
-    if upnl_pct is not None and upnl_pct < -float(upnl_thr):
-        reasons.append(f"uPnL vs portfolio={upnl_pct:.2f}% (< -{upnl_thr:g}%)")
-    im_usage = getattr(snap, "im_usage", None)
-    if im_usage is not None and float(im_usage) * 100.0 > float(im_thr):
-        reasons.append(f"IM%={float(im_usage) * 100.0:.2f}% (> {im_thr:g}%)")
-    return bool(reasons), "; ".join(reasons)
-
-
-def _interval_risk_half_reduce_positions(
-    *,
-    args: argparse.Namespace,
-    positions_raw: Any,
-    live: bool,
-) -> bool:
-    """Reduce each open position by INTERVAL_RISK_REDUCE_FRACTION via multimarketorder. Returns True if jobs ran."""
-    _, _, frac = _interval_risk_thresholds()
-    if frac <= 0:
-        return False
-    reduce_extra = ["--reduce-only"]
-    jobs: List[Tuple[str, str, float]] = []
-    for p in _positions_list(positions_raw):
-        sym = _instrument_label(p).strip().upper()
-        q = _position_qty(p)
-        if not sym or sym == "UNKNOWN" or q is None:
-            continue
-        qty = float(q)
-        if abs(qty) <= 1e-12:
-            continue
-        cut = abs(qty) * float(frac)
-        if cut <= 1e-12:
-            continue
-        side = "sell" if qty > 0 else "buy"
-        jobs.append((sym, side, cut))
-    if not jobs:
-        _log("interval risk: triggered but no open positions with size — skip reduce.")
-        return False
-
-    pct = int(round(float(frac) * 100.0))
-    _log(
-        f"interval risk: {pct}% reduce on {len(jobs)} ticker(s) via {args.multi_script} "
-        f"({'LIVE' if live else 'dry-run'})..."
-    )
-    rc_worst = 0
-    for sym, side, cut in jobs:
-        qty_s = format_qty_for_indicative_api(float(cut))
-        if not live:
-            _log(f"interval risk: dry-run {side} {sym} qty={qty_s} reduce-only")
-            continue
-        rc = run_multimarket_asset_side(
-            multi_script=str(args.multi_script),
-            asset=sym,
-            side=side,
-            qty=float(cut),
-            live=True,
-            extra_args=reduce_extra,
-        )
-        if int(rc) != 0:
-            rc_worst = int(rc)
-            _log(f"interval risk: {args.multi_script} {sym} exited {rc}")
-    if live and rc_worst == 0:
-        time.sleep(POST_MULTIMARKET_POSITIONS_POLL_S)
-    return True
-
-
 def one_cycle(
     *,
     ep: VariEndpoints,
@@ -2420,26 +2299,25 @@ def one_cycle(
 
     has_pos = has_open_positions(raw_pos)
     if has_pos:
-        triggered, why = _interval_risk_should_half_reduce(snap)
-        if triggered:
-            _log(f"interval risk: triggered ({why})")
-            _interval_risk_half_reduce_positions(
-                args=args,
-                positions_raw=raw_pos,
-                live=bool(args.live),
-            )
-            try:
-                raw_pf = ep.get_portfolio(compute_margin=True)
-                snap = parse_portfolio_snapshot(raw_pf)
-                out = _build_out_dict(cfg=cfg, snap=snap)
-                raw_pos = ep.get_positions()
-                _log(f"interval risk: post-reduce — {_fmt_portfolio_snapshot_line(out)}")
-            except Exception as e:
-                _log(
-                    f"WARNING: interval risk post-reduce refresh failed ({type(e).__name__}: {e}); "
-                    "continuing with pre-reduce snapshot/positions."
-                )
-            has_pos = has_open_positions(raw_pos)
+        rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
+        try:
+            lev = int(getattr(cfg, "max_leverage", 0) or 0)
+            if lev <= 0:
+                lev = int(os.getenv("MAX_LEVERAGE", "50") or "50")
+        except (TypeError, ValueError):
+            lev = 50
+        rebalance_portfolio(
+            ep=ep,
+            snap=snap,
+            positions_raw=raw_pos,
+            max_leverage=lev,
+            live=bool(args.live),
+            dry_run=rebalance_dry,
+            log=_log,
+            max_slippage=float(_resolve_max_slippage()),
+            mark_fetcher=lambda sym: float(_fetch_venue_mark_for_asset(ep, asset=sym)),
+            varibot_dir=_VARIBOT_DIR,
+        )
 
     grid_ignore_pos = _gridstrat_ignores_venue_positions(strat_key)
 
@@ -2685,6 +2563,11 @@ def parse_args() -> argparse.Namespace:
         "--live",
         action="store_true",
         help="Actually close positions and place orders (otherwise dry-run).",
+    )
+    p.add_argument(
+        "--rebalance-dry-run",
+        action="store_true",
+        help="Interval risk rebalance: log planned orders only (no cancels or market orders).",
     )
     p.add_argument(
         "--period-min",

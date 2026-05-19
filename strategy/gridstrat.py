@@ -30,6 +30,8 @@ Configure via environment variables (override file-level ``DEFAULT_*`` constants
                                         # (manual pre-positions do not block fresh-book init)
   GRIDSTRAT_FLAT_REBALANCE=1         # default on: while grid inventory is flat, reinit symmetric
                                         # paired ladder at mark (fixes lopsided venue limits)
+  GRID_RWA_TICKERS=XAU,CL,...    # optional override; default = ``GRID_RWA_COMMODITY_TICKERS`` below
+                                    # (Omni ``perpetual_rwa_future`` + ``kind: commodity`` for API calls)
 
 Optional compatibility: strategy key ``invert_extreme`` still resolves to this module on the GridBot
 branch.
@@ -95,6 +97,12 @@ DEFAULT_GRID_UPPER: float = float("nan")
 DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses arithmetic spacing)
 
 # -----------------------------------------------------------------------------
+# RWA commodity perps (Vari Beta): use ``perpetual_rwa_future`` + ``kind: commodity`` on the API
+# (no ``funding_interval_s``). Varibot ``Instrument.for_underlying`` reads ``GRID_RWA_TICKERS``.
+# -----------------------------------------------------------------------------
+GRID_RWA_COMMODITY_TICKERS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COPPER"})
+
+# -----------------------------------------------------------------------------
 # Multi-ticker grid — edit here: each ticker is managed independently (own state + gridlimits).
 # Shared (full notional each): GRID_INVESTMENT_USD, GRID_NUM, GRID_LEVERAGE via env / defaults above.
 # Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
@@ -102,6 +110,7 @@ DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses
 GRID_TRADING_TICKERS: Dict[str, float] = {
     "ETH": 1.0,
     "HYPE": 1.0,
+    "ADA": 1.0,
     "XMR": 1.5,
     "SOL": 1.0,
     "XRP": 1.0,
@@ -115,7 +124,25 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     "TAO": 1.5,
     "ONDO": 2.0,
     "PENDLE": 2.5,
+    # RWA commodities (see GRID_RWA_COMMODITY_TICKERS)
+    "XAU": 1.5,
+    "CL": 1.5,
+    "XAG": 1.5,
+    "COPPER": 1.5,
 }
+
+
+def is_rwa_commodity_ticker(asset: str) -> bool:
+    sym = str(asset).strip().upper()
+    return sym in GRID_RWA_COMMODITY_TICKERS
+
+
+def _sync_grid_rwa_tickers_env() -> None:
+    if not (os.environ.get("GRID_RWA_TICKERS") or "").strip():
+        os.environ["GRID_RWA_TICKERS"] = ",".join(sorted(GRID_RWA_COMMODITY_TICKERS))
+
+
+_sync_grid_rwa_tickers_env()
 
 ROOT_STATE_SCHEMA_VERSION: int = 4
 

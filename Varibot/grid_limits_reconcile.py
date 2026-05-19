@@ -95,7 +95,9 @@ def _grid_limits_json_path(varibot_dir: str) -> str:
 
 
 def _instrument_param(asset: str) -> str:
-    return f"P-{str(asset).strip().upper()}-USDC-3600"
+    from variationalbot.vari.endpoints import instrument_query_param
+
+    return instrument_query_param(asset)
 
 
 def _orders_result_rows(raw: Any) -> List[Dict[str, Any]]:
@@ -417,9 +419,9 @@ def _post_missing_limits(
 
 
 def _history_window_iso() -> Tuple[str, str]:
-    days = float(os.environ.get(ENV_GRID_ORDERS_HISTORY_DAYS, "7") or "7")
+    days = float(os.environ.get(ENV_GRID_ORDERS_HISTORY_DAYS, "1") or "1")
     if days <= 0:
-        days = 7.0
+        days = 1.0
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days)
     gte = start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
