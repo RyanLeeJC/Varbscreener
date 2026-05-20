@@ -271,7 +271,7 @@ Write `gridstrat_rearm.py` first and test it standalone before touching the exch
 
 ## Interval risk rebalance (IM ≥ 50%)
 
-When **initial margin (IM) usage** hits **50%**, the bot can rebalance all live positions to equal **target notional** per leg (7 long / 7 short on 14 tickers when N=15, smallest dropped). One **market order per ticker** (net delta, not reduce-only). Pending grid limits are **not** canceled. Rebalance runs **once per IM episode** (latch until IM drops below trigger).
+When **initial margin (IM) usage** is **≥ 50%** (default trigger), Varibot runs this rebalance **every interval** while you have positions and IM stays above the threshold: equal **target notional** per leg (7 long / 7 short on 14 tickers when N=15, smallest dropped). One **market order per ticker** (net delta, not reduce-only). Pending grid limits are **not** canceled. There is **no latch file** — each cycle decides independently from the latest portfolio snapshot.
 
 ### Run live from terminal
 
@@ -293,15 +293,6 @@ cd Varibot
 python3 rebalance_run.py
 ```
 
-### Run again after a previous rebalance
-
-Latch file blocks repeat runs while IM stays above trigger. Clear it only if you intend another full rebalance:
-
-```bash
-rm -f Varibot/.varibot_rebalance_latch.json
-cd Varibot && python3 rebalance_run.py --live --force
-```
-
 ### Env overrides (optional)
 
 | Variable | Default | Meaning |
@@ -315,7 +306,7 @@ cd Varibot && python3 rebalance_run.py --live --force
 | `VARI_RATE_LIMIT_MAX` / `VARI_RATE_LIMIT_WINDOW_S` | `10` / `10` | Per-IP cap used to compute default pacing (also enforced on every HTTP call) |
 | `MAX_SLIPPAGE` | `0.002` | Market order slippage cap |
 
-`varibot.py --live` also calls the same logic at the start of each cycle when positions exist (respects latch).
+`varibot.py --live` calls the same logic at the **start of each cycle** when positions exist (no latch).
 
 ---
 

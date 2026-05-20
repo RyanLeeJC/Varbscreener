@@ -283,10 +283,47 @@ def _fetch_pending_limit_rows(ep: VariEndpoints, *, asset: str) -> List[Dict[str
     from variationalbot.vari.endpoints import fetch_orders_v2_pending
 
     inst = _instrument_param(asset)
-    raw = fetch_orders_v2_pending(ep.client, instrument=inst, status="pending")
+    # Crypto perps: use the instrument filter (fast, small result set).
+    # RWA commodities: instrument filter is intentionally omitted (server 400), so we must paginate.
+    if inst:
+        raw = fetch_orders_v2_pending(ep.client, instrument=inst, status="pending")
+        rows_all = _orders_result_rows(raw)
+    else:
+        page_limit = int(os.environ.get(ENV_GRID_ORDERS_PAGE_LIMIT, "50") or "50")
+        if page_limit < 1:
+            page_limit = 50
+        # Keep this small: we only need enough rows to cover the venue pending book when the
+        # account is near the open-orders cap; without pagination RWAs can appear "missing"
+        # and the bot will keep re-posting duplicated ladders.
+        cap_pages = 6
+        offset = 0
+        rows_all: List[Dict[str, Any]] = []
+        for _ in range(cap_pages):
+            params: Dict[str, Any] = {
+                "status": "pending",
+                "limit": str(page_limit),
+                "offset": str(offset),
+                "order_by": "created_at",
+                "order": "desc",
+            }
+            raw = ep.get_orders_v2_query(params)
+            rows = _orders_result_rows(raw)
+            if not rows:
+                break
+            rows_all.extend(rows)
+            pag = raw.get("pagination") if isinstance(raw, dict) else None
+            np = (pag or {}).get("next_page") if isinstance(pag, dict) else None
+            if not isinstance(np, dict):
+                break
+            try:
+                offset = int(np.get("offset", offset + page_limit))
+            except (TypeError, ValueError):
+                break
+            if len(rows) < page_limit:
+                break
     want = str(asset).strip().upper()
     out: List[Dict[str, Any]] = []
-    for row in _orders_result_rows(raw):
+    for row in rows_all:
         if _row_underlying(row) != want:
             continue
         if _limit_price_key(row):

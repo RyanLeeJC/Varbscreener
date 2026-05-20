@@ -6,7 +6,6 @@ Callable from varibot ``one_cycle`` when venue initial margin usage (IM%) exceed
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from dataclasses import dataclass, field
@@ -26,9 +25,7 @@ ENV_MM_TRIGGER = "VARIBOT_REBALANCE_MM_TRIGGER"  # deprecated alias for IM trigg
 ENV_IM_TARGET = "VARIBOT_REBALANCE_IM_TARGET"
 ENV_ROUND_TO = "VARIBOT_REBALANCE_ROUND_TO"
 ENV_MIN_ORDER_USD = "VARIBOT_REBALANCE_MIN_ORDER_USD"
-ENV_LATCH_PATH = "VARIBOT_REBALANCE_LATCH_PATH"
 ENV_REBALANCE_ORDER_INTERVAL_S = "VARIBOT_REBALANCE_ORDER_INTERVAL_S"
-DEFAULT_REBALANCE_LATCH_FILENAME = ".varibot_rebalance_latch.json"
 # Each market leg: 2× indicative quote + 1× POST market (see VariEndpoints.quote_id_for_order_qty).
 MARKET_LEG_HTTP_CALLS: int = 3
 
@@ -139,38 +136,6 @@ def rebalance_constants() -> Tuple[float, float, float, float]:
         _env_float(ENV_ROUND_TO, ROUND_TO),
         _env_float(ENV_MIN_ORDER_USD, MIN_ORDER_USD),
     )
-
-
-def _rebalance_latch_path(varibot_dir: Optional[str]) -> Optional[str]:
-    if not varibot_dir:
-        return None
-    raw = (os.environ.get(ENV_LATCH_PATH) or "").strip()
-    if raw:
-        return os.path.expanduser(raw)
-    return os.path.join(varibot_dir, DEFAULT_REBALANCE_LATCH_FILENAME)
-
-
-def _read_rebalance_latch(path: str) -> bool:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        return bool(d.get("done"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return False
-
-
-def _write_rebalance_latch(path: str) -> None:
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"done": True, "completed_at_unix": time.time()}, f, indent=2)
-    os.replace(tmp, path)
-
-
-def _clear_rebalance_latch(path: str) -> None:
-    try:
-        os.remove(path)
-    except OSError:
-        pass
 
 
 def round_to_nearest(value: float, step: float) -> float:
@@ -442,12 +407,8 @@ def _place_market_leg(
     qty = float(quantity)
     if qty <= 0:
         return 0, None, None
-    inst = Instrument(
-        instrument_type="perpetual_future",
-        underlying=sym,
-        funding_interval_s=3600,
-        settlement_asset="USDC",
-    )
+    # Must match grid / indicative path: RWAs use perpetual_rwa_future, not P-*-USDC-3600.
+    inst = Instrument.for_underlying(sym)
     try:
         quote_id, _ = ep.quote_id_for_order_qty(instrument=inst, side=sd, order_qty=qty)
         resp = ep.place_order_market(
@@ -478,32 +439,23 @@ def rebalance_portfolio(
     varibot_dir: Optional[str] = None,
 ) -> bool:
     """
-    IM interval risk: one-shot market orders from a single plan snapshot (no position/IM re-check).
+    IM interval risk: market orders from a single plan snapshot (no position/IM re-check mid-run).
 
-    Returns True if a plan ran (dry-run or live). Live runs set a latch until IM falls below trigger.
+    Runs whenever IM% ≥ trigger on each call (e.g. every Varibot interval). ``varibot_dir`` is kept for
+    API compatibility but no longer used for persistence.
     """
+    _ = varibot_dir
     im_usage = snap.im_usage
     pv = snap.portfolio_value_usd
     trig, _, _, _ = rebalance_constants()
-    latch_path = _rebalance_latch_path(varibot_dir)
 
     if im_usage is None:
         log("interval risk: skip — im_usage missing from portfolio snapshot")
         return False
     if float(im_usage) < float(trig):
-        if latch_path:
-            _clear_rebalance_latch(latch_path)
         return False
     if pv is None or float(pv) <= 0:
         log("interval risk: skip — portfolio_value_usd missing or non-positive")
-        return False
-
-    if latch_path and _read_rebalance_latch(latch_path):
-        log(
-            f"interval risk: skip — rebalance already done this IM episode "
-            f"(IM%={float(im_usage) * 100:.2f}% >= {trig * 100:g}%); "
-            "clear latch when IM drops below trigger"
-        )
         return False
 
     positions = parse_live_positions_from_raw(positions_raw)
@@ -614,12 +566,9 @@ def rebalance_portfolio(
         if pace_s > 0 and idx < n_orders - 1:
             time.sleep(pace_s)
 
-    if latch_path:
-        _write_rebalance_latch(latch_path)
-
     log(
         f"interval risk: complete — market legs ok={legs_ok} failed={legs_fail} "
         f"(planned volume ${plan.total_volume_usd:.2f}); "
-        f"no further rebalance until IM < {trig * 100:g}%"
+        f"will run again next interval if IM% still ≥ {trig * 100:g}%"
     )
     return legs_fail == 0
