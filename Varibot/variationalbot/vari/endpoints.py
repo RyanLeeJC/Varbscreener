@@ -268,6 +268,18 @@ class VariEndpoints:
             path += "?compute_margin=true"
         return self.client.request_json("GET", path)
 
+    def get_supported_assets(self) -> Dict[str, Any]:
+        """
+        GET /api/metadata/supported_assets — Omni UI bulk market metadata.
+
+        Response is a dict keyed by underlying (e.g. ``ETH``, ``XAU``); each value is a list
+        of one or more rows with ``index_price``, ``price``, funding, etc.
+        """
+        resp = self.client.request_json("GET", "/api/metadata/supported_assets")
+        if not isinstance(resp, dict):
+            raise TypeError("Expected dict response from /api/metadata/supported_assets")
+        return resp
+
     def get_orders_v2(self) -> Any:
         return self.client.request_json("GET", "/api/orders/v2")
 

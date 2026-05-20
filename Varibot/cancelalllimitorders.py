@@ -7,6 +7,7 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from grid_limits_reconcile import fetch_pending_order_rows_paginated
 from variationalbot.config import load_config
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 from variationalbot.vari.endpoints import parse_cancel_ban_wait_seconds
@@ -29,15 +30,20 @@ def _default_max_cancel_retries() -> int:
         return 12
 
 
-def _orders_v2_result_items(raw: Any) -> List[Dict[str, Any]]:
-    if isinstance(raw, list):
-        return [x for x in raw if isinstance(x, dict)]
-    if isinstance(raw, dict):
-        for key in ("result", "orders", "data", "items"):
-            v = raw.get(key)
-            if isinstance(v, list):
-                return [x for x in v if isinstance(x, dict)]
-    return []
+def _default_page_limit() -> int:
+    raw = (os.environ.get("CANCEL_ALL_PAGE_LIMIT") or "100").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 100
+
+
+def _default_max_pages() -> int:
+    raw = (os.environ.get("CANCEL_ALL_MAX_PAGES") or "25").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 25
 
 
 def _order_row_underlying(row: Dict[str, Any]) -> str:
@@ -81,14 +87,19 @@ def _is_limit_row(row: Dict[str, Any]) -> bool:
     return "limit" in ot if ot else False
 
 
-def _fetch_pending_rows(ep: VariEndpoints, *, instrument: Optional[str]) -> List[Dict[str, Any]]:
-    path = "/api/orders/v2?status=pending"
-    if instrument:
-        inst = str(instrument).strip()
-        sep = "&" if "?" in path else "?"
-        path = f"{path}{sep}instrument={inst}"
-    raw = ep.client.request_json("GET", path)
-    return _orders_v2_result_items(raw)
+def _fetch_pending_rows(
+    ep: VariEndpoints,
+    *,
+    instrument: Optional[str],
+    page_limit: int,
+    max_pages: int,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    return fetch_pending_order_rows_paginated(
+        ep,
+        instrument=instrument,
+        page_limit=page_limit,
+        max_pages=max_pages,
+    )
 
 
 def _pending_limit_rows_with_rfq(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -136,7 +147,7 @@ def _cancel_one(
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
-            "List or cancel all pending limit orders (GET /api/orders/v2?status=pending, "
+            "List or cancel all pending limit orders (paginated GET /api/orders/v2?status=pending, "
             "then POST /api/orders/cancel per rfq_id). Honors Omni cancel-ban (HTTP 418) "
             "via wait_until_seconds retries."
         )
@@ -179,6 +190,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="How many full passes over remaining failures (default 2).",
     )
     p.add_argument(
+        "--page-limit",
+        type=int,
+        default=None,
+        help="Orders per GET page (default 100, or CANCEL_ALL_PAGE_LIMIT).",
+    )
+    p.add_argument(
+        "--max-pages",
+        type=int,
+        default=None,
+        help=(
+            "Max paginated GET pages to scan (default 25, or CANCEL_ALL_MAX_PAGES). "
+            "Omni returns ~100 rows on an unpaginated request; use this to fetch all pages."
+        ),
+    )
+    p.add_argument(
         "--print-json",
         action="store_true",
         help="Print raw GET rows and each cancel response as JSON.",
@@ -204,6 +230,10 @@ def main() -> int:
     )
     passes = max(1, int(args.passes))
     verbose = not bool(args.quiet)
+    page_limit = (
+        int(args.page_limit) if args.page_limit is not None else _default_page_limit()
+    )
+    max_pages = int(args.max_pages) if args.max_pages is not None else _default_max_pages()
 
     ep = VariEndpoints(
         VariClient(
@@ -213,16 +243,31 @@ def main() -> int:
     )
 
     try:
-        rows = _fetch_pending_rows(ep, instrument=args.instrument)
+        rows, hit_cap = _fetch_pending_rows(
+            ep,
+            instrument=args.instrument,
+            page_limit=page_limit,
+            max_pages=max_pages,
+        )
     except Exception as e:
         print(f"ERROR: GET pending orders failed: {e}", file=sys.stderr)
         return 1
+
+    if hit_cap:
+        print(
+            f"WARNING: hit --max-pages={max_pages} cap while scanning pending orders "
+            f"(page_limit={page_limit}). Raise CANCEL_ALL_MAX_PAGES or --max-pages and re-run.",
+            file=sys.stderr,
+        )
 
     targets = _pending_limit_rows_with_rfq(rows)
     if args.print_json:
         print(json.dumps({"pending_limit_with_rfq": targets}, indent=2, default=str))
     else:
-        print(f"Found {len(targets)} pending limit order(s).")
+        print(
+            f"Found {len(targets)} pending limit order(s) "
+            f"({len(rows)} pending row(s) across up to {max_pages} page(s), limit={page_limit})."
+        )
         if args.live and targets:
             print(
                 f"Live cancel: sleep_between={sleep_between:g}s "

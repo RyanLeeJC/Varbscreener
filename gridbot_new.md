@@ -362,17 +362,17 @@ On the first cycle, `grid_limits_reconcile.run_grid_limits_bootstrap` runs a **h
 
 - **Skip order history on fresh flat** — When the account has **no open positions** and a ticker has **no pending limits**, cycle-1 map is **pending-only** (no history pagination). Logs: `gridlimits[ETH] map: skip order history (flat account, no pending limits)`. Code: `_skip_order_history_on_flat_map` in `Varibot/grid_limits_reconcile.py`.
 
+- **Bulk marks via `GET /api/metadata/supported_assets`** — Default `VARIBOT_MARKS_SOURCE=supported_assets`: one request for all Omni marks (~0.1s) instead of 20×2 `POST /api/quotes/indicative`. Marks are prefetched once per cycle (`cycle_bulk_marks`) and reused for listing snapshot, `pick_tickers`, and rebalance. Set `VARIBOT_MARKS_SOURCE=indicative` to restore per-ticker quotes. `index_price` is used for grid ladders (typically within ~0.1–0.7% of indicative).
+
+- **Bulk pending via paginated `GET /api/orders/v2?status=pending`** — Default `VARIBOT_PENDING_BULK=1`: one sweep (up to `VARIBOT_PENDING_BULK_MAX_PAGES` pages) per cycle, bucketed by `instrument.underlying`, reused in `_grid_venue_inputs_for_cycle` (pass 1) and `run_grid_limits_bootstrap` (pass 2). Per-ticker refresh still runs after drift cancel. Set `VARIBOT_PENDING_BULK=0` for legacy per-ticker GETs.
+
 ### Future dev (not yet implemented)
 
-1. **Reuse pending keys from `_grid_venue_inputs_for_cycle`** — Varibot already fetches pending once per ticker before `pick_tickers`; bootstrap fetches again. Pass `pending_by_asset` into `run_grid_limits_bootstrap` to halve pending GETs on cycle 1.
+1. **Progress logs per asset in heavy_map** — e.g. `gridlimits[ETH] map: done (pending=0, history_pages=2)` so long map phases are visible in Railway logs.
 
-2. **Don't fetch marks twice** — Flat path calls indicative mark in `_prepare_varibot_strategy_feed` and again in `_grid_venue_inputs_for_cycle` (~60s duplicate work). Reuse marks from the listing snapshot or a single prefetch dict.
+2. **`set_leverage` once per asset per cycle** — `_grid_limits_place_limit_fn` calls `set_leverage` on every limit POST (~10× per ticker). Cache per-asset leverage for the reconcile loop.
 
-3. **Progress logs per asset in heavy_map** — e.g. `gridlimits[ETH] map: done (pending=0, history_pages=2)` so long map phases are visible in Railway logs.
-
-4. **`set_leverage` once per asset per cycle** — `_grid_limits_place_limit_fn` calls `set_leverage` on every limit POST (~10× per ticker). Cache per-asset leverage for the reconcile loop.
-
-5. **Env tuning (ops, no code)** — `GRID_ORDERS_MAX_PAGES=2` if full history is needed on cycle 1; avoid `VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE=1` unless debugging.
+3. **Env tuning (ops, no code)** — `GRID_ORDERS_MAX_PAGES=2` if full history is needed on cycle 1; avoid `VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE=1` unless debugging.
 
 ---
 

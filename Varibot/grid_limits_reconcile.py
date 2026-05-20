@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from strategy.gridstrat import ROOT_STATE_SCHEMA_VERSION, _default_state_path, iter_grid_asset_metas
 
@@ -25,11 +25,12 @@ ENV_GRID_LIMITS_DRIFT_CANCEL: str = "VARIBOT_GRID_LIMITS_DRIFT_CANCEL"
 ENV_GRID_LIMITS_DRIFT_REFILL: str = "VARIBOT_GRID_LIMITS_DRIFT_REFILL"
 ENV_GRID_LIMITS_RECONCILE_WITH_POSITIONS: str = "VARIBOT_GRID_LIMITS_RECONCILE_WITH_POSITIONS"
 ENV_GRID_LIMITS_CANCEL_SLEEP_S: str = "VARIBOT_GRID_LIMITS_CANCEL_SLEEP_S"
-# Set to 1 to fetch paginated order history every cycle (noisy / API heavy).
+# Set to 1 to re-fetch positions + pending every cycle (default: cycle 1 only).
 ENV_GRID_LIMITS_MAP_EACH_CYCLE: str = "VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE"
-ENV_GRID_ORDERS_HISTORY_DAYS: str = "VARIBOT_GRID_ORDERS_HISTORY_DAYS"
 ENV_GRID_ORDERS_PAGE_LIMIT: str = "VARIBOT_GRID_ORDERS_PAGE_LIMIT"
-ENV_GRID_ORDERS_MAX_PAGES: str = "VARIBOT_GRID_ORDERS_MAX_PAGES"
+# One paginated GET /api/orders/v2?status=pending for all tickers (default on). Set 0 for per-ticker fetch.
+ENV_PENDING_BULK: str = "VARIBOT_PENDING_BULK"
+ENV_PENDING_BULK_MAX_PAGES: str = "VARIBOT_PENDING_BULK_MAX_PAGES"
 
 
 def _truthy_env(name: str) -> bool:
@@ -85,6 +86,43 @@ def _reconcile_with_positions_allowed(meta: Optional[Dict[str, Any]] = None) -> 
 def fetch_pending_limit_keys_for_asset(ep: VariEndpoints, *, asset: str) -> Set[Tuple[str, str]]:
     """Public helper for varibot: venue (side, price) keys for pending limits."""
     return _fetch_pending_limit_keys(ep, asset=asset)
+
+
+def bulk_pending_fetch_enabled() -> bool:
+    """Default on: one paginated pending sweep per cycle instead of per-ticker GETs."""
+    return _env_bool_default(ENV_PENDING_BULK, default_when_unset=True)
+
+
+def pending_limit_keys_by_asset_from_rows(
+    rows: List[Dict[str, Any]],
+    assets: Iterable[str],
+) -> Dict[str, Set[Tuple[str, str]]]:
+    """Bucket paginated pending rows into per-underlying (side, price) key sets."""
+    want = {str(a).strip().upper() for a in assets if str(a).strip()}
+    out: Dict[str, Set[Tuple[str, str]]] = {sym: set() for sym in want}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        u = _row_underlying(row)
+        if u not in want:
+            continue
+        k = _limit_price_key(row)
+        if k:
+            out[u].add(k)
+    return out
+
+
+def fetch_pending_limit_keys_by_assets(
+    ep: VariEndpoints,
+    *,
+    assets: Iterable[str],
+) -> Dict[str, Set[Tuple[str, str]]]:
+    """
+    All grid tickers' pending limit keys from one paginated ``GET /api/orders/v2?status=pending``
+    (no per-ticker instrument filter; RWA-safe).
+    """
+    rows = _fetch_pending_limit_rows_paginated(ep)
+    return pending_limit_keys_by_asset_from_rows(rows, assets)
 
 
 def _grid_limits_json_path(varibot_dir: str) -> str:
@@ -279,48 +317,90 @@ def _row_rfq_id(row: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _pending_bulk_max_pages() -> int:
+    try:
+        return max(1, min(20, int(os.environ.get(ENV_PENDING_BULK_MAX_PAGES, "6") or "6")))
+    except (TypeError, ValueError):
+        return 6
+
+
+def fetch_pending_order_rows_paginated(
+    ep: VariEndpoints,
+    *,
+    instrument: Optional[str] = None,
+    page_limit: Optional[int] = None,
+    max_pages: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """
+    Paginated ``GET /api/orders/v2?status=pending`` (optional ``instrument`` filter).
+
+    Returns ``(rows, hit_page_cap)``. ``hit_page_cap`` is True when ``max_pages`` was exhausted
+    but the API may still have more pages (caller should warn or raise page limit).
+    """
+    pl = page_limit
+    if pl is None:
+        try:
+            pl = int(os.environ.get(ENV_GRID_ORDERS_PAGE_LIMIT, "50") or "50")
+        except (TypeError, ValueError):
+            pl = 50
+    if pl < 1:
+        pl = 50
+    cap = max_pages if max_pages is not None else _pending_bulk_max_pages()
+    cap = max(1, int(cap))
+    offset = 0
+    rows_all: List[Dict[str, Any]] = []
+    hit_cap = False
+    for _ in range(cap):
+        params: Dict[str, Any] = {
+            "status": "pending",
+            "limit": str(pl),
+            "offset": str(offset),
+            "order_by": "created_at",
+            "order": "desc",
+        }
+        if instrument:
+            params["instrument"] = str(instrument).strip()
+        raw = ep.get_orders_v2_query(params)
+        rows = _orders_result_rows(raw)
+        if not rows:
+            break
+        rows_all.extend(rows)
+        pag = raw.get("pagination") if isinstance(raw, dict) else None
+        np = (pag or {}).get("next_page") if isinstance(pag, dict) else None
+        if not isinstance(np, dict):
+            break
+        try:
+            offset = int(np.get("offset", offset + pl))
+        except (TypeError, ValueError):
+            break
+        if len(rows) < pl:
+            break
+    else:
+        hit_cap = bool(rows_all)
+    return rows_all, hit_cap
+
+
+def _fetch_pending_limit_rows_paginated(ep: VariEndpoints) -> List[Dict[str, Any]]:
+    """
+    Paginated global pending book (no ``instrument`` filter).
+
+    Required for RWAs (instrument query 400) and for bulk fetch across all grid tickers.
+    """
+    rows, _ = fetch_pending_order_rows_paginated(ep)
+    return rows
+
+
 def _fetch_pending_limit_rows(ep: VariEndpoints, *, asset: str) -> List[Dict[str, Any]]:
     from variationalbot.vari.endpoints import fetch_orders_v2_pending
 
     inst = _instrument_param(asset)
     # Crypto perps: use the instrument filter (fast, small result set).
-    # RWA commodities: instrument filter is intentionally omitted (server 400), so we must paginate.
+    # RWA commodities: instrument filter 400 — paginate globally and filter client-side.
     if inst:
         raw = fetch_orders_v2_pending(ep.client, instrument=inst, status="pending")
         rows_all = _orders_result_rows(raw)
     else:
-        page_limit = int(os.environ.get(ENV_GRID_ORDERS_PAGE_LIMIT, "50") or "50")
-        if page_limit < 1:
-            page_limit = 50
-        # Keep this small: we only need enough rows to cover the venue pending book when the
-        # account is near the open-orders cap; without pagination RWAs can appear "missing"
-        # and the bot will keep re-posting duplicated ladders.
-        cap_pages = 6
-        offset = 0
-        rows_all: List[Dict[str, Any]] = []
-        for _ in range(cap_pages):
-            params: Dict[str, Any] = {
-                "status": "pending",
-                "limit": str(page_limit),
-                "offset": str(offset),
-                "order_by": "created_at",
-                "order": "desc",
-            }
-            raw = ep.get_orders_v2_query(params)
-            rows = _orders_result_rows(raw)
-            if not rows:
-                break
-            rows_all.extend(rows)
-            pag = raw.get("pagination") if isinstance(raw, dict) else None
-            np = (pag or {}).get("next_page") if isinstance(pag, dict) else None
-            if not isinstance(np, dict):
-                break
-            try:
-                offset = int(np.get("offset", offset + page_limit))
-            except (TypeError, ValueError):
-                break
-            if len(rows) < page_limit:
-                break
+        rows_all = _fetch_pending_limit_rows_paginated(ep)
     want = str(asset).strip().upper()
     out: List[Dict[str, Any]] = []
     for row in rows_all:
@@ -457,110 +537,58 @@ def _post_missing_limits(
     return ok
 
 
-def _skip_order_history_on_flat_map(
-    *,
-    has_positions: bool,
-    pending_keys: Set[Tuple[str, str]],
-) -> bool:
-    """
-    Cycle-1 heavy map: a flat account with no pending limits does not need paginated
-    ``GET /api/orders/v2`` history before the first ladder POST (saves hundreds of API calls
-    on multi-ticker cold start).
-    """
-    return not bool(has_positions) and len(pending_keys) == 0
-
-
-def _history_window_iso() -> Tuple[str, str]:
-    days = float(os.environ.get(ENV_GRID_ORDERS_HISTORY_DAYS, "1") or "1")
-    if days <= 0:
-        days = 1.0
-    now = datetime.now(timezone.utc)
-    start = now - timedelta(days=days)
-    gte = start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    lte = now.strftime("%Y-%m-%dT%H:%M:%S.999Z")
-    return gte, lte
-
-
-def fetch_orders_v2_history_pages(
+def _bootstrap_pending_map(
     ep: VariEndpoints,
     *,
-    instrument: Optional[str] = None,
-    max_pages: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    """Paginate ``GET /api/orders/v2`` newest-first (``order_by=created_at&order=desc``)."""
-    page_limit = int(os.environ.get(ENV_GRID_ORDERS_PAGE_LIMIT, "50") or "50")
-    if page_limit < 1:
-        page_limit = 50
-    cap = int(os.environ.get(ENV_GRID_ORDERS_MAX_PAGES, "40") or "40")
-    if max_pages is not None:
-        cap = min(cap, int(max_pages))
-    gte, lte = _history_window_iso()
-    offset = 0
-    all_rows: List[Dict[str, Any]] = []
-    for _ in range(max(1, cap)):
-        params: Dict[str, Any] = {
-            "limit": str(page_limit),
-            "offset": str(offset),
-            "order_by": "created_at",
-            "order": "desc",
-            "created_at_gte": gte,
-            "created_at_lte": lte,
-        }
-        if instrument:
-            params["instrument"] = instrument
-        raw = ep.get_orders_v2_query(params)
-        rows = _orders_result_rows(raw)
-        if not rows:
-            break
-        all_rows.extend(rows)
-        pag = raw.get("pagination") if isinstance(raw, dict) else None
-        np = (pag or {}).get("next_page") if isinstance(pag, dict) else None
-        if not isinstance(np, dict):
-            break
-        try:
-            offset = int(np.get("offset", offset + page_limit))
-        except (TypeError, ValueError):
-            break
-        if len(rows) < page_limit:
-            break
-    return all_rows
+    asset_metas: List[Tuple[str, Dict[str, Any]]],
+    preloaded: Optional[Dict[str, Set[Tuple[str, str]]]],
+    needs_pending: bool,
+    log: Callable[[str], None],
+) -> Optional[Dict[str, Set[Tuple[str, str]]]]:
+    """
+    One bulk ``GET /api/orders/v2?status=pending`` for all grid tickers when possible.
+
+    Returns the preloaded dict unchanged, a bulk-fetched dict, or None (per-ticker fallback).
+    """
+    if preloaded is not None:
+        return preloaded
+    if not needs_pending:
+        return {}
+    syms = [str(a).strip().upper() for a, _ in asset_metas if str(a).strip()]
+    if not syms:
+        return {}
+    if not bulk_pending_fetch_enabled():
+        return None
+    try:
+        by_asset = fetch_pending_limit_keys_by_assets(ep, assets=syms)
+        n_limits = sum(len(v) for v in by_asset.values())
+        log(
+            f"gridlimits map: pending bulk fetch OK — {n_limits} limit(s) across "
+            f"{len(by_asset)} ticker(s)"
+        )
+        return by_asset
+    except Exception as e:
+        log(
+            f"gridlimits map: pending bulk fetch failed ({type(e).__name__}: {e}); "
+            "per-ticker fallback"
+        )
+        return None
 
 
-def _summarize_history(rows: List[Dict[str, Any]], *, asset: str) -> Dict[str, Any]:
-    want = str(asset).strip().upper()
-    n_lim = n_pend = n_cleared = n_canceled = n_other = 0
-    last: Dict[str, Optional[str]] = {"cleared_limit_buy": None, "cleared_limit_sell": None}
-    for row in rows:
-        if _row_underlying(row) != want:
-            continue
-        ot = str(row.get("order_type") or "").lower()
-        st = str(row.get("status") or "").strip().lower()
-        if "limit" in ot:
-            n_lim += 1
-        if st == "pending":
-            n_pend += 1
-        elif st == "cleared":
-            n_cleared += 1
-            if "limit" in ot:
-                sd = str(row.get("side") or "").lower()
-                if sd == "buy":
-                    last["cleared_limit_buy"] = str(row.get("created_at"))
-                elif sd == "sell":
-                    last["cleared_limit_sell"] = str(row.get("created_at"))
-        elif st == "canceled":
-            n_canceled += 1
-        else:
-            n_other += 1
-    return {
-        "rows_in_window": len(rows),
-        "limit_like_rows_for_asset": n_lim,
-        "status_pending": n_pend,
-        "status_cleared": n_cleared,
-        "status_canceled": n_canceled,
-        "status_other": n_other,
-        "last_cleared_limit_buy_created_at": last["cleared_limit_buy"],
-        "last_cleared_limit_sell_created_at": last["cleared_limit_sell"],
-    }
+def _pending_keys_for_asset_map(
+    ep: VariEndpoints,
+    *,
+    asset: str,
+    pending_map: Optional[Dict[str, Set[Tuple[str, str]]]],
+    log: Callable[[str], None],
+) -> Set[Tuple[str, str]]:
+    if pending_map is not None:
+        return set(pending_map.get(asset, set()))
+    try:
+        return _fetch_pending_limit_keys(ep, asset=asset)
+    except Exception as e:
+        log(f"gridlimits[{asset}] map: pending fetch failed ({type(e).__name__}: {e})")
+        return set()
 
 
 def _position_qty_summary(positions_raw: Any, *, asset: str) -> Dict[str, Any]:
@@ -623,7 +651,6 @@ def _build_venue_snapshot(
     asset: str,
     pending_keys: Set[Tuple[str, str]],
     pos_s: Optional[Dict[str, Any]],
-    history_summary: Optional[Dict[str, Any]],
     has_positions: bool,
     mark_f: Optional[float],
 ) -> Dict[str, Any]:
@@ -684,8 +711,6 @@ def _build_venue_snapshot(
     }
     if pos_s is not None:
         snap["position"] = pos_s
-    if history_summary is not None:
-        snap["history_summary"] = history_summary
     return snap
 
 
@@ -888,13 +913,13 @@ def run_grid_limits_bootstrap(
     place_limit: Callable[..., int],
     live: bool,
     multi_script: str,
+    pending_by_asset_preloaded: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
 ) -> None:
     """
-    1) Query venue when live+limit: pending limits (every cycle); positions + paginated order history
-       on first cycle(s) or when ``VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE`` is set — except on a flat
-       account with no pending limits for that ticker (history skipped; pending-only map).
+    1) Query venue pending limits (bulk ``GET /api/orders/v2?status=pending`` when enabled); positions
+       on first cycle(s) or when ``VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE`` is set.
     2) Persist ``gridlimits.json`` from strategy meta **and** embed a ``venue_snapshot`` (template vs
-       pending keys, optional history summary, gridstrat state hints) so restarts show leftover grid.
+       pending keys, gridstrat state hints) so restarts show leftover grid.
     3) If ``VARIBOT_GRID_LIMITS_RECONCILE`` and live and limit mode and gridstrat emitted
        0 events: POST missing template limits from ``gridlimits.json``.
     4) If ``VARIBOT_GRID_LIMITS_DRIFT_RECONCILE``: on template/venue key drift, post missing sim
@@ -924,6 +949,14 @@ def run_grid_limits_bootstrap(
 
     venue_snapshots_by_asset: Dict[str, Dict[str, Any]] = {}
     pending_by_asset: Dict[str, Set[Tuple[str, str]]] = {}
+    needs_pending_map = heavy_map or (live and is_limit)
+    pending_map = _bootstrap_pending_map(
+        ep,
+        asset_metas=asset_metas,
+        preloaded=pending_by_asset_preloaded,
+        needs_pending=needs_pending_map,
+        log=log,
+    )
 
     for asset, ameta in asset_metas:
         mark = ameta.get("grid_mark")
@@ -934,37 +967,17 @@ def run_grid_limits_bootstrap(
 
         pos_s: Optional[Dict[str, Any]] = None
         pending_keys: Set[Tuple[str, str]] = set()
-        hsum: Optional[Dict[str, Any]] = None
 
         if heavy_map:
             pos_s = _position_qty_summary(pos_raw or {}, asset=asset)
-            try:
-                pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
-            except Exception as e:
-                log(f"gridlimits[{asset}] map: pending fetch failed ({type(e).__name__}: {e})")
-                pending_keys = set()
-            if _skip_order_history_on_flat_map(
-                has_positions=has_positions, pending_keys=pending_keys
-            ):
-                log(
-                    f"gridlimits[{asset}] map: skip order history "
-                    "(flat account, no pending limits)"
+            if needs_pending_map:
+                pending_keys = _pending_keys_for_asset_map(
+                    ep, asset=asset, pending_map=pending_map, log=log
                 )
-                hist: List[Dict[str, Any]] = []
-            else:
-                inst = _instrument_param(asset)
-                try:
-                    hist = fetch_orders_v2_history_pages(ep, instrument=inst)
-                except Exception as e:
-                    log(f"gridlimits[{asset}] map: history fetch failed ({type(e).__name__}: {e})")
-                    hist = []
-            hsum = _summarize_history(hist, asset=asset)
         elif live and is_limit:
-            try:
-                pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
-            except Exception as e:
-                log(f"gridlimits[{asset}] map: pending fetch failed ({type(e).__name__}: {e})")
-                pending_keys = set()
+            pending_keys = _pending_keys_for_asset_map(
+                ep, asset=asset, pending_map=pending_map, log=log
+            )
 
         pending_by_asset[asset] = pending_keys
         if not has_positions:
@@ -980,7 +993,6 @@ def run_grid_limits_bootstrap(
                 asset=asset,
                 pending_keys=pending_keys,
                 pos_s=pos_s,
-                history_summary=hsum,
                 has_positions=has_pos_asset,
                 mark_f=mark_f,
             )

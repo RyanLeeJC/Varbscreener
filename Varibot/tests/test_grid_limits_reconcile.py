@@ -11,7 +11,6 @@ from unittest.mock import patch
 from grid_limits_reconcile import (
     _drift_cancel_enabled,
     _drift_cancel_orphan_keys,
-    _skip_order_history_on_flat_map,
     _state_open_limit_keys,
 )
 from strategy.gridstrat import gridstrat_flat_rebalance_enabled
@@ -25,25 +24,6 @@ class TestInstrumentQueryParam(unittest.TestCase):
     def test_rwa_omits_filter(self) -> None:
         self.assertIsNone(instrument_query_param("XAU"))
         self.assertIsNone(instrument_query_param("COPPER"))
-
-
-class TestSkipOrderHistoryOnFlatMap(unittest.TestCase):
-    def test_skips_when_flat_and_no_pending(self) -> None:
-        self.assertTrue(
-            _skip_order_history_on_flat_map(has_positions=False, pending_keys=set())
-        )
-
-    def test_fetches_when_flat_but_has_pending(self) -> None:
-        self.assertFalse(
-            _skip_order_history_on_flat_map(
-                has_positions=False, pending_keys={("buy", "100.0")}
-            )
-        )
-
-    def test_fetches_when_positioned(self) -> None:
-        self.assertFalse(
-            _skip_order_history_on_flat_map(has_positions=True, pending_keys=set())
-        )
 
 
 class TestFlatRebalanceDefault(unittest.TestCase):

@@ -32,7 +32,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from zoneinfo import ZoneInfo
 
 # Imports assume sibling scripts + variationalbot live under this directory.
@@ -45,7 +45,7 @@ _DEFAULT_MARKETSTATE_JSON = _STRATEGY_MARKETSTATE_JSON
 _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json")
 
 # Check interval (minutes) between cycles/sessions when --period-min is not provided.
-CHECK_INTERVAL_MIN: int = 2
+CHECK_INTERVAL_MIN: int = 1
 
 # --- User-tunable settings (surface here for quick edits) ---
 #
@@ -152,6 +152,8 @@ from check_portfolio_stats import _build_out_dict  # noqa: E402
 from portfolio_rebalance import rebalance_portfolio  # noqa: E402
 from grid_limits_reconcile import (  # noqa: E402
     _position_qty_summary,
+    bulk_pending_fetch_enabled,
+    fetch_pending_limit_keys_by_assets,
     fetch_pending_limit_keys_for_asset,
     run_grid_limits_bootstrap,
 )
@@ -1014,6 +1016,113 @@ def _fetch_venue_mark_for_asset(ep: VariEndpoints, *, asset: str) -> float:
     raise RuntimeError(f"Could not read a positive mark for {sym} from indicative quote.")
 
 
+def _grid_marks_source() -> str:
+    """``supported_assets`` (default) or ``indicative`` (per-ticker POST /api/quotes/indicative)."""
+    return (os.getenv("VARIBOT_MARKS_SOURCE") or "supported_assets").strip().lower()
+
+
+def _use_bulk_supported_assets_marks() -> bool:
+    raw = _grid_marks_source()
+    return raw not in ("indicative", "per_ticker", "quote", "quotes")
+
+
+def mark_price_from_supported_asset_entry(entry: Any) -> float:
+    """Parse ``index_price`` (preferred) or ``price`` from one supported_assets row."""
+    row = entry[0] if isinstance(entry, list) and entry else entry
+    if not isinstance(row, dict):
+        raise TypeError(f"supported_assets entry is not a dict: {type(row).__name__}")
+    for k in ("index_price", "price", "mark_price"):
+        v = row.get(k)
+        if v is None:
+            continue
+        try:
+            mf = float(v)
+            if mf > 0:
+                return mf
+        except (TypeError, ValueError):
+            continue
+    sym = str(row.get("asset") or "?").strip().upper()
+    raise RuntimeError(f"Could not read a positive mark for {sym} from supported_assets.")
+
+
+def _fetch_supported_assets_mark_map(ep: VariEndpoints) -> Dict[str, float]:
+    """One GET /api/metadata/supported_assets → uppercased ticker → mark."""
+    bulk = ep.get_supported_assets()
+    out: Dict[str, float] = {}
+    for sym, entry in bulk.items():
+        key = str(sym).strip().upper()
+        if not key:
+            continue
+        try:
+            out[key] = float(mark_price_from_supported_asset_entry(entry))
+        except Exception:
+            continue
+    if not out:
+        raise RuntimeError("supported_assets returned no parseable marks.")
+    return out
+
+
+def _grid_mark_for_asset(
+    ep: VariEndpoints,
+    *,
+    asset: str,
+    bulk_map: Optional[Dict[str, float]] = None,
+) -> float:
+    """Mark for one ticker: bulk map when enabled, else indicative."""
+    sym = str(asset).strip().upper()
+    if _use_bulk_supported_assets_marks():
+        m = bulk_map if bulk_map is not None else _fetch_supported_assets_mark_map(ep)
+        if sym in m:
+            return float(m[sym])
+    return _fetch_venue_mark_for_asset(ep, asset=sym)
+
+
+def _fetch_grid_marks_for_assets(
+    ep: VariEndpoints,
+    assets: Iterable[str],
+    *,
+    bulk_map: Optional[Dict[str, float]] = None,
+) -> Dict[str, float]:
+    """Marks for grid tickers (one bulk GET by default, per-ticker indicative fallback)."""
+    syms = [str(a).strip().upper() for a in assets if str(a).strip()]
+    if not syms:
+        return {}
+    bulk = bulk_map
+    if bulk is None and _use_bulk_supported_assets_marks():
+        bulk = _fetch_supported_assets_mark_map(ep)
+    marks: Dict[str, float] = {}
+    for sym in syms:
+        try:
+            if bulk is not None and sym in bulk:
+                marks[sym] = float(bulk[sym])
+            else:
+                marks[sym] = float(_fetch_venue_mark_for_asset(ep, asset=sym))
+        except Exception as e:
+            _log(f"strategy listing: mark failed {sym} ({type(e).__name__}: {e})")
+    return marks
+
+
+def _write_strategy_listing_snapshot_from_marks(
+    marks: Dict[str, float],
+    *,
+    source: str,
+) -> str:
+    if not marks:
+        raise RuntimeError("No grid ticker marks to write listing snapshot.")
+    listings = [{"vari_ticker": sym, "mark_price": float(marks[sym])} for sym in sorted(marks.keys())]
+    doc: Dict[str, Any] = {
+        "fetched_at_unix": int(time.time()),
+        "source": source,
+        "listings": listings,
+    }
+    out_path = _STRATEGY_LISTING_SNAPSHOT_JSON
+    tmp = out_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2)
+    os.replace(tmp, out_path)
+    return out_path
+
+
 def _grid_listing_snapshot_assets(*, asset_hint: Optional[str] = None) -> List[str]:
     """Tickers to include in ``strategy_listing_snapshot.json`` (``GRID_TRADING_TICKERS`` keys)."""
     tickers = grid_trading_ticker_band_pcts()
@@ -1031,37 +1140,27 @@ def _refresh_strategy_listing_snapshot_from_venue(
     ep: VariEndpoints,
     *,
     asset_hint: Optional[str] = None,
+    grid_marks: Optional[Dict[str, float]] = None,
+    bulk_map: Optional[Dict[str, float]] = None,
 ) -> str:
     """
     Write ``strategy_listing_snapshot.json`` with one row per grid ticker from
-    ``grid_trading_ticker_band_pcts()`` (``GRID_TRADING_TICKERS`` in gridstrat.py), each
-    ``mark_price`` from POST /api/quotes/indicative. No CoinGecko / Vari Listings.
+    ``grid_trading_ticker_band_pcts()`` (``GRID_TRADING_TICKERS`` in gridstrat.py).
+
+    Default marks: one GET ``/api/metadata/supported_assets`` (``VARIBOT_MARKS_SOURCE``).
+    Set ``VARIBOT_MARKS_SOURCE=indicative`` for per-ticker POST /api/quotes/indicative.
     """
     assets = _grid_listing_snapshot_assets(asset_hint=asset_hint)
-    listings: List[Dict[str, Any]] = []
-    errors: List[str] = []
-    for asset in assets:
-        try:
-            mark = _fetch_venue_mark_for_asset(ep, asset=asset)
-            listings.append({"vari_ticker": asset, "mark_price": float(mark)})
-        except Exception as e:
-            msg = f"{asset}: {type(e).__name__}: {e}"
-            errors.append(msg)
-            _log(f"strategy listing: indicative mark failed ({msg})")
-    if not listings:
-        detail = "; ".join(errors) if errors else f"assets={assets!r}"
-        raise RuntimeError(f"Could not fetch any grid ticker marks for listing snapshot ({detail})")
-    doc: Dict[str, Any] = {
-        "fetched_at_unix": int(time.time()),
-        "source": "varibot_indicative",
-        "listings": listings,
-    }
-    out_path = _STRATEGY_LISTING_SNAPSHOT_JSON
-    tmp = out_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(doc, f, indent=2)
-    os.replace(tmp, out_path)
-    return out_path
+    if grid_marks is None:
+        grid_marks = _fetch_grid_marks_for_assets(ep, assets, bulk_map=bulk_map)
+    if not grid_marks:
+        raise RuntimeError(f"Could not fetch any grid ticker marks for listing snapshot (assets={assets!r})")
+    src = (
+        "varibot_supported_assets"
+        if _use_bulk_supported_assets_marks()
+        else "varibot_indicative"
+    )
+    return _write_strategy_listing_snapshot_from_marks(grid_marks, source=src)
 
 
 def _prepare_varibot_strategy_feed(
@@ -1069,9 +1168,13 @@ def _prepare_varibot_strategy_feed(
     *,
     args: Optional[argparse.Namespace] = None,
     asset_hint: Optional[str] = None,
+    grid_marks: Optional[Dict[str, float]] = None,
+    bulk_map: Optional[Dict[str, float]] = None,
 ) -> Tuple[str, str]:
     """Refresh listing snapshot + marketstate JSON under Varibot/. Returns (listing_json, marketstate_json)."""
-    listing_path = _refresh_strategy_listing_snapshot_from_venue(ep, asset_hint=asset_hint)
+    listing_path = _refresh_strategy_listing_snapshot_from_venue(
+        ep, asset_hint=asset_hint, grid_marks=grid_marks, bulk_map=bulk_map
+    )
     ms_path = _ensure_strategy_marketstate_json(_resolve_marketstate_json_path(args=args))
     return listing_path, ms_path
 
@@ -1111,6 +1214,37 @@ def run_strategy_pick_tickers(
     )
 
 
+def _fetch_cycle_pending_by_asset(
+    ep: VariEndpoints,
+    *,
+    assets: Iterable[str],
+) -> Optional[Dict[str, Set[Tuple[str, str]]]]:
+    """
+    One paginated pending sweep for all grid tickers (pass 1 + pass 2 reuse).
+
+    Returns None when bulk is disabled or the request fails (caller falls back per-ticker).
+    """
+    if not bulk_pending_fetch_enabled():
+        return None
+    syms = [str(a).strip().upper() for a in assets if str(a).strip()]
+    if not syms:
+        return {}
+    try:
+        by_asset = fetch_pending_limit_keys_by_assets(ep, assets=syms)
+        n_limits = sum(len(v) for v in by_asset.values())
+        _log(
+            f"step: pending bulk fetch OK — {n_limits} limit(s) across {len(by_asset)} ticker(s) "
+            f"(paginated GET /api/orders/v2?status=pending)"
+        )
+        return by_asset
+    except Exception as e:
+        _log(
+            f"step: pending bulk fetch failed ({type(e).__name__}: {e}); "
+            "falling back to per-ticker pending GETs"
+        )
+        return None
+
+
 def _fetch_venue_pending_for_grid(
     ep: VariEndpoints, *, asset: str
 ) -> Optional[Set[Tuple[str, str]]]:
@@ -1129,22 +1263,37 @@ def _grid_venue_inputs_for_cycle(
     args: argparse.Namespace,
     positions_raw: Any,
     ignore_venue_positions: bool = False,
+    venue_marks_by_asset: Optional[Dict[str, float]] = None,
+    venue_pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
+    bulk_map: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, float], Dict[str, Set[Tuple[str, str]]], Dict[str, bool]]:
     """Per-ticker venue marks, pending limit keys, and flat flags for ``pick_tickers``."""
     marks: Dict[str, float] = {}
     pending_by: Dict[str, Set[Tuple[str, str]]] = {}
     flat_by: Dict[str, bool] = {}
-    for asset in grid_trading_ticker_band_pcts():
+    tickers = grid_trading_ticker_band_pcts()
+    if bool(args.live) and venue_marks_by_asset is None and _use_bulk_supported_assets_marks():
+        bulk_map = bulk_map if bulk_map is not None else _fetch_supported_assets_mark_map(ep)
+    for asset in tickers:
         if bool(args.live):
-            try:
-                marks[asset] = float(_fetch_venue_mark_for_asset(ep, asset=asset))
-            except Exception as e:
-                _log(f"gridlimits[{asset}]: venue mark failed ({type(e).__name__}: {e})")
-            pk = _fetch_venue_pending_for_grid(ep, asset=asset)
-            # Fetch failure → omit key (gridstrat sees pending=None). Do not use set() or
-            # fresh_flat_start wrongly assumes an empty venue book (RWA instrument query 400).
-            if pk is not None:
-                pending_by[asset] = pk
+            if venue_marks_by_asset is not None and asset in venue_marks_by_asset:
+                marks[asset] = float(venue_marks_by_asset[asset])
+            else:
+                try:
+                    marks[asset] = float(
+                        _grid_mark_for_asset(ep, asset=asset, bulk_map=bulk_map)
+                    )
+                except Exception as e:
+                    _log(f"gridlimits[{asset}]: venue mark failed ({type(e).__name__}: {e})")
+            if venue_pending_by_asset is not None:
+                if asset in venue_pending_by_asset:
+                    pending_by[asset] = set(venue_pending_by_asset[asset])
+            else:
+                pk = _fetch_venue_pending_for_grid(ep, asset=asset)
+                # Fetch failure → omit key (gridstrat sees pending=None). Do not use set() or
+                # fresh_flat_start wrongly assumes an empty venue book (RWA instrument query 400).
+                if pk is not None:
+                    pending_by[asset] = pk
         else:
             pending_by[asset] = set()
         if ignore_venue_positions:
@@ -1428,6 +1577,7 @@ def _run_grid_limits_bootstrap_if_grid(
     args: argparse.Namespace,
     cycle_index: int,
     has_positions: bool,
+    pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
 ) -> None:
     if not meta.get("grid_mode"):
         return
@@ -1444,6 +1594,7 @@ def _run_grid_limits_bootstrap_if_grid(
         place_limit=_grid_limits_place_limit_fn(ep, args),
         live=bool(args.live),
         multi_script=str(args.multi_script),
+        pending_by_asset_preloaded=pending_by_asset,
     )
 
 
@@ -2301,6 +2452,16 @@ def one_cycle(
     raw_pos = ep.get_positions()
     _log(_fmt_portfolio_snapshot_line(out))
 
+    cycle_bulk_marks: Optional[Dict[str, float]] = None
+    if bool(args.live) and _use_bulk_supported_assets_marks():
+        try:
+            cycle_bulk_marks = _fetch_supported_assets_mark_map(ep)
+        except Exception as e:
+            _log(
+                f"supported_assets bulk marks failed ({type(e).__name__}: {e}); "
+                "falling back to per-ticker indicative where needed."
+            )
+
     has_pos = has_open_positions(raw_pos)
     if has_pos:
         rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
@@ -2319,7 +2480,9 @@ def one_cycle(
             dry_run=rebalance_dry,
             log=_log,
             max_slippage=float(_resolve_max_slippage()),
-            mark_fetcher=lambda sym: float(_fetch_venue_mark_for_asset(ep, asset=sym)),
+            mark_fetcher=lambda sym: float(
+                _grid_mark_for_asset(ep, asset=sym, bulk_map=cycle_bulk_marks)
+            ),
             varibot_dir=_VARIBOT_DIR,
         )
 
@@ -2334,21 +2497,37 @@ def one_cycle(
             )
         else:
             _log("No open positions -> venue listing snapshot -> strategy -> multimarket")
-        _log("step: refreshing strategy feed (indicative mark → Varibot JSON)...")
-        listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
+        marks_src = _grid_marks_source()
+        _log(f"step: refreshing strategy feed ({marks_src} mark → Varibot JSON)...")
+        grid_marks_once: Dict[str, float] = {}
+        if _is_grid_like_strategy(strat_key) and bool(args.live):
+            grid_marks_once = _fetch_grid_marks_for_assets(
+                ep, grid_trading_ticker_band_pcts().keys(), bulk_map=cycle_bulk_marks
+            )
+        listing_json, _ = _prepare_varibot_strategy_feed(
+            ep, args=args, grid_marks=grid_marks_once or None, bulk_map=cycle_bulk_marks
+        )
         top_n = _top_n_for_strategy(strat_key)
         marks_by: Dict[str, float] = {}
         pending_by: Dict[str, Set[Tuple[str, str]]] = {}
         flat_by: Dict[str, bool] = {}
+        cycle_pending_by: Optional[Dict[str, Set[Tuple[str, str]]]] = None
+        if _is_grid_like_strategy(strat_key):
+            cycle_pending_by = _fetch_cycle_pending_by_asset(
+                ep, assets=grid_trading_ticker_band_pcts().keys()
+            )
         if _is_grid_like_strategy(strat_key):
             marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
                 ep,
                 args=args,
                 positions_raw=raw_pos,
                 ignore_venue_positions=grid_ignore_pos,
+                venue_marks_by_asset=grid_marks_once or None,
+                venue_pending_by_asset=cycle_pending_by,
+                bulk_map=cycle_bulk_marks,
             )
             for sym, mk in sorted(marks_by.items()):
-                _log(f"step: venue indicative mark {sym}={mk:g}")
+                _log(f"step: venue mark {sym}={mk:g} ({marks_src})")
         longs, shorts, meta = run_strategy_pick_tickers(
             strategy_key=strat_key,
             listing_json=listing_json,
@@ -2398,6 +2577,7 @@ def one_cycle(
                 args=args,
                 cycle_index=cycle_index,
                 has_positions=bool(has_pos and not grid_ignore_pos),
+                pending_by_asset=cycle_pending_by,
             )
             _execute_grid_market_events(meta, args=args)
             return False
@@ -2448,13 +2628,28 @@ def one_cycle(
 
     if _is_grid_like_strategy(strat_key) and not grid_ignore_pos:
         try:
-            listing_grid, _ = _prepare_varibot_strategy_feed(ep, args=args)
+            grid_marks_pos = (
+                _fetch_grid_marks_for_assets(
+                    ep, grid_trading_ticker_band_pcts().keys(), bulk_map=cycle_bulk_marks
+                )
+                if bool(args.live)
+                else {}
+            )
+            listing_grid, _ = _prepare_varibot_strategy_feed(
+                ep, args=args, grid_marks=grid_marks_pos or None, bulk_map=cycle_bulk_marks
+            )
             top_n_g = _top_n_for_strategy(strat_key)
+            cycle_pending_pos = _fetch_cycle_pending_by_asset(
+                ep, assets=grid_trading_ticker_band_pcts().keys()
+            )
             marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
                 ep,
                 args=args,
                 positions_raw=raw_pos,
                 ignore_venue_positions=False,
+                venue_marks_by_asset=grid_marks_pos or None,
+                venue_pending_by_asset=cycle_pending_pos,
+                bulk_map=cycle_bulk_marks,
             )
             _, _, meta_g = run_strategy_pick_tickers(
                 strategy_key=strat_key,
@@ -2481,6 +2676,7 @@ def one_cycle(
                     args=args,
                     cycle_index=cycle_index,
                     has_positions=True,
+                    pending_by_asset=cycle_pending_pos,
                 )
                 _execute_grid_market_events(meta_g, args=args)
                 return False
