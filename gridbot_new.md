@@ -269,9 +269,9 @@ Write `gridstrat_rearm.py` first and test it standalone before touching the exch
 
 ---
 
-## Interval risk rebalance (MM ≥ 50%)
+## Interval risk rebalance (IM ≥ 50%)
 
-When maintenance margin usage hits **50%**, the bot can rebalance all live positions to equal **target notional** per leg (7 long / 7 short on 14 tickers when N=15, smallest dropped). One **market order per ticker** (net delta, not reduce-only). Pending grid limits are **not** canceled. Rebalance runs **once per MM episode** (latch until MM drops below trigger).
+When **initial margin (IM) usage** hits **50%**, the bot can rebalance all live positions to equal **target notional** per leg (7 long / 7 short on 14 tickers when N=15, smallest dropped). One **market order per ticker** (net delta, not reduce-only). Pending grid limits are **not** canceled. Rebalance runs **once per IM episode** (latch until IM drops below trigger).
 
 ### Run live from terminal
 
@@ -295,7 +295,7 @@ python3 rebalance_run.py
 
 ### Run again after a previous rebalance
 
-Latch file blocks repeat runs while MM stays above trigger. Clear it only if you intend another full rebalance:
+Latch file blocks repeat runs while IM stays above trigger. Clear it only if you intend another full rebalance:
 
 ```bash
 rm -f Varibot/.varibot_rebalance_latch.json
@@ -306,9 +306,9 @@ cd Varibot && python3 rebalance_run.py --live --force
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `VARIBOT_REBALANCE_MM_TRIGGER` | `0.50` | Fire when MM usage ≥ this |
-| `VARIBOT_REBALANCE_IM_TRIGGER` | *(deprecated)* | Alias for MM trigger if `MM_TRIGGER` unset |
-| `VARIBOT_REBALANCE_IM_TARGET` | `0.20` | Target sizing IM in notional formula |
+| `VARIBOT_REBALANCE_IM_TRIGGER` | `0.50` | Fire when IM usage ≥ this |
+| `VARIBOT_REBALANCE_MM_TRIGGER` | *(deprecated)* | Alias for IM trigger if `IM_TRIGGER` unset |
+| `VARIBOT_REBALANCE_IM_TARGET` | `0.20` | Target notional sizing fraction in planner formula |
 | `VARIBOT_REBALANCE_ROUND_TO` | `10` | Round target notional to nearest $10 |
 | `VARIBOT_REBALANCE_MIN_ORDER_USD` | `5` | Skip legs smaller than this |
 | `VARIBOT_REBALANCE_ORDER_INTERVAL_S` | *(auto)* | Seconds between each ticker’s market order; default ≈3.2s at Vari 10 req/10s (3 HTTP calls per leg) |
@@ -360,6 +360,28 @@ If challenges recur, set a proxy Cloudflare accepts (see `Varibot/env.example`):
 ```bash
 HTTPS_PROXY=https://user:pass@host:port
 ```
+
+---
+
+## Bootstrap performance (cycle-1 cold start)
+
+On the first cycle, `grid_limits_reconcile.run_grid_limits_bootstrap` runs a **heavy map** per grid ticker: pending limits + (optionally) paginated `GET /api/orders/v2` history (`GRID_ORDERS_MAX_PAGES`, default 40). With ~20 tickers that can mean **10+ minutes** of silent API work before the first `posting N missing limit(s)` line.
+
+### Implemented
+
+- **Skip order history on fresh flat** — When the account has **no open positions** and a ticker has **no pending limits**, cycle-1 map is **pending-only** (no history pagination). Logs: `gridlimits[ETH] map: skip order history (flat account, no pending limits)`. Code: `_skip_order_history_on_flat_map` in `Varibot/grid_limits_reconcile.py`.
+
+### Future dev (not yet implemented)
+
+1. **Reuse pending keys from `_grid_venue_inputs_for_cycle`** — Varibot already fetches pending once per ticker before `pick_tickers`; bootstrap fetches again. Pass `pending_by_asset` into `run_grid_limits_bootstrap` to halve pending GETs on cycle 1.
+
+2. **Don't fetch marks twice** — Flat path calls indicative mark in `_prepare_varibot_strategy_feed` and again in `_grid_venue_inputs_for_cycle` (~60s duplicate work). Reuse marks from the listing snapshot or a single prefetch dict.
+
+3. **Progress logs per asset in heavy_map** — e.g. `gridlimits[ETH] map: done (pending=0, history_pages=2)` so long map phases are visible in Railway logs.
+
+4. **`set_leverage` once per asset per cycle** — `_grid_limits_place_limit_fn` calls `set_leverage` on every limit POST (~10× per ticker). Cache per-asset leverage for the reconcile loop.
+
+5. **Env tuning (ops, no code)** — `GRID_ORDERS_MAX_PAGES=2` if full history is needed on cycle 1; avoid `VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE=1` unless debugging.
 
 ---
 

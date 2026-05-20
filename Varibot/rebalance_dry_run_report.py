@@ -26,12 +26,8 @@ from variationalbot.vari.endpoints import Instrument  # noqa: E402
 
 
 def _fetch_mark(ep: VariEndpoints, sym: str) -> float:
-    inst = Instrument(
-        instrument_type="perpetual_future",
-        underlying=str(sym).strip().upper(),
-        funding_interval_s=3600,
-        settlement_asset="USDC",
-    )
+    """Indicative mark via POST /api/quotes/indicative (same as varibot grid path)."""
+    inst = Instrument.for_underlying(str(sym).strip().upper())
     q = ep.quote_indicative_simple(instrument=inst, qty=1.0)
     if isinstance(q, dict):
         for k in ("mark_price", "index_price", "ask", "bid"):
@@ -106,16 +102,16 @@ def main() -> int:
 
     trig, tgt, rnd, min_usd = rebalance_constants()
     pv = float(snap.portfolio_value_usd or 0)
-    mm = float(snap.mm_usage or 0)
+    im = float(snap.im_usage or 0)
     lev = int(cfg.max_leverage)
 
-    forced_preview = mm < trig
-    plan_mm = max(mm, trig) if forced_preview else mm
+    forced_preview = im < trig
+    plan_im = max(im, trig) if forced_preview else im
 
     plan = plan_portfolio_rebalance(
         portfolio_value=pv,
         max_leverage=float(lev),
-        current_margin_usage=plan_mm,
+        current_im_usage=plan_im,
         positions=positions,
     )
 
@@ -131,8 +127,8 @@ def main() -> int:
         "|--------|-------|",
         f"| Portfolio value | {_fmt_usd(pv)} |",
         f"| Max leverage | {lev}x |",
-        f"| MM usage (live) | {mm * 100:.2f}% |",
-        f"| MM trigger | {trig * 100:g}% |",
+        f"| IM usage (live) | {im * 100:.2f}% |",
+        f"| IM trigger | {trig * 100:g}% |",
         f"| IM target (sizing) | {tgt * 100:g}% |",
         f"| Positions (venue) | {len(positions)} |",
     ]
@@ -155,9 +151,9 @@ def main() -> int:
     side_by = _assign_sides(working_set, plan.n_eff)
 
     if forced_preview:
-        lines.append(f"| Dry-run note | MM below trigger; table uses forced MM ≥ {trig * 100:g}% preview |")
+        lines.append(f"| Dry-run note | IM below trigger; table uses forced IM ≥ {trig * 100:g}% preview |")
     else:
-        lines.append("| Dry-run note | Live MM at or above trigger |")
+        lines.append("| Dry-run note | Live IM at or above trigger |")
 
     lines.extend(
         [

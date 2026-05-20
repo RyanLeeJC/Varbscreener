@@ -420,6 +420,19 @@ def _post_missing_limits(
     return ok
 
 
+def _skip_order_history_on_flat_map(
+    *,
+    has_positions: bool,
+    pending_keys: Set[Tuple[str, str]],
+) -> bool:
+    """
+    Cycle-1 heavy map: a flat account with no pending limits does not need paginated
+    ``GET /api/orders/v2`` history before the first ladder POST (saves hundreds of API calls
+    on multi-ticker cold start).
+    """
+    return not bool(has_positions) and len(pending_keys) == 0
+
+
 def _history_window_iso() -> Tuple[str, str]:
     days = float(os.environ.get(ENV_GRID_ORDERS_HISTORY_DAYS, "1") or "1")
     if days <= 0:
@@ -841,7 +854,8 @@ def run_grid_limits_bootstrap(
 ) -> None:
     """
     1) Query venue when live+limit: pending limits (every cycle); positions + paginated order history
-       on first cycle(s) or when ``VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE`` is set.
+       on first cycle(s) or when ``VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE`` is set — except on a flat
+       account with no pending limits for that ticker (history skipped; pending-only map).
     2) Persist ``gridlimits.json`` from strategy meta **and** embed a ``venue_snapshot`` (template vs
        pending keys, optional history summary, gridstrat state hints) so restarts show leftover grid.
     3) If ``VARIBOT_GRID_LIMITS_RECONCILE`` and live and limit mode and gridstrat emitted
@@ -892,12 +906,21 @@ def run_grid_limits_bootstrap(
             except Exception as e:
                 log(f"gridlimits[{asset}] map: pending fetch failed ({type(e).__name__}: {e})")
                 pending_keys = set()
-            inst = _instrument_param(asset)
-            try:
-                hist = fetch_orders_v2_history_pages(ep, instrument=inst)
-            except Exception as e:
-                log(f"gridlimits[{asset}] map: history fetch failed ({type(e).__name__}: {e})")
-                hist = []
+            if _skip_order_history_on_flat_map(
+                has_positions=has_positions, pending_keys=pending_keys
+            ):
+                log(
+                    f"gridlimits[{asset}] map: skip order history "
+                    "(flat account, no pending limits)"
+                )
+                hist: List[Dict[str, Any]] = []
+            else:
+                inst = _instrument_param(asset)
+                try:
+                    hist = fetch_orders_v2_history_pages(ep, instrument=inst)
+                except Exception as e:
+                    log(f"gridlimits[{asset}] map: history fetch failed ({type(e).__name__}: {e})")
+                    hist = []
             hsum = _summarize_history(hist, asset=asset)
         elif live and is_limit:
             try:

@@ -1,7 +1,7 @@
 """
-MM-triggered portfolio rebalance: equal long/short target notionals with soft side assignment.
+IM-triggered portfolio rebalance: equal long/short target notionals with soft side assignment.
 
-Callable from varibot ``one_cycle`` when venue maintenance margin usage exceeds the trigger threshold.
+Callable from varibot ``one_cycle`` when venue initial margin usage (IM%) exceeds the trigger threshold.
 """
 
 from __future__ import annotations
@@ -16,13 +16,13 @@ from variationalbot.domain import PortfolioSnapshot
 from variationalbot.vari.endpoints import Instrument, VariEndpoints, format_qty_for_indicative_api
 
 # --- constants (override via VARIBOT_REBALANCE_* env in helpers) ---
-MM_TRIGGER: float = 0.50
+IM_TRIGGER: float = 0.50
 IM_TARGET: float = 0.20
 ROUND_TO: float = 10.0
 MIN_ORDER_USD: float = 5.0
 
-ENV_MM_TRIGGER = "VARIBOT_REBALANCE_MM_TRIGGER"
-ENV_IM_TRIGGER = "VARIBOT_REBALANCE_IM_TRIGGER"  # deprecated alias for MM trigger
+ENV_IM_TRIGGER = "VARIBOT_REBALANCE_IM_TRIGGER"
+ENV_MM_TRIGGER = "VARIBOT_REBALANCE_MM_TRIGGER"  # deprecated alias for IM trigger
 ENV_IM_TARGET = "VARIBOT_REBALANCE_IM_TARGET"
 ENV_ROUND_TO = "VARIBOT_REBALANCE_ROUND_TO"
 ENV_MIN_ORDER_USD = "VARIBOT_REBALANCE_MIN_ORDER_USD"
@@ -129,10 +129,10 @@ def rebalance_sleep_between_market_orders_s() -> float:
 
 
 def rebalance_constants() -> Tuple[float, float, float, float]:
-    mm_trig = (os.environ.get(ENV_MM_TRIGGER) or "").strip()
-    if not mm_trig:
-        mm_trig = (os.environ.get(ENV_IM_TRIGGER) or "").strip()
-    trigger = float(mm_trig) if mm_trig else float(MM_TRIGGER)
+    im_trig = (os.environ.get(ENV_IM_TRIGGER) or "").strip()
+    if not im_trig:
+        im_trig = (os.environ.get(ENV_MM_TRIGGER) or "").strip()
+    trigger = float(im_trig) if im_trig else float(IM_TRIGGER)
     return (
         trigger,
         _env_float(ENV_IM_TARGET, IM_TARGET),
@@ -307,19 +307,19 @@ def plan_portfolio_rebalance(
     min_order_usd: Optional[float] = None,
 ) -> Optional[RebalancePlan]:
     """
-    Pure rebalance planner. Returns None when margin usage is below trigger or inputs are invalid.
+    Pure rebalance planner. Returns None when IM usage is below trigger or inputs are invalid.
     """
-    if current_margin_usage is not None:
-        usage = float(current_margin_usage)
-    elif current_im_usage is not None:
+    if current_im_usage is not None:
         usage = float(current_im_usage)
+    elif current_margin_usage is not None:
+        usage = float(current_margin_usage)
     else:
-        raise TypeError("plan_portfolio_rebalance requires current_margin_usage or current_im_usage")
+        raise TypeError("plan_portfolio_rebalance requires current_im_usage or current_margin_usage")
     trig, tgt, rnd, min_usd = rebalance_constants()
-    if margin_trigger is not None:
-        trig = float(margin_trigger)
-    elif im_trigger is not None:
+    if im_trigger is not None:
         trig = float(im_trigger)
+    elif margin_trigger is not None:
+        trig = float(margin_trigger)
     if im_target is not None:
         tgt = float(im_target)
     if round_to is not None:
@@ -478,19 +478,19 @@ def rebalance_portfolio(
     varibot_dir: Optional[str] = None,
 ) -> bool:
     """
-    MM interval risk: one-shot market orders from a single plan snapshot (no position/MM re-check).
+    IM interval risk: one-shot market orders from a single plan snapshot (no position/IM re-check).
 
-    Returns True if a plan ran (dry-run or live). Live runs set a latch until MM falls below trigger.
+    Returns True if a plan ran (dry-run or live). Live runs set a latch until IM falls below trigger.
     """
-    mm_usage = snap.mm_usage
+    im_usage = snap.im_usage
     pv = snap.portfolio_value_usd
     trig, _, _, _ = rebalance_constants()
     latch_path = _rebalance_latch_path(varibot_dir)
 
-    if mm_usage is None:
-        log("interval risk: skip — mm_usage missing from portfolio snapshot")
+    if im_usage is None:
+        log("interval risk: skip — im_usage missing from portfolio snapshot")
         return False
-    if float(mm_usage) < float(trig):
+    if float(im_usage) < float(trig):
         if latch_path:
             _clear_rebalance_latch(latch_path)
         return False
@@ -500,9 +500,9 @@ def rebalance_portfolio(
 
     if latch_path and _read_rebalance_latch(latch_path):
         log(
-            f"interval risk: skip — rebalance already done this MM episode "
-            f"(MM%={float(mm_usage) * 100:.2f}% >= {trig * 100:g}%); "
-            "clear latch when MM drops below trigger"
+            f"interval risk: skip — rebalance already done this IM episode "
+            f"(IM%={float(im_usage) * 100:.2f}% >= {trig * 100:g}%); "
+            "clear latch when IM drops below trigger"
         )
         return False
 
@@ -512,8 +512,11 @@ def rebalance_portfolio(
         for p in positions:
             try:
                 mk = float(mark_fetcher(p.ticker))
-            except Exception:
-                log(f"interval risk: skip {p.ticker} — could not fetch mark")
+            except Exception as e:
+                log(
+                    f"interval risk: skip {p.ticker} — could not fetch mark "
+                    f"({type(e).__name__}: {e})"
+                )
                 continue
             if mk <= 0:
                 log(f"interval risk: skip {p.ticker} — stale/zero mark")
@@ -529,26 +532,26 @@ def rebalance_portfolio(
     plan = plan_portfolio_rebalance(
         portfolio_value=float(pv),
         max_leverage=float(max_leverage),
-        current_margin_usage=float(mm_usage),
+        current_im_usage=float(im_usage),
         positions=positions,
     )
     if plan is None:
-        if float(mm_usage) >= trig:
+        if float(im_usage) >= trig:
             log(
-                f"interval risk: MM%={float(mm_usage) * 100:.2f}% (>= {trig * 100:g}%) "
+                f"interval risk: IM%={float(im_usage) * 100:.2f}% (>= {trig * 100:g}%) "
                 "but no rebalance plan (no positions or planner returned None)"
             )
         return False
 
     if not plan.orders:
         log(
-            f"interval risk: MM%={float(mm_usage) * 100:.2f}% — all positions within "
+            f"interval risk: IM%={float(im_usage) * 100:.2f}% — all positions within "
             f"${min_usd:g} of target ${plan.target_notional:g}; no orders"
         )
         return False
 
     log(
-        f"interval risk: triggered MM%={float(mm_usage) * 100:.2f}% "
+        f"interval risk: triggered IM%={float(im_usage) * 100:.2f}% "
         f"target_notional=${plan.target_notional:g} n_eff={plan.n_eff} "
         f"orders={len(plan.orders)} projected_volume=${plan.total_volume_usd:.2f}"
         + (f" dropped={plan.dropped_ticker}" if plan.dropped_ticker else "")
