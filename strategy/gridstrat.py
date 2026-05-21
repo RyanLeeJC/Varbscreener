@@ -108,17 +108,16 @@ GRID_RWA_COMMODITY_TICKERS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COP
 # Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
 # -----------------------------------------------------------------------------
 GRID_TRADING_TICKERS: Dict[str, float] = {
-    "HYPE": 1.0,
     "ADA": 1.0,
     "XMR": 1.5,
-    "SOL": 1.0,
-    "XRP": 1.0,
+    "SOL": 1.5,
+    "XRP": 1.5,
     "AVAX": 1.5,
     "SUI": 1.5,
     "LDO": 1.5,
-    "ENA": 1.5,
     "AAVE": 1.5,
-    "TAO": 1.5,
+    "UNI": 1.5,
+    "HBAR": 1.5,
 
     # RWA commodities (see GRID_RWA_COMMODITY_TICKERS)
     "XAU": 0.5,
