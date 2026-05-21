@@ -7,7 +7,9 @@ import unittest
 from portfolio_rebalance import (
     IM_TARGET,
     LivePosition,
+    grid_rung_usd_notional,
     plan_portfolio_rebalance,
+    plan_position_trims,
     round_to_nearest,
 )
 
@@ -216,6 +218,58 @@ class TestPlanPortfolioRebalance(unittest.TestCase):
             self.assertEqual(eth.order_side, "buy")
         else:
             self.assertEqual(eth.order_side, "sell")
+
+
+class TestPlanPositionTrims(unittest.TestCase):
+    def test_rung_usd_default_200(self) -> None:
+        self.assertEqual(grid_rung_usd_notional(), 200.0)
+
+    def test_trims_when_over_threshold(self) -> None:
+        # 15 × $200 = $3000; $3500 long → sell 50% of qty
+        trims = plan_position_trims(
+            [_pos("ETH", "long", 1.75, 2000.0)],
+            trim_multiple=15.0,
+            trim_fraction=0.5,
+            rung_usd=200.0,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(len(trims), 1)
+        t = trims[0]
+        self.assertEqual(t.ticker, "ETH")
+        self.assertEqual(t.order_side, "sell")
+        self.assertAlmostEqual(t.order_quantity, 0.875)
+        self.assertAlmostEqual(t.order_notional, 1750.0)
+
+    def test_short_trims_with_buy(self) -> None:
+        trims = plan_position_trims(
+            [_pos("BTC", "short", 0.1, 60000.0)],
+            trim_multiple=15.0,
+            trim_fraction=0.5,
+            rung_usd=200.0,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(len(trims), 1)
+        self.assertEqual(trims[0].order_side, "buy")
+        self.assertAlmostEqual(trims[0].order_quantity, 0.05)
+
+    def test_at_threshold_no_trim(self) -> None:
+        trims = plan_position_trims(
+            [_pos("ETH", "long", 1.5, 2000.0)],
+            trim_multiple=15.0,
+            trim_fraction=0.5,
+            rung_usd=200.0,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(trims, [])
+
+    def test_disabled_when_multiple_zero(self) -> None:
+        trims = plan_position_trims(
+            [_pos("ETH", "long", 10.0, 1000.0)],
+            trim_multiple=0.0,
+            trim_fraction=0.5,
+            rung_usd=200.0,
+        )
+        self.assertEqual(trims, [])
 
 
 if __name__ == "__main__":

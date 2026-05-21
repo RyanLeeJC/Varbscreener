@@ -26,6 +26,10 @@ ENV_IM_TARGET = "VARIBOT_REBALANCE_IM_TARGET"
 ENV_ROUND_TO = "VARIBOT_REBALANCE_ROUND_TO"
 ENV_MIN_ORDER_USD = "VARIBOT_REBALANCE_MIN_ORDER_USD"
 ENV_REBALANCE_ORDER_INTERVAL_S = "VARIBOT_REBALANCE_ORDER_INTERVAL_S"
+ENV_TRIM_MULTIPLE = "VARIBOT_REBALANCE_TRIM_MULTIPLE"
+ENV_TRIM_FRACTION = "VARIBOT_REBALANCE_TRIM_FRACTION"
+DEFAULT_TRIM_MULTIPLE: float = 15.0
+DEFAULT_TRIM_FRACTION: float = 0.5
 # Each market leg: 2× indicative quote + 1× POST market (see VariEndpoints.quote_id_for_order_qty).
 MARKET_LEG_HTTP_CALLS: int = 3
 
@@ -83,6 +87,19 @@ class RebalancePlan:
     total_volume_usd: float
 
 
+@dataclass(frozen=True)
+class PlannedTrimOrder:
+    ticker: str
+    current_side: str
+    current_notional: float
+    rung_usd: float
+    threshold_notional: float
+    trim_fraction: float
+    order_side: str
+    order_quantity: float
+    order_notional: float
+
+
 def _env_float(name: str, default: float) -> float:
     raw = (os.environ.get(name) or "").strip()
     if not raw:
@@ -136,6 +153,97 @@ def rebalance_constants() -> Tuple[float, float, float, float]:
         _env_float(ENV_ROUND_TO, ROUND_TO),
         _env_float(ENV_MIN_ORDER_USD, MIN_ORDER_USD),
     )
+
+
+def grid_rung_usd_notional() -> float:
+    """
+    Per-rung USD notional: GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM (strategy/gridstrat defaults).
+    """
+    try:
+        from strategy.gridstrat import (  # noqa: WPS433
+            DEFAULT_GRID_INVESTMENT_USD,
+            DEFAULT_GRID_LEVERAGE,
+            DEFAULT_GRID_NUM,
+            per_rung_usd_notional,
+        )
+    except ImportError:
+        DEFAULT_GRID_INVESTMENT_USD = 40.0
+        DEFAULT_GRID_LEVERAGE = 50.0
+        DEFAULT_GRID_NUM = 10
+
+        def per_rung_usd_notional(*, investment_usd: float, leverage: float, n_rungs: int) -> float:
+            return float(investment_usd) * float(leverage) / float(max(1, int(n_rungs)))
+
+    raw_inv = (os.environ.get("GRID_INVESTMENT_USD") or "").strip()
+    inv = float(raw_inv) if raw_inv else float(DEFAULT_GRID_INVESTMENT_USD)
+    raw_lev = (os.environ.get("GRID_LEVERAGE") or "").strip()
+    lev = float(raw_lev) if raw_lev else float(DEFAULT_GRID_LEVERAGE)
+    raw_n = (os.environ.get("GRID_NUM") or "").strip()
+    n_grids = int(raw_n) if raw_n else int(DEFAULT_GRID_NUM)
+    return per_rung_usd_notional(investment_usd=inv, leverage=lev, n_rungs=n_grids)
+
+
+def trim_constants() -> Tuple[float, float, float]:
+    """(trim_multiple, trim_fraction, rung_usd). multiple <= 0 disables trimming."""
+    return (
+        _env_float(ENV_TRIM_MULTIPLE, DEFAULT_TRIM_MULTIPLE),
+        _env_float(ENV_TRIM_FRACTION, DEFAULT_TRIM_FRACTION),
+        grid_rung_usd_notional(),
+    )
+
+
+def plan_position_trims(
+    positions: Sequence[LivePosition],
+    *,
+    trim_multiple: Optional[float] = None,
+    trim_fraction: Optional[float] = None,
+    rung_usd: Optional[float] = None,
+    min_order_usd: Optional[float] = None,
+) -> List[PlannedTrimOrder]:
+    """
+    Trim positions whose abs notional exceeds ``trim_multiple × rung_usd`` by ``trim_fraction`` (reduce-only).
+    """
+    mult, frac, rung = trim_constants()
+    if trim_multiple is not None:
+        mult = float(trim_multiple)
+    if trim_fraction is not None:
+        frac = float(trim_fraction)
+    if rung_usd is not None:
+        rung = float(rung_usd)
+    _, _, _, min_usd = rebalance_constants()
+    if min_order_usd is not None:
+        min_usd = float(min_order_usd)
+
+    if mult <= 0 or rung <= 0 or frac <= 0 or frac > 1.0:
+        return []
+
+    threshold = float(mult) * float(rung)
+    out: List[PlannedTrimOrder] = []
+    for pos in positions:
+        if pos.mark_price <= 0 or pos.quantity <= 0:
+            continue
+        notional = float(pos.notional)
+        if notional <= threshold:
+            continue
+        trim_qty = float(pos.quantity) * float(frac)
+        order_notional = trim_qty * float(pos.mark_price)
+        if order_notional < float(min_usd):
+            continue
+        order_side = "sell" if pos.side == "long" else "buy"
+        out.append(
+            PlannedTrimOrder(
+                ticker=pos.ticker,
+                current_side=pos.side,
+                current_notional=notional,
+                rung_usd=float(rung),
+                threshold_notional=float(threshold),
+                trim_fraction=float(frac),
+                order_side=order_side,
+                order_quantity=float(trim_qty),
+                order_notional=float(order_notional),
+            )
+        )
+    return out
 
 
 def round_to_nearest(value: float, step: float) -> float:
@@ -398,6 +506,7 @@ def _place_market_leg(
     side: str,
     quantity: float,
     max_slippage: float,
+    is_reduce_only: bool = False,
 ) -> Tuple[int, Optional[str], Optional[str]]:
     """Returns (rc, order_id, error_message). rc 0 = venue accepted the market order."""
     sym = str(ticker).strip().upper()
@@ -415,7 +524,7 @@ def _place_market_leg(
             quote_id=str(quote_id),
             side=sd,
             max_slippage=float(max_slippage),
-            is_reduce_only=False,
+            is_reduce_only=bool(is_reduce_only),
         )
     except Exception as e:
         return 1, None, f"{type(e).__name__}: {e}"
@@ -423,6 +532,79 @@ def _place_market_leg(
         preview = str(resp)[:400] if resp is not None else ""
         return 1, None, f"venue rejected: {preview}"
     return 0, _extract_order_id(resp), None
+
+
+def _execute_trim_orders(
+    *,
+    ep: VariEndpoints,
+    trims: Sequence[PlannedTrimOrder],
+    live: bool,
+    dry_run: bool,
+    log: Callable[[str], None],
+    max_slippage: float,
+) -> bool:
+    """Place reduce-only market trims. Returns True if any trim was planned and dry-run/live attempted."""
+    if not trims:
+        return False
+
+    mult, frac, rung = trim_constants()
+    total_vol = sum(t.order_notional for t in trims)
+    log(
+        f"position trim: {len(trims)} ticker(s) over {mult:g}× rung "
+        f"(${rung:g} → threshold ${mult * rung:g}); "
+        f"trim {frac * 100:g}% each; projected_volume=${total_vol:.2f}"
+    )
+    for t in trims:
+        log(
+            f"position trim[{t.ticker}]: {t.current_side} "
+            f"notional=${t.current_notional:.2f} > ${t.threshold_notional:g} — "
+            f"{t.order_side} {t.trim_fraction * 100:g}% qty={t.order_quantity:g} "
+            f"notional=${t.order_notional:.2f}"
+        )
+
+    if dry_run or not live:
+        log(
+            f"position trim: dry-run — would place {len(trims)} reduce-only market order(s); "
+            f"volume≈${total_vol:.2f}"
+        )
+        return True
+
+    pace_s = rebalance_sleep_between_market_orders_s()
+    log(f"position trim: reduce-only market orders; pacing {pace_s:.2f}s between tickers")
+    legs_ok = 0
+    legs_fail = 0
+    n = len(trims)
+    for idx, t in enumerate(trims):
+        rc, oid, err = _place_market_leg(
+            ep,
+            ticker=t.ticker,
+            side=t.order_side,
+            quantity=t.order_quantity,
+            max_slippage=float(max_slippage),
+            is_reduce_only=True,
+        )
+        if rc != 0:
+            legs_fail += 1
+            log(
+                f"position trim[{t.ticker}]: {t.order_side} "
+                f"qty={format_qty_for_indicative_api(t.order_quantity)} "
+                f"FAILED ({err or 'unknown'})"
+            )
+        else:
+            legs_ok += 1
+            log(
+                f"position trim[{t.ticker}]: {t.order_side} "
+                f"qty={format_qty_for_indicative_api(t.order_quantity)} "
+                f"ok order_id={oid!r}"
+            )
+        if pace_s > 0 and idx < n - 1:
+            time.sleep(pace_s)
+
+    log(
+        f"position trim: complete — ok={legs_ok} failed={legs_fail} "
+        f"(planned volume ${total_vol:.2f})"
+    )
+    return legs_fail == 0
 
 
 def rebalance_portfolio(
@@ -439,24 +621,18 @@ def rebalance_portfolio(
     varibot_dir: Optional[str] = None,
 ) -> bool:
     """
-    IM interval risk: market orders from a single plan snapshot (no position/IM re-check mid-run).
+    Portfolio maintenance on each call when positions exist:
 
-    Runs whenever IM% ≥ trigger on each call (e.g. every Varibot interval). ``varibot_dir`` is kept for
-    API compatibility but no longer used for persistence.
+    1. **Oversized trim** — reduce-only market orders when abs notional exceeds
+       ``VARIBOT_REBALANCE_TRIM_MULTIPLE × grid_rung_usd`` (default 15× $200).
+    2. **IM interval risk** — equal-notional rebalance when IM% ≥ trigger.
+
+    ``varibot_dir`` is kept for API compatibility but no longer used for persistence.
     """
     _ = varibot_dir
     im_usage = snap.im_usage
     pv = snap.portfolio_value_usd
-    trig, _, _, _ = rebalance_constants()
-
-    if im_usage is None:
-        log("interval risk: skip — im_usage missing from portfolio snapshot")
-        return False
-    if float(im_usage) < float(trig):
-        return False
-    if pv is None or float(pv) <= 0:
-        log("interval risk: skip — portfolio_value_usd missing or non-positive")
-        return False
+    trig, _, _, min_usd = rebalance_constants()
 
     positions = parse_live_positions_from_raw(positions_raw)
     if mark_fetcher is not None:
@@ -466,19 +642,37 @@ def rebalance_portfolio(
                 mk = float(mark_fetcher(p.ticker))
             except Exception as e:
                 log(
-                    f"interval risk: skip {p.ticker} — could not fetch mark "
+                    f"rebalance: skip {p.ticker} — could not fetch mark "
                     f"({type(e).__name__}: {e})"
                 )
                 continue
             if mk <= 0:
-                log(f"interval risk: skip {p.ticker} — stale/zero mark")
+                log(f"rebalance: skip {p.ticker} — stale/zero mark")
                 continue
             enriched.append(
                 LivePosition(ticker=p.ticker, side=p.side, quantity=p.quantity, mark_price=mk)
             )
         positions = enriched
     elif len(positions) < len(parse_live_positions_from_raw(positions_raw)):
-        log("interval risk: some positions skipped — mark_price missing in API payload")
+        log("rebalance: some positions skipped — mark_price missing in API payload")
+
+    trim_ran = _execute_trim_orders(
+        ep=ep,
+        trims=plan_position_trims(positions, min_order_usd=min_usd),
+        live=live,
+        dry_run=dry_run,
+        log=log,
+        max_slippage=max_slippage,
+    )
+
+    if im_usage is None:
+        log("interval risk: skip — im_usage missing from portfolio snapshot")
+        return trim_ran
+    if float(im_usage) < float(trig):
+        return trim_ran
+    if pv is None or float(pv) <= 0:
+        log("interval risk: skip — portfolio_value_usd missing or non-positive")
+        return trim_ran
 
     trig, tgt, rnd, min_usd = rebalance_constants()
     plan = plan_portfolio_rebalance(
@@ -493,14 +687,14 @@ def rebalance_portfolio(
                 f"interval risk: IM%={float(im_usage) * 100:.2f}% (>= {trig * 100:g}%) "
                 "but no rebalance plan (no positions or planner returned None)"
             )
-        return False
+        return trim_ran
 
     if not plan.orders:
         log(
             f"interval risk: IM%={float(im_usage) * 100:.2f}% — all positions within "
             f"${min_usd:g} of target ${plan.target_notional:g}; no orders"
         )
-        return False
+        return trim_ran
 
     log(
         f"interval risk: triggered IM%={float(im_usage) * 100:.2f}% "
@@ -523,7 +717,7 @@ def rebalance_portfolio(
             f"market leg(s) on {list(plan.working_tickers)} (pending orders untouched); "
             f"volume≈${plan.total_volume_usd:.2f}"
         )
-        return True
+        return trim_ran or True
 
     pace_s = rebalance_sleep_between_market_orders_s()
     rate_max, rate_window = _vari_rate_limit_settings()
@@ -571,4 +765,4 @@ def rebalance_portfolio(
         f"(planned volume ${plan.total_volume_usd:.2f}); "
         f"will run again next interval if IM% still ≥ {trig * 100:g}%"
     )
-    return legs_fail == 0
+    return trim_ran or legs_fail == 0
