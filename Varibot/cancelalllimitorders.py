@@ -7,7 +7,14 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from grid_limits_reconcile import fetch_pending_order_rows_paginated
+_VARIBOT_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.abspath(os.path.join(_VARIBOT_DIR, ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+if _VARIBOT_DIR not in sys.path:
+    sys.path.insert(0, _VARIBOT_DIR)
+
+from grid_limits_reconcile import fetch_pending_order_rows_paginated  # noqa: E402
 from variationalbot.config import load_config
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 from variationalbot.vari.endpoints import parse_cancel_ban_wait_seconds

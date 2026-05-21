@@ -20,6 +20,7 @@ Dependencies: repo layout
 """
 
 import argparse
+import http.server
 import json
 import math
 import os
@@ -335,6 +336,66 @@ def _near_median_pm_usd_for_multimarket(
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
+
+
+_HEALTH_LISTENER_STARTED = False
+_HEALTH_LISTENER_LOCK = threading.Lock()
+
+
+def _maybe_start_render_health_listener() -> None:
+    """
+    When PORT is set (Render web/private services), bind 0.0.0.0:PORT for deploy health checks.
+    Called from __main__ before the log-wrapper spawns a child so Render's port scan succeeds early.
+    Set VARIBOT_HEALTH_LISTENER=0 to disable. Background workers on Render omit PORT.
+    """
+    global _HEALTH_LISTENER_STARTED
+    with _HEALTH_LISTENER_LOCK:
+        if _HEALTH_LISTENER_STARTED:
+            return
+        flag = (os.getenv("VARIBOT_HEALTH_LISTENER") or "1").strip().lower()
+        if flag in ("0", "false", "no", "off"):
+            return
+        raw = (os.getenv("PORT") or "").strip()
+        if not raw:
+            return
+        try:
+            port = int(raw)
+        except ValueError:
+            _log(f"health: skip — invalid PORT={raw!r}")
+            return
+        if port <= 0 or port > 65535:
+            _log(f"health: skip — PORT out of range ({port})")
+            return
+
+        class _HealthHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if self.path.split("?", 1)[0] in ("/", "/health", "/healthz"):
+                    body = b"ok\n"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def log_message(self, _format: str, *_args: Any) -> None:
+                return
+
+        try:
+            httpd = http.server.HTTPServer(("0.0.0.0", port), _HealthHandler)
+        except OSError as e:
+            _log(f"health: bind failed on 0.0.0.0:{port} ({type(e).__name__}: {e})")
+            return
+
+        threading.Thread(
+            target=httpd.serve_forever,
+            name="varibot-health",
+            daemon=True,
+        ).start()
+        _HEALTH_LISTENER_STARTED = True
+        _log(f"health: listening on 0.0.0.0:{port} (/ /health /healthz)")
 
 
 def _fmt_portfolio_snapshot_line(out: Dict[str, Any]) -> str:
@@ -3047,6 +3108,7 @@ def _child_main() -> int:
 
 
 if __name__ == "__main__":
+    _maybe_start_render_health_listener()
     if os.getenv(_VARIBOT_WRAPPED_ENV, "").strip() != "1":
         raise SystemExit(_run_self_wrapped())
     raise SystemExit(_child_main())
