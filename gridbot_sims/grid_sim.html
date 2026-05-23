@@ -1,0 +1,1429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grid Re-Arm Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e0d;
+    --bg-2: #11161a;
+    --panel: #141a1f;
+    --grid-line: #1f2830;
+    --text: #d4d8d2;
+    --text-dim: #9aa1a6;       /* lifted from #6b7278 */
+    --text-faint: #5a6168;     /* lifted from #3a4148 */
+    --buy: #4ade80;
+    --buy-dim: #1e3a2a;
+    --sell: #f87171;
+    --sell-dim: #3a1e1e;
+    --price: #fbbf24;
+    --filled: #8a9098;
+    --new: #67e8f9;
+    --accent: #fbbf24;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at top, rgba(251,191,36,0.04), transparent 60%),
+      repeating-linear-gradient(0deg, transparent, transparent 2px,
+        rgba(255,255,255,0.008) 2px, rgba(255,255,255,0.008) 3px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative; z-index: 1;
+    max-width: 1400px; margin: 0 auto; padding: 32px 24px;
+  }
+
+  header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    padding-bottom: 20px; margin-bottom: 24px;
+    border-bottom: 1px solid var(--grid-line);
+  }
+
+  h1 {
+    font-family: 'Fraunces', serif; font-weight: 600;
+    font-size: 28px; letter-spacing: -0.02em; color: var(--text);
+  }
+  h1 .accent { color: var(--accent); font-style: italic; }
+
+  .meta {
+    font-size: 11px; color: var(--text-dim);
+    text-align: right; line-height: 1.6;
+  }
+  .meta .label { color: var(--text-faint); }
+
+  .layout { display: grid; grid-template-columns: 1fr 340px; gap: 24px; }
+  @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+
+  .chart-panel {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    padding: 20px; position: relative;
+  }
+
+  .chart-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 12px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--grid-line);
+  }
+
+  .chart-title {
+    font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.15em; color: var(--text-dim);
+  }
+  .chart-readout { font-size: 11px; color: var(--text-dim); }
+  .chart-readout .px { color: var(--price); font-weight: 500; }
+
+  svg.chart { width: 100%; height: 480px; display: block; }
+
+  .controls {
+    margin-top: 16px; padding-top: 16px;
+    border-top: 1px solid var(--grid-line);
+  }
+
+  .slider-row {
+    display: flex; align-items: center; gap: 16px; margin-bottom: 12px;
+  }
+  .slider-row label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;
+    color: var(--text-dim); min-width: 60px;
+  }
+
+  input[type="range"] {
+    flex: 1; -webkit-appearance: none; appearance: none;
+    height: 4px; background: var(--grid-line); outline: none; cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; background: var(--accent);
+    cursor: pointer; border-radius: 0;
+    box-shadow: 0 0 8px rgba(251,191,36,0.4);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; background: var(--accent);
+    cursor: pointer; border: none; border-radius: 0;
+  }
+
+  .tick-display {
+    font-variant-numeric: tabular-nums; color: var(--text);
+    min-width: 90px; text-align: right; font-size: 12px;
+  }
+
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+  button {
+    background: transparent; border: 1px solid var(--grid-line);
+    color: var(--text-dim); font-family: inherit;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    padding: 6px 12px; cursor: pointer; transition: all 0.15s ease;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.active {
+    border-color: var(--accent); color: var(--accent);
+    background: rgba(251,191,36,0.06);
+  }
+
+  .config-panel {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    padding: 16px 20px; margin-bottom: 16px;
+  }
+  .config-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 14px 24px;
+  }
+  @media (max-width: 1100px) { .config-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .config-grid { grid-template-columns: 1fr; } }
+
+  .toggle-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 14px 24px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--grid-line);
+  }
+  @media (max-width: 1100px) { .toggle-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .toggle-grid { grid-template-columns: 1fr; } }
+
+  .cfg-row { display: flex; align-items: center; gap: 10px; }
+  .cfg-row label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--text-dim); min-width: 72px;
+  }
+  .cfg-row input[type="range"] { flex: 1; min-width: 0; }
+  .cfg-row .val {
+    font-variant-numeric: tabular-nums; color: var(--text);
+    min-width: 78px; font-size: 11.5px; text-align: right;
+  }
+
+  /* Toggle */
+  .toggle-group {
+    flex: 1; display: flex;
+    border: 1px solid var(--grid-line);
+    overflow: hidden;
+  }
+  .toggle-opt {
+    flex: 1; text-align: center;
+    padding: 5px 8px; font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--text-dim); cursor: pointer;
+    background: transparent;
+    transition: all 0.15s ease;
+    border: none;
+  }
+  .toggle-opt:hover { color: var(--text); }
+  .toggle-opt.active {
+    background: rgba(251,191,36,0.08);
+    color: var(--accent);
+  }
+  .toggle-opt:not(:last-child) {
+    border-right: 1px solid var(--grid-line);
+  }
+
+  /* CSV loader */
+  .csv-control {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .csv-btn {
+    background: transparent;
+    border: 1px solid var(--grid-line);
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .csv-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .csv-btn.loaded {
+    border-color: var(--buy);
+    color: var(--buy);
+  }
+  .csv-status {
+    font-size: 10px;
+    color: var(--text-faint);
+    letter-spacing: 0.05em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .csv-status.active { color: var(--buy); }
+  .csv-status.error { color: var(--sell); }
+  .csv-row { grid-column: span 1; }
+  @media (min-width: 1101px) {
+    .csv-row { grid-column: span 3; }
+  }
+  .cfg-row .val .sub { color: var(--text-faint); font-size: 10px; }
+
+  .sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+  .info-panel {
+    background: var(--panel); border: 1px solid var(--grid-line); padding: 16px;
+  }
+  .info-panel h3 {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.18em;
+    color: var(--text-dim); margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--grid-line);
+  }
+
+  .stat-row {
+    display: flex; justify-content: space-between;
+    padding: 4px 0; font-size: 11px;
+  }
+  .stat-row .k { color: var(--text-faint); }
+  .stat-row .v { color: var(--text); font-variant-numeric: tabular-nums; }
+  .stat-row .v.pos { color: var(--buy); }
+  .stat-row .v.neg { color: var(--sell); }
+  .stat-row.divider {
+    border-top: 1px dashed var(--grid-line);
+    margin-top: 4px; padding-top: 8px;
+  }
+
+  .order-book { max-height: 240px; overflow-y: auto; }
+  .order-book::-webkit-scrollbar { width: 4px; }
+  .order-book::-webkit-scrollbar-track { background: var(--bg-2); }
+  .order-book::-webkit-scrollbar-thumb { background: var(--grid-line); }
+
+  .order-row {
+    display: grid; grid-template-columns: 40px 1fr auto;
+    gap: 8px; padding: 4px 6px; font-size: 10.5px;
+    border-left: 2px solid transparent; transition: background 0.2s;
+  }
+  .order-row.buy { border-left-color: var(--buy); }
+  .order-row.sell { border-left-color: var(--sell); }
+  .order-row.filled { opacity: 0.4; border-left-color: var(--filled); }
+  .order-row.new {
+    background: rgba(103,232,249,0.05); border-left-color: var(--new);
+  }
+
+  .order-side {
+    text-transform: uppercase; font-weight: 500;
+    font-size: 9px; letter-spacing: 0.1em; padding-top: 1px;
+  }
+  .order-row.buy .order-side { color: var(--buy); }
+  .order-row.sell .order-side { color: var(--sell); }
+  .order-row.filled .order-side { color: var(--filled); }
+
+  .order-px { font-variant-numeric: tabular-nums; color: var(--text); }
+  .order-row.filled .order-px { text-decoration: line-through; }
+
+  .order-tag {
+    font-size: 9px; color: var(--text-faint);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+
+  .event-log {
+    max-height: 220px; overflow-y: auto;
+    font-size: 10.5px; line-height: 1.7;
+  }
+  .event-log::-webkit-scrollbar { width: 4px; }
+  .event-log::-webkit-scrollbar-track { background: var(--bg-2); }
+  .event-log::-webkit-scrollbar-thumb { background: var(--grid-line); }
+
+  .event {
+    display: grid; grid-template-columns: 32px 1fr;
+    gap: 8px; padding: 3px 0;
+    border-bottom: 1px dashed rgba(255,255,255,0.03);
+  }
+  .event .t { color: var(--text-faint); font-size: 9.5px; padding-top: 2px; }
+  .event .msg { color: var(--text-dim); }
+  .event.fill .msg { color: var(--text); }
+  .event.fill.sell .msg b { color: var(--sell); }
+  .event.fill.buy .msg b { color: var(--buy); }
+  .event.rearm .msg { color: var(--new); }
+  .event.profit .msg { color: var(--accent); font-weight: 500; }
+  .event.reset .msg { color: var(--accent); font-weight: 600; }
+  .event.warn .msg { color: var(--text-dim); font-style: italic; }
+
+  .legend {
+    display: flex; gap: 16px; font-size: 10px;
+    color: var(--text-dim); padding: 8px 0; flex-wrap: wrap;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .legend-dot.buy { background: var(--buy); }
+  .legend-dot.sell { background: var(--sell); }
+  .legend-dot.new { background: var(--new); box-shadow: 0 0 6px var(--new); }
+  .legend-dot.filled { background: var(--filled); }
+  .legend-dot.price { background: var(--price); }
+
+  .grid-line-h {
+    stroke: var(--grid-line); stroke-width: 1; stroke-dasharray: 2 4;
+  }
+
+  .order-line {
+    stroke-width: 1.5; stroke-dasharray: 5 3; opacity: 0.85;
+  }
+  .order-line.buy { stroke: var(--buy); }
+  .order-line.sell { stroke: var(--sell); }
+  .order-line.new { stroke: var(--new); stroke-dasharray: 3 2; }
+  .order-line.filled {
+    stroke: var(--filled); stroke-dasharray: 1 5; opacity: 0.4;
+  }
+
+  .order-label {
+    font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+    fill: var(--text-dim); font-variant-numeric: tabular-nums;
+  }
+  .order-label.buy { fill: var(--buy); }
+  .order-label.sell { fill: var(--sell); }
+  .order-label.new { fill: var(--new); }
+  .order-label.filled { fill: var(--filled); opacity: 0.6; }
+
+  .price-path {
+    fill: none; stroke: var(--price); stroke-width: 1.5;
+    stroke-linejoin: round; stroke-linecap: round;
+  }
+  .price-path-future {
+    fill: none; stroke: var(--text-faint); stroke-width: 1;
+    stroke-dasharray: 2 3; opacity: 0.5;
+  }
+  .price-dot {
+    fill: var(--price); stroke: var(--bg); stroke-width: 2;
+    filter: drop-shadow(0 0 4px var(--price));
+  }
+  .fill-marker { fill: none; stroke-width: 2; }
+  .fill-marker.sell { stroke: var(--sell); }
+  .fill-marker.buy { stroke: var(--buy); }
+
+  .axis-label {
+    font-size: 9.5px; fill: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .footnote {
+    margin-top: 24px; font-size: 10.5px;
+    color: var(--text-faint); line-height: 1.7; max-width: 800px;
+  }
+  .footnote em {
+    color: var(--text-dim); font-style: normal; font-family: 'Fraunces', serif;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Grid Re-Arm <span class="accent">Simulator</span></h1>
+      <div class="legend" style="margin-top:8px;">
+        <div class="legend-item"><span class="legend-dot price"></span>Price</div>
+        <div class="legend-item"><span class="legend-dot sell"></span>Sell limit</div>
+        <div class="legend-item"><span class="legend-dot buy"></span>Buy limit</div>
+        <div class="legend-item"><span class="legend-dot new"></span>Re-armed (paired)</div>
+        <div class="legend-item"><span class="legend-dot filled"></span>Filled</div>
+      </div>
+    </div>
+    <div class="meta">
+      <div><span class="label">SYMBOL</span> &nbsp; BTC-PERP</div>
+      <div><span class="label">ANCHOR</span> &nbsp; <span style="color:var(--text)" id="meta-anchor">80,000</span></div>
+      <div><span class="label">NOTIONAL</span> &nbsp; <span style="color:var(--text)" id="meta-notional">$400</span></div>
+      <div><span class="label">SPACING</span> &nbsp; <span style="color:var(--text)" id="meta-spacing">400 / 0.50%</span></div>
+      <div><span class="label">QTY/GRID</span> &nbsp; <span style="color:var(--text)" id="meta-qty">0.00125 BTC</span></div>
+    </div>
+  </header>
+
+  <div class="config-panel">
+    <div class="config-grid">
+      <div class="cfg-row">
+        <label>Investment</label>
+        <input type="range" id="cfg-investment" min="50" max="5000" step="50" value="100">
+        <span class="val" id="val-investment">$100 <span class="sub">USDC</span></span>
+      </div>
+      <div class="cfg-row">
+        <label>Leverage</label>
+        <input type="range" id="cfg-leverage" min="1" max="50" step="1" value="4">
+        <span class="val" id="val-leverage">4× <span class="sub">cross</span></span>
+      </div>
+      <div class="cfg-row">
+        <label>Grid count</label>
+        <input type="range" id="cfg-gridnum" min="4" max="100" step="2" value="4">
+        <span class="val" id="val-gridnum">4 <span class="sub">/ 2B 2S</span></span>
+      </div>
+      <div class="cfg-row">
+        <label>Band %</label>
+        <input type="range" id="cfg-band" min="0.5" max="5.0" step="0.1" value="1.0">
+        <span class="val" id="val-band">1.0% <span class="sub">±</span></span>
+      </div>
+    </div>
+    <div class="toggle-grid">
+      <div class="cfg-row">
+        <label>Grid Reset</label>
+        <div class="toggle-group" id="cfg-gridreset">
+          <button class="toggle-opt active" data-val="0">No</button>
+          <button class="toggle-opt" data-val="1">Yes</button>
+        </div>
+        <span class="val sub" id="val-gridreset" style="text-align:left; min-width: 0; padding-left: 4px;">anchor fixed</span>
+      </div>
+      <div class="cfg-row csv-row">
+        <label>Price Data</label>
+        <div class="csv-control">
+          <input type="file" id="csv-input" accept=".csv,text/csv" style="display:none">
+          <button id="csv-load-btn" class="csv-btn">Load CSV</button>
+          <button id="csv-clear-btn" class="csv-btn" style="display:none">Clear</button>
+          <span class="csv-status" id="csv-status">no file — using synthetic scenarios</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="chart-panel">
+      <div class="chart-header">
+        <div class="chart-title">Price &times; Grid Levels &middot; <span id="tick-label-prefix">tick</span> <span id="tick-readout" style="color:var(--accent)">000</span></div>
+        <div class="chart-readout">mark <span class="px" id="px-readout">80,000</span></div>
+      </div>
+      <svg class="chart" id="chart" viewBox="0 0 800 480" preserveAspectRatio="none"></svg>
+
+      <div class="controls">
+        <div class="slider-row">
+          <label>Time</label>
+          <input type="range" id="slider" min="0" max="200" value="0">
+          <div class="tick-display" id="tick-display">000 / 200</div>
+        </div>
+        <div class="btn-row">
+          <button id="btn-reset">Reset</button>
+          <button id="btn-play">Play ▶</button>
+          <button id="btn-step-back">◀ Step</button>
+          <button id="btn-step-fwd">Step ▶</button>
+          <span style="flex:1"></span>
+          <button class="active" data-scenario="rally-pullback">Rally → Pullback</button>
+          <button data-scenario="oscillate">Oscillate</button>
+          <button data-scenario="trend-up">Strong Trend</button>
+          <button data-scenario="chop">Chop</button>
+          <button data-scenario="custom" id="btn-scenario-custom" style="display:none">CSV Data</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <div class="info-panel">
+        <h3>Bot State</h3>
+        <div class="stat-row"><span class="k">Net inventory</span><span class="v" id="s-inv">0.00000 BTC</span></div>
+        <div class="stat-row"><span class="k">Avg entry</span><span class="v" id="s-avg">—</span></div>
+        <div class="stat-row"><span class="k">Realized PnL</span><span class="v" id="s-pnl">$0.00</span></div>
+        <div class="stat-row"><span class="k">Unrealized PnL</span><span class="v" id="s-upnl">$0.00</span></div>
+        <div class="stat-row divider"><span class="k">Total PnL</span><span class="v" id="s-total">$0.00</span></div>
+        <div class="stat-row"><span class="k">Volume</span><span class="v" id="s-vol">$0.00</span></div>
+        <div class="stat-row"><span class="k">Fills (sell)</span><span class="v" id="s-sells">0</span></div>
+        <div class="stat-row"><span class="k">Fills (buy)</span><span class="v" id="s-buys">0</span></div>
+        <div class="stat-row"><span class="k">Round-trips</span><span class="v" id="s-rt">0</span></div>
+        <div class="stat-row"><span class="k">Grid resets</span><span class="v" id="s-resets">0</span></div>
+        <div class="stat-row"><span class="k">Active orders</span><span class="v" id="s-active">4</span></div>
+        <div class="stat-row divider"><span class="k">Est. Liq Long</span><span class="v" id="s-liq-long">—</span></div>
+        <div class="stat-row"><span class="k">Est. Liq Short</span><span class="v" id="s-liq-short">—</span></div>
+      </div>
+
+      <div class="info-panel">
+        <h3>Active Order Book</h3>
+        <div class="order-book" id="orderbook"></div>
+      </div>
+
+      <div class="info-panel">
+        <h3>Event Log</h3>
+        <div class="event-log" id="eventlog"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footnote">
+    <em>How to read this.</em> Each horizontal dashed line is a working limit order. As price (gold)
+    crosses a level, that order fills and the bot immediately stages a
+    <span style="color:var(--new)">paired replacement</span> one grid spacing on the opposite side.
+    <em>Realized PnL</em> only updates when a paired round-trip closes; <em>Unrealized PnL</em> marks the
+    current open inventory to the live price. Bump grid count higher to see denser grids capture smaller
+    oscillations more frequently — but note each round-trip becomes smaller too, since spacing shrinks.
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+let ANCHOR = 80000;        // mutable: replaced by first close of loaded CSV
+let CUSTOM_DATA = null;    // loaded CSV { prices: number[], times: string[], name: string }
+const TOTAL_TICKS = 200;
+const MM_RATE = 0.005;   // 0.5% maintenance margin (typical for BTC perp)
+
+let CFG = {
+  gridNum: 4,
+  bandPct: 1.0,
+  investmentUsd: 100,
+  leverage: 4,
+  gridReset: false,
+};
+
+function deriveParams(cfg) {
+  const bandFraction = cfg.bandPct / 100;
+  const gridLower = ANCHOR * (1 - bandFraction);
+  const gridUpper = ANCHOR * (1 + bandFraction);
+  const totalRange = gridUpper - gridLower;
+  const spacing = totalRange / cfg.gridNum;
+  const notionalPerGrid = (cfg.investmentUsd * cfg.leverage) / cfg.gridNum;
+  const qtyPerGrid = notionalPerGrid / ANCHOR;
+  const halfCount = cfg.gridNum / 2;
+  const levels = [];
+  for (let i = 1; i <= halfCount; i++) {
+    levels.push({ level: ANCHOR - i * spacing, side: 'buy' });
+    levels.push({ level: ANCHOR + i * spacing, side: 'sell' });
+  }
+  return {
+    gridLower, gridUpper, spacing, qtyPerGrid, notionalPerGrid,
+    levels, halfCount,
+    pxMin: ANCHOR - totalRange * 0.7,
+    pxMax: ANCHOR + totalRange * 0.7,
+  };
+}
+
+// ============================================================
+// SCENARIOS — parameterized by current band so they always
+// cross meaningful levels regardless of grid density / width
+// ============================================================
+function buildScenarios(params) {
+  const A = ANCHOR;
+  const span = params.gridUpper - A;
+
+  return {
+    'rally-pullback': [
+      { t: 0,   p: A },
+      { t: 15,  p: A + span * 0.4 },
+      { t: 30,  p: A + span * 0.95 },
+      { t: 50,  p: A + span * 0.7 },
+      { t: 75,  p: A - span * 0.3 },
+      { t: 95,  p: A - span * 0.95 },
+      { t: 120, p: A - span * 0.4 },
+      { t: 145, p: A + span * 0.4 },
+      { t: 170, p: A + span * 0.8 },
+      { t: 200, p: A + span * 0.5 },
+    ],
+    'oscillate': (() => {
+      const arr = [];
+      for (let t = 0; t <= TOTAL_TICKS; t += 5) {
+        const phase = (t / TOTAL_TICKS) * Math.PI * 6;
+        arr.push({ t, p: A + Math.sin(phase) * span * 0.7 });
+      }
+      return arr;
+    })(),
+    'trend-up': [
+      { t: 0,   p: A },
+      { t: 25,  p: A + span * 0.5 },
+      { t: 50,  p: A + span * 0.95 },
+      { t: 80,  p: A + span * 1.15 },
+      { t: 120, p: A + span * 1.35 },
+      { t: 160, p: A + span * 1.25 },
+      { t: 200, p: A + span * 1.10 },
+    ],
+    'chop': (() => {
+      const arr = [{ t: 0, p: A }];
+      let p = A;
+      const seed = [0.4,-0.7,0.3,0.8,-0.5,-0.3,0.6,-0.4,0.2,0.7,
+                    -0.6,0.5,-0.8,0.4,-0.2,0.7,-0.5,0.3,-0.6,0.5];
+      for (let i = 0; i < 20; i++) {
+        p += seed[i] * span * 0.35;
+        if (p > A + span * 0.95) p = A + span * 0.95;
+        if (p < A - span * 0.95) p = A - span * 0.95;
+        arr.push({ t: (i+1) * 10, p });
+      }
+      return arr;
+    })(),
+  };
+}
+
+function interpolate(path, t) {
+  if (t <= path[0].t) return path[0].p;
+  if (t >= path[path.length-1].t) return path[path.length-1].p;
+  for (let i=0; i<path.length-1; i++) {
+    if (t >= path[i].t && t <= path[i+1].t) {
+      const a = path[i], b = path[i+1];
+      const f = (t - a.t) / (b.t - a.t);
+      return a.p + (b.p - a.p) * f;
+    }
+  }
+  return path[0].p;
+}
+
+// ============================================================
+// SIMULATION ENGINE
+// ============================================================
+function simulate(scenarioName, cfg) {
+  const params = deriveParams(cfg);
+  const N = TOTAL_TICKS + 1;
+  const prices = [];
+
+  if (scenarioName === 'custom' && CUSTOM_DATA) {
+    // Resample CSV closes into N ticks using linear interpolation across index space.
+    const src = CUSTOM_DATA.prices;
+    const srcN = src.length;
+    if (srcN === 1) {
+      for (let t = 0; t < N; t++) prices.push(src[0]);
+    } else {
+      for (let t = 0; t < N; t++) {
+        const f = (t / (N - 1)) * (srcN - 1);
+        const i = Math.floor(f);
+        const frac = f - i;
+        const a = src[i];
+        const b = i + 1 < srcN ? src[i + 1] : src[srcN - 1];
+        prices.push(a + (b - a) * frac);
+      }
+    }
+  } else {
+    const scenarios = buildScenarios(params);
+    const path = scenarios[scenarioName] || scenarios['rally-pullback'];
+    for (let t = 0; t < N; t++) prices.push(interpolate(path, t));
+  }
+
+  let orders = params.levels.map((o, i) => ({
+    id: 'o' + i, level: o.level, side: o.side,
+    status: 'open', origin: 'initial', pairedFrom: null,
+    fillPrice: null, filledAtTick: null, placedAtTick: 0,
+  }));
+  let nextId = orders.length;
+
+  const snapshots = [];
+  const events = [];
+  let inventory = 0;
+  let inventoryCost = 0;   // signed cost basis for unrealized PnL calc
+  let realizedPnl = 0;
+  let sellFills = 0;
+  let buyFills = 0;
+  let roundTrips = 0;
+  let volumeUsd = 0;
+  let resetCount = 0;
+  let currentAnchor = ANCHOR;     // shifts on reset when gridReset enabled
+  let currentGridLower = params.gridLower;
+  let currentGridUpper = params.gridUpper;
+
+  const findOpen = (level, side) =>
+    orders.find(o =>
+      Math.abs(o.level - level) < 1e-6 && o.side === side && o.status === 'open');
+
+  function unrealizedPnl(price) {
+    if (Math.abs(inventory) < 1e-12) return 0;
+    const avg = inventoryCost / inventory;
+    return inventory * (price - avg);
+  }
+
+  snapshots.push({
+    price: prices[0],
+    orders: orders.map(o => ({...o, newThisTick: false})),
+    inventory, realizedPnl, sellFills, buyFills, roundTrips,
+    upnl: 0, avgEntry: null, volumeUsd: 0,
+    resetCount: 0, anchor: currentAnchor,
+    gridLower: currentGridLower, gridUpper: currentGridUpper,
+    newOrderIds: [], fillsThisTick: [], resetThisTick: false,
+  });
+
+  for (let t=1; t<N; t++) {
+    const pPrev = prices[t-1];
+    const pNow = prices[t];
+    const newOrderIds = [];
+    const fillsThisTick = [];
+
+    const lo = Math.min(pPrev, pNow);
+    const hi = Math.max(pPrev, pNow);
+    const direction = pNow > pPrev ? 'up' : (pNow < pPrev ? 'down' : 'flat');
+
+    const candidates = orders.filter(o => o.status === 'open' &&
+      o.level >= lo - 1e-6 && o.level <= hi + 1e-6 &&
+      ((o.side === 'sell' && direction === 'up') ||
+       (o.side === 'buy' && direction === 'down'))
+    );
+    candidates.sort((a,b) => Math.abs(a.level - pPrev) - Math.abs(b.level - pPrev));
+
+    for (const ord of candidates) {
+      ord.status = 'filled';
+      ord.filledAtTick = t;
+      ord.fillPrice = ord.level;
+      fillsThisTick.push(ord);
+
+      const q = params.qtyPerGrid;
+      const tradeQty = ord.side === 'buy' ? q : -q;
+      const newInventory = inventory + tradeQty;
+
+      // Realize PnL if this is a paired (take-profit) order closing
+      if (ord.pairedFrom != null) {
+        realizedPnl += params.spacing * q;
+        roundTrips++;
+        events.push({
+          tick: t, type: 'profit',
+          msg: `Round-trip closed: <b>+$${(params.spacing * q).toFixed(4)}</b> at ${fmt(ord.level)}`
+        });
+      }
+
+      // Update cost basis for unrealized PnL
+      if (inventory === 0) {
+        inventoryCost = tradeQty * ord.level;
+      } else if (Math.sign(tradeQty) === Math.sign(inventory)) {
+        // adding to position
+        inventoryCost += tradeQty * ord.level;
+      } else {
+        // reducing or flipping
+        if (Math.abs(tradeQty) <= Math.abs(inventory)) {
+          const closeFrac = Math.abs(tradeQty) / Math.abs(inventory);
+          inventoryCost -= inventoryCost * closeFrac;
+        } else {
+          const remainder = newInventory;
+          inventoryCost = remainder * ord.level;
+        }
+      }
+      inventory = newInventory;
+      if (Math.abs(inventory) < 1e-10) { inventory = 0; inventoryCost = 0; }
+
+      if (ord.side === 'sell') sellFills++; else buyFills++;
+      volumeUsd += q * ord.level;
+
+      events.push({
+        tick: t, type: 'fill', side: ord.side,
+        msg: `<b>${ord.side.toUpperCase()}</b> filled @ ${fmt(ord.level)} (qty ${q.toFixed(6)})`,
+      });
+
+      // Re-arm
+      const newLevel = ord.side === 'sell' ? ord.level - params.spacing : ord.level + params.spacing;
+      const newSide = ord.side === 'sell' ? 'buy' : 'sell';
+      const conflict = findOpen(newLevel, newSide);
+      const inRange = newLevel >= currentGridLower - 1e-6 && newLevel <= currentGridUpper + 1e-6;
+
+      if (!conflict && inRange) {
+        const newOrd = {
+          id: 'o' + (nextId++),
+          level: newLevel, side: newSide,
+          status: 'open', origin: 'rearm',
+          pairedFrom: ord.id,
+          fillPrice: null, filledAtTick: null,
+          placedAtTick: t,
+        };
+        orders.push(newOrd);
+        newOrderIds.push(newOrd.id);
+        events.push({
+          tick: t, type: 'rearm',
+          msg: `Re-arm: placed ${newSide.toUpperCase()} @ ${fmt(newLevel)} (paired w/ ${fmt(ord.level)})`,
+        });
+      } else if (!inRange) {
+        events.push({
+          tick: t, type: 'warn',
+          msg: `Re-arm skipped: ${fmt(newLevel)} outside grid bounds`,
+        });
+      }
+    }
+
+    // ============================================================
+    // GRID RESET: if enabled and price has crossed outside the
+    // current grid bounds, re-anchor the grid around the breach
+    // rung and redeploy a fresh symmetric ladder.
+    // ============================================================
+    let resetThisTick = false;
+    if (cfg.gridReset && (pNow > currentGridUpper + 1e-6 || pNow < currentGridLower - 1e-6)) {
+      const breachUp = pNow > currentGridUpper;
+      // The new anchor is the rung that was breached (the outermost rung on the breach side)
+      const newAnchor = breachUp ? currentGridUpper : currentGridLower;
+      resetCount++;
+      resetThisTick = true;
+
+      events.push({
+        tick: t, type: 'reset',
+        msg: `Grid RESET: price ${fmt(pNow)} breached ${breachUp ? 'upper' : 'lower'} bound. New anchor = ${fmt(newAnchor)}`,
+      });
+
+      // Cancel all open orders (inventory is preserved)
+      const cancelledCount = orders.filter(o => o.status === 'open').length;
+      orders.forEach(o => {
+        if (o.status === 'open') {
+          o.status = 'cancelled';
+          o.cancelledAtTick = t;
+        }
+      });
+      if (cancelledCount > 0) {
+        events.push({
+          tick: t, type: 'warn',
+          msg: `Cancelled ${cancelledCount} open orders on reset`,
+        });
+      }
+
+      // Place a fresh grid around the new anchor
+      const halfCount = cfg.gridNum / 2;
+      currentAnchor = newAnchor;
+      currentGridLower = newAnchor - halfCount * params.spacing;
+      currentGridUpper = newAnchor + halfCount * params.spacing;
+
+      for (let i = 1; i <= halfCount; i++) {
+        const buyLevel = newAnchor - i * params.spacing;
+        const sellLevel = newAnchor + i * params.spacing;
+        const newBuy = {
+          id: 'o' + (nextId++), level: buyLevel, side: 'buy',
+          status: 'open', origin: 'reset', pairedFrom: null,
+          fillPrice: null, filledAtTick: null, placedAtTick: t,
+        };
+        const newSell = {
+          id: 'o' + (nextId++), level: sellLevel, side: 'sell',
+          status: 'open', origin: 'reset', pairedFrom: null,
+          fillPrice: null, filledAtTick: null, placedAtTick: t,
+        };
+        orders.push(newBuy, newSell);
+        newOrderIds.push(newBuy.id, newSell.id);
+      }
+
+      events.push({
+        tick: t, type: 'rearm',
+        msg: `Placed ${cfg.gridNum} fresh orders: ${halfCount} buys [${fmt(currentGridLower)}..${fmt(newAnchor - params.spacing)}], ${halfCount} sells [${fmt(newAnchor + params.spacing)}..${fmt(currentGridUpper)}]`,
+      });
+    }
+
+    const upnl = unrealizedPnl(pNow);
+    const avgE = Math.abs(inventory) > 1e-12 ? inventoryCost / inventory : null;
+
+    snapshots.push({
+      price: pNow,
+      orders: orders.map(o => ({...o, newThisTick: newOrderIds.includes(o.id)})),
+      inventory, realizedPnl, sellFills, buyFills, roundTrips,
+      upnl, avgEntry: avgE, volumeUsd,
+      resetCount, anchor: currentAnchor,
+      gridLower: currentGridLower, gridUpper: currentGridUpper,
+      newOrderIds,
+      fillsThisTick: fillsThisTick.map(f => ({...f})),
+      resetThisTick,
+    });
+  }
+
+  // Compute dynamic chart y-bounds: union of price range and all order levels seen
+  let yMin = Math.min(...prices);
+  let yMax = Math.max(...prices);
+  for (const o of orders) {
+    if (o.level < yMin) yMin = o.level;
+    if (o.level > yMax) yMax = o.level;
+  }
+  // Pad
+  const yPad = (yMax - yMin) * 0.08;
+  const dynamicPxMin = yMin - yPad;
+  const dynamicPxMax = yMax + yPad;
+
+  return { prices, snapshots, events, params, dynamicPxMin, dynamicPxMax };
+}
+
+function fmt(n) {
+  return n.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
+}
+function fmt2(n) {
+  return n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+const W = 800, H = 480;
+const PAD_L = 64, PAD_R = 76, PAD_T = 16, PAD_B = 28;
+const CW = W - PAD_L - PAD_R;
+const CH = H - PAD_T - PAD_B;
+
+let currentScenario = 'rally-pullback';
+let sim;
+let currentTick = 0;
+
+function xOf(tick) { return PAD_L + (tick / TOTAL_TICKS) * CW; }
+function yOf(price) {
+  const f = (price - sim.dynamicPxMin) / (sim.dynamicPxMax - sim.dynamicPxMin);
+  return PAD_T + (1 - f) * CH;
+}
+
+function recompute() {
+  sim = simulate(currentScenario, CFG);
+  if (currentTick > TOTAL_TICKS) currentTick = TOTAL_TICKS;
+}
+
+function render() {
+  const svg = document.getElementById('chart');
+  const snap = sim.snapshots[currentTick];
+  const params = sim.params;
+  let html = '';
+
+  // Time axis — show timestamps from CSV when in custom mode, else tick labels
+  const useCsvTime = currentScenario === 'custom' && CUSTOM_DATA && CUSTOM_DATA.times;
+  for (let t=0; t<=TOTAL_TICKS; t+=40) {
+    const x = xOf(t);
+    html += `<line x1="${x}" y1="${H-PAD_B}" x2="${x}" y2="${H-PAD_B+4}" stroke="var(--text-faint)" stroke-width="1"/>`;
+    let label = `t${t}`;
+    if (useCsvTime) {
+      // Map tick t -> CSV row index proportionally
+      const idx = Math.round((t / TOTAL_TICKS) * (CUSTOM_DATA.times.length - 1));
+      const raw = CUSTOM_DATA.times[idx] || '';
+      // Show MM-DD HH:MM compactly
+      const m = raw.match(/(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+      label = m ? `${m[1]}/${m[2]} ${m[3]}:${m[4]}` : `t${t}`;
+    }
+    html += `<text class="axis-label" x="${x}" y="${H-PAD_B+16}" text-anchor="middle">${label}</text>`;
+  }
+
+  // Anchor + bounds (use snapshot values so they shift on reset)
+  const liveAnchor = snap.anchor;
+  const liveLower = snap.gridLower;
+  const liveUpper = snap.gridUpper;
+  const yAnchor = yOf(liveAnchor);
+  html += `<line x1="${PAD_L}" y1="${yAnchor}" x2="${W-PAD_R}" y2="${yAnchor}" stroke="var(--accent)" stroke-width="0.5" stroke-dasharray="1 6" opacity="0.5"/>`;
+  html += `<text class="axis-label" x="${PAD_L-8}" y="${yAnchor+3}" text-anchor="end" style="fill:var(--accent); opacity:0.7;">${fmt(liveAnchor)}</text>`;
+
+  const yLower = yOf(liveLower);
+  const yUpper = yOf(liveUpper);
+  html += `<line x1="${PAD_L}" y1="${yLower}" x2="${W-PAD_R}" y2="${yLower}" stroke="var(--text-faint)" stroke-width="1" stroke-dasharray="4 4" opacity="0.5"/>`;
+  html += `<line x1="${PAD_L}" y1="${yUpper}" x2="${W-PAD_R}" y2="${yUpper}" stroke="var(--text-faint)" stroke-width="1" stroke-dasharray="4 4" opacity="0.5"/>`;
+  html += `<text class="axis-label" x="${PAD_L-8}" y="${yLower+3}" text-anchor="end">${fmt(liveLower)}</text>`;
+  html += `<text class="axis-label" x="${PAD_L-8}" y="${yUpper+3}" text-anchor="end">${fmt(liveUpper)}</text>`;
+
+  const ordersToShow = snap.orders.filter(o => o.placedAtTick <= currentTick);
+
+  // Reset event markers (vertical lines at ticks where resets happened, up to currentTick)
+  for (let tt = 1; tt <= currentTick; tt++) {
+    if (sim.snapshots[tt].resetThisTick) {
+      const x = xOf(tt);
+      html += `<line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H-PAD_B}" stroke="var(--accent)" stroke-width="1" stroke-dasharray="2 3" opacity="0.35"/>`;
+      html += `<text x="${x}" y="${PAD_T+10}" text-anchor="middle" style="font-size:8.5px; fill:var(--accent); opacity:0.65; letter-spacing:0.1em;">RESET</text>`;
+    }
+  }
+
+  // Filled orders first (background)
+  for (const o of ordersToShow.filter(o => o.status === 'filled' && o.filledAtTick <= currentTick)) {
+    const y = yOf(o.level);
+    const xStart = xOf(o.placedAtTick);
+    const xEnd = xOf(o.filledAtTick);
+    html += `<line class="order-line filled" x1="${xStart}" y1="${y}" x2="${xEnd}" y2="${y}"/>`;
+    html += `<circle cx="${xEnd}" cy="${y}" r="4" class="fill-marker ${o.side}"/>`;
+    html += `<circle cx="${xEnd}" cy="${y}" r="1.5" fill="var(--${o.side})"/>`;
+  }
+
+  // Cancelled orders (from grid resets) — dim ghost line up to cancel point
+  for (const o of ordersToShow.filter(o => o.status === 'cancelled' && o.cancelledAtTick <= currentTick)) {
+    const y = yOf(o.level);
+    const xStart = xOf(o.placedAtTick);
+    const xEnd = xOf(o.cancelledAtTick);
+    html += `<line x1="${xStart}" y1="${y}" x2="${xEnd}" y2="${y}" stroke="var(--text-faint)" stroke-width="1" stroke-dasharray="1 4" opacity="0.35"/>`;
+  }
+
+  // Live orders
+  const liveOrders = ordersToShow.filter(o =>
+    o.status === 'open' || (o.status === 'filled' && o.filledAtTick > currentTick));
+
+  for (const o of liveOrders) {
+    const y = yOf(o.level);
+    const xStart = xOf(o.placedAtTick);
+    const xEnd = xOf(currentTick);
+    let cls = o.side;
+    if (o.newThisTick && currentTick === o.placedAtTick && o.origin === 'rearm') cls = 'new';
+    html += `<line class="order-line ${cls}" x1="${xStart}" y1="${y}" x2="${xEnd}" y2="${y}"/>`;
+  }
+
+  // Labels — thin out at high gridNum to prevent overlap
+  const labelStep = CFG.gridNum <= 10 ? 1 :
+                    CFG.gridNum <= 20 ? 2 :
+                    CFG.gridNum <= 40 ? 3 :
+                    CFG.gridNum <= 60 ? 5 :
+                    Math.ceil(CFG.gridNum / 14);
+  const sortedForLabels = [...liveOrders].sort((a,b) => b.level - a.level);
+  for (let i = 0; i < sortedForLabels.length; i++) {
+    if (i % labelStep !== 0) continue;
+    const o = sortedForLabels[i];
+    const y = yOf(o.level);
+    const labelCls = o.origin === 'rearm' ? 'new' : o.side;
+    const tag = o.side === 'buy' ? 'B' : 'S';
+    html += `<text class="order-label ${labelCls}" x="${W-PAD_R+4}" y="${y+3}">${tag} ${fmt(o.level)}</text>`;
+  }
+
+  // Price paths
+  let pathD = '';
+  for (let t=0; t<=currentTick; t++) {
+    const x = xOf(t);
+    const y = yOf(sim.prices[t]);
+    pathD += (t === 0 ? 'M' : 'L') + x + ',' + y + ' ';
+  }
+  html += `<path class="price-path" d="${pathD}"/>`;
+
+  let futD = '';
+  for (let t=currentTick; t<=TOTAL_TICKS; t++) {
+    const x = xOf(t);
+    const y = yOf(sim.prices[t]);
+    futD += (t === currentTick ? 'M' : 'L') + x + ',' + y + ' ';
+  }
+  html += `<path class="price-path-future" d="${futD}"/>`;
+
+  const px = sim.prices[currentTick];
+  html += `<circle class="price-dot" cx="${xOf(currentTick)}" cy="${yOf(px)}" r="5"/>`;
+
+  svg.innerHTML = html;
+
+  // Header readouts
+  let tickLabel = String(currentTick).padStart(3, '0');
+  let tickPrefix = 'tick';
+  if (currentScenario === 'custom' && CUSTOM_DATA && CUSTOM_DATA.times) {
+    const idx = Math.round((currentTick / TOTAL_TICKS) * (CUSTOM_DATA.times.length - 1));
+    const raw = CUSTOM_DATA.times[idx] || '';
+    const m = raw.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (m) { tickLabel = `${m[2]}/${m[3]} ${m[4]}:${m[5]}`; tickPrefix = 'time'; }
+  }
+  document.getElementById('tick-label-prefix').textContent = tickPrefix;
+  document.getElementById('tick-readout').textContent = tickLabel;
+  document.getElementById('tick-display').textContent = String(currentTick).padStart(3, '0') + ' / ' + TOTAL_TICKS;
+  document.getElementById('px-readout').textContent = fmt(px);
+
+  // Stats
+  const invEl = document.getElementById('s-inv');
+  const invSign = snap.inventory >= 0 ? '+' : '';
+  invEl.textContent = invSign + snap.inventory.toFixed(6) + ' BTC';
+  invEl.className = 'v ' + (snap.inventory > 0 ? 'pos' : snap.inventory < 0 ? 'neg' : '');
+
+  document.getElementById('s-avg').textContent =
+    snap.avgEntry == null ? '—' : fmt2(snap.avgEntry);
+
+  const pnlEl = document.getElementById('s-pnl');
+  pnlEl.textContent = '$' + fmt2(snap.realizedPnl);
+  pnlEl.className = 'v ' + (snap.realizedPnl > 0 ? 'pos' : '');
+
+  const upnlEl = document.getElementById('s-upnl');
+  upnlEl.textContent = (snap.upnl >= 0 ? '$' : '-$') + fmt2(Math.abs(snap.upnl));
+  upnlEl.className = 'v ' + (snap.upnl > 0.005 ? 'pos' : snap.upnl < -0.005 ? 'neg' : '');
+
+  const total = snap.realizedPnl + snap.upnl;
+  const totalEl = document.getElementById('s-total');
+  totalEl.textContent = (total >= 0 ? '$' : '-$') + fmt2(Math.abs(total));
+  totalEl.className = 'v ' + (total > 0.005 ? 'pos' : total < -0.005 ? 'neg' : '');
+
+  document.getElementById('s-sells').textContent = snap.sellFills;
+  document.getElementById('s-buys').textContent = snap.buyFills;
+  document.getElementById('s-rt').textContent = snap.roundTrips;
+  document.getElementById('s-resets').textContent = snap.resetCount;
+  document.getElementById('s-active').textContent = snap.orders.filter(o =>
+    o.status === 'open' && o.placedAtTick <= currentTick).length;
+
+  // Volume
+  const volEl = document.getElementById('s-vol');
+  if (snap.volumeUsd >= 10000) {
+    volEl.textContent = '$' + (snap.volumeUsd / 1000).toFixed(2) + 'k';
+  } else {
+    volEl.textContent = '$' + fmt2(snap.volumeUsd);
+  }
+
+  // Liquidation prices — computed from current inventory's avg entry + leverage
+  // Cross margin: liq ≈ entry × (1 ∓ 1/leverage + mm_rate)
+  // We compute and display the relevant side based on inventory sign.
+  // When flat, neither applies. We still show "Est. Liq Long/Short" rows for clarity,
+  // showing the actual one in colour and dimming the inapplicable one.
+  const liqLongEl = document.getElementById('s-liq-long');
+  const liqShortEl = document.getElementById('s-liq-short');
+
+  if (snap.avgEntry == null || snap.inventory === 0) {
+    liqLongEl.textContent = '—';
+    liqShortEl.textContent = '—';
+    liqLongEl.className = 'v';
+    liqShortEl.className = 'v';
+  } else {
+    const entry = snap.avgEntry;
+    const lev = CFG.leverage;
+    // Long liq: price drops until margin gone
+    const liqLong = entry * (1 - 1/lev + MM_RATE);
+    // Short liq: price rises until margin gone
+    const liqShort = entry * (1 + 1/lev - MM_RATE);
+
+    if (snap.inventory > 0) {
+      // Long position — long liq is the active one
+      liqLongEl.textContent = '$' + fmt2(liqLong);
+      liqLongEl.className = 'v neg';
+      liqShortEl.textContent = '—';
+      liqShortEl.className = 'v';
+    } else {
+      // Short position — short liq is the active one
+      liqShortEl.textContent = '$' + fmt2(liqShort);
+      liqShortEl.className = 'v neg';
+      liqLongEl.textContent = '—';
+      liqLongEl.className = 'v';
+    }
+  }
+
+  // Order book
+  const ob = document.getElementById('orderbook');
+  const sorted = [...snap.orders]
+    .filter(o => o.placedAtTick <= currentTick && o.status !== 'cancelled')
+    .sort((a,b) => b.level - a.level);
+  ob.innerHTML = sorted.map(o => {
+    const filled = o.status === 'filled' && o.filledAtTick <= currentTick;
+    const newest = o.newThisTick && currentTick === o.placedAtTick;
+    let cls = o.side;
+    if (filled) cls += ' filled';
+    if (newest && !filled) cls += ' new';
+    const tag = o.origin === 'rearm' ? 'paired' : 'initial';
+    return `<div class="order-row ${cls}">
+      <span class="order-side">${o.side}</span>
+      <span class="order-px">${fmt(o.level)}</span>
+      <span class="order-tag">${filled ? 'FILLED' : tag}</span>
+    </div>`;
+  }).join('');
+
+  // Event log — cap to most recent 150 to keep DOM cheap at high gridNum
+  const log = document.getElementById('eventlog');
+  const eventsUpTo = sim.events.filter(e => e.tick <= currentTick);
+  log.innerHTML = eventsUpTo.slice().reverse().slice(0, 150).map(e =>
+    `<div class="event ${e.type} ${e.side || ''}">
+      <span class="t">t${String(e.tick).padStart(3,'0')}</span>
+      <span class="msg">${e.msg}</span>
+    </div>`
+  ).join('') || '<div class="event"><span class="msg" style="color:var(--text-faint)">no events yet</span></div>';
+}
+
+// ============================================================
+// CONFIG UI
+// ============================================================
+function updateConfigDisplay() {
+  const half = CFG.gridNum / 2;
+  document.getElementById('val-gridnum').innerHTML =
+    `${CFG.gridNum} <span class="sub">/ ${half}B ${half}S</span>`;
+  document.getElementById('val-band').innerHTML =
+    `${CFG.bandPct.toFixed(1)}% <span class="sub">±</span>`;
+  document.getElementById('val-investment').innerHTML =
+    `$${CFG.investmentUsd} <span class="sub">USDC</span>`;
+  document.getElementById('val-leverage').innerHTML =
+    `${CFG.leverage}× <span class="sub">cross</span>`;
+  document.getElementById('val-gridreset').textContent =
+    CFG.gridReset ? 'slides on breach' : 'anchor fixed';
+  const params = deriveParams(CFG);
+  document.getElementById('meta-anchor').textContent = fmt(ANCHOR);
+  document.getElementById('meta-notional').textContent =
+    '$' + (CFG.investmentUsd * CFG.leverage).toLocaleString('en-US');
+  document.getElementById('meta-spacing').textContent =
+    `${params.spacing.toFixed(params.spacing < 10 ? 2 : 0)} / ${(params.spacing/ANCHOR*100).toFixed(3)}%`;
+  document.getElementById('meta-qty').textContent =
+    `${params.qtyPerGrid.toFixed(6)} BTC`;
+}
+
+document.getElementById('cfg-gridnum').addEventListener('input', e => {
+  CFG.gridNum = parseInt(e.target.value);
+  updateConfigDisplay();
+  recompute();
+  render();
+});
+document.getElementById('cfg-band').addEventListener('input', e => {
+  CFG.bandPct = parseFloat(e.target.value);
+  updateConfigDisplay();
+  recompute();
+  render();
+});
+document.getElementById('cfg-investment').addEventListener('input', e => {
+  CFG.investmentUsd = parseInt(e.target.value);
+  updateConfigDisplay();
+  recompute();
+  render();
+});
+document.getElementById('cfg-leverage').addEventListener('input', e => {
+  CFG.leverage = parseInt(e.target.value);
+  updateConfigDisplay();
+  recompute();
+  render();
+});
+
+// Grid Reset toggle
+document.querySelectorAll('#cfg-gridreset .toggle-opt').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#cfg-gridreset .toggle-opt').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    CFG.gridReset = btn.dataset.val === '1';
+    updateConfigDisplay();
+    recompute();
+    render();
+  });
+});
+
+// ============================================================
+// PLAYBACK
+// ============================================================
+const slider = document.getElementById('slider');
+slider.max = TOTAL_TICKS;
+slider.addEventListener('input', e => {
+  currentTick = parseInt(e.target.value);
+  render();
+});
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  currentTick = 0; slider.value = 0; render();
+});
+document.getElementById('btn-step-fwd').addEventListener('click', () => {
+  if (currentTick < TOTAL_TICKS) { currentTick++; slider.value = currentTick; render(); }
+});
+document.getElementById('btn-step-back').addEventListener('click', () => {
+  if (currentTick > 0) { currentTick--; slider.value = currentTick; render(); }
+});
+
+let playing = false;
+let playInterval = null;
+const playBtn = document.getElementById('btn-play');
+playBtn.addEventListener('click', () => {
+  if (playing) {
+    clearInterval(playInterval);
+    playBtn.textContent = 'Play ▶';
+    playing = false;
+  } else {
+    playBtn.textContent = 'Pause ❚❚';
+    playing = true;
+    playInterval = setInterval(() => {
+      if (currentTick >= TOTAL_TICKS) {
+        clearInterval(playInterval);
+        playBtn.textContent = 'Play ▶';
+        playing = false;
+        return;
+      }
+      currentTick++;
+      slider.value = currentTick;
+      render();
+    }, 60);
+  }
+});
+
+document.querySelectorAll('[data-scenario]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-scenario]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentScenario = btn.dataset.scenario;
+    recompute();
+    currentTick = 0;
+    slider.value = 0;
+    if (playing) {
+      clearInterval(playInterval);
+      playBtn.textContent = 'Play ▶';
+      playing = false;
+    }
+    render();
+  });
+});
+
+// ============================================================
+// CSV LOADER
+// ============================================================
+function parseCsv(text) {
+  // Simple CSV parser tailored to "time,close" format with optional
+  // tolerance for extra columns. Returns { prices, times, name } or throws.
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (lines.length < 2) throw new Error('CSV has fewer than 2 rows');
+
+  // Header detection
+  const headerCells = lines[0].split(',').map(c => c.trim().toLowerCase());
+  const timeIdx = headerCells.indexOf('time');
+  let closeIdx = headerCells.indexOf('close');
+  if (closeIdx < 0) closeIdx = headerCells.indexOf('price');
+  if (closeIdx < 0) {
+    // No header at all? Try assuming 0=time, 1=close
+    if (!isNaN(parseFloat(headerCells[1]))) {
+      return parseCsvNoHeader(lines);
+    }
+    throw new Error('CSV must have a "close" column (or "price")');
+  }
+  if (timeIdx < 0) throw new Error('CSV must have a "time" column');
+
+  const prices = [];
+  const times = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cells = lines[i].split(',');
+    if (cells.length <= Math.max(timeIdx, closeIdx)) continue;
+    const t = cells[timeIdx].trim();
+    const p = parseFloat(cells[closeIdx]);
+    if (!isFinite(p) || p <= 0) continue;
+    times.push(t);
+    prices.push(p);
+  }
+  if (prices.length < 2) throw new Error('CSV contains fewer than 2 valid rows');
+  return { prices, times };
+}
+
+function parseCsvNoHeader(lines) {
+  const prices = [], times = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cells = lines[i].split(',');
+    if (cells.length < 2) continue;
+    const p = parseFloat(cells[1]);
+    if (!isFinite(p) || p <= 0) continue;
+    times.push(cells[0].trim());
+    prices.push(p);
+  }
+  if (prices.length < 2) throw new Error('CSV contains fewer than 2 valid rows');
+  return { prices, times };
+}
+
+function formatTimeRange(times) {
+  if (!times || times.length < 2) return '';
+  // Strip the timezone offset for compactness, keep date + HH:MM
+  const fmt = (s) => s.replace(/T/, ' ').replace(/(\+|-)\d{2}:\d{2}$/, '').slice(0, 16);
+  return `${fmt(times[0])} → ${fmt(times[times.length-1])}`;
+}
+
+const csvInput = document.getElementById('csv-input');
+const csvLoadBtn = document.getElementById('csv-load-btn');
+const csvClearBtn = document.getElementById('csv-clear-btn');
+const csvStatus = document.getElementById('csv-status');
+const customScenarioBtn = document.getElementById('btn-scenario-custom');
+
+csvLoadBtn.addEventListener('click', () => csvInput.click());
+
+csvInput.addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const text = ev.target.result;
+      const parsed = parseCsv(text);
+      CUSTOM_DATA = { ...parsed, name: file.name };
+
+      // Set anchor to first close — this is the bot's deploy-time mark
+      ANCHOR = parsed.prices[0];
+
+      // Update status UI
+      const range = `${parsed.prices.length} rows · ${formatTimeRange(parsed.times)} · ${parsed.prices.length} closes (${Math.min(...parsed.prices).toFixed(0)}–${Math.max(...parsed.prices).toFixed(0)})`;
+      csvStatus.textContent = `${file.name} — ${range}`;
+      csvStatus.className = 'csv-status active';
+      csvLoadBtn.classList.add('loaded');
+      csvLoadBtn.textContent = 'Replace';
+      csvClearBtn.style.display = '';
+      customScenarioBtn.style.display = '';
+
+      // Auto-switch to the custom scenario
+      document.querySelectorAll('[data-scenario]').forEach(b => b.classList.remove('active'));
+      customScenarioBtn.classList.add('active');
+      currentScenario = 'custom';
+
+      // Reset playback
+      currentTick = 0;
+      slider.value = 0;
+      if (playing) {
+        clearInterval(playInterval);
+        playBtn.textContent = 'Play ▶';
+        playing = false;
+      }
+
+      // Rebuild everything around the new anchor
+      updateConfigDisplay();
+      recompute();
+      render();
+    } catch (err) {
+      csvStatus.textContent = `Error: ${err.message}`;
+      csvStatus.className = 'csv-status error';
+      console.error(err);
+    }
+  };
+  reader.onerror = () => {
+    csvStatus.textContent = 'Error: could not read file';
+    csvStatus.className = 'csv-status error';
+  };
+  reader.readAsText(file);
+  // Allow re-loading the same file later
+  csvInput.value = '';
+});
+
+csvClearBtn.addEventListener('click', () => {
+  CUSTOM_DATA = null;
+  ANCHOR = 80000;
+  csvStatus.textContent = 'no file — using synthetic scenarios';
+  csvStatus.className = 'csv-status';
+  csvLoadBtn.classList.remove('loaded');
+  csvLoadBtn.textContent = 'Load CSV';
+  csvClearBtn.style.display = 'none';
+  customScenarioBtn.style.display = 'none';
+
+  // Fall back to default scenario
+  if (currentScenario === 'custom') {
+    document.querySelectorAll('[data-scenario]').forEach(b => b.classList.remove('active'));
+    const fallback = document.querySelector('[data-scenario="rally-pullback"]');
+    fallback.classList.add('active');
+    currentScenario = 'rally-pullback';
+  }
+
+  currentTick = 0;
+  slider.value = 0;
+  updateConfigDisplay();
+  recompute();
+  render();
+});
+
+// Boot
+updateConfigDisplay();
+recompute();
+render();
+</script>
+</body>
+</html>

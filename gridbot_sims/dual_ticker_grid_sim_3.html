@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dual Ticker Grid Bot Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e0d;
+    --bg-2: #11161a;
+    --panel: #141a1f;
+    --grid-line: #1f2830;
+    --text: #d4d8d2;
+    --text-dim: #9aa1a6;
+    --text-faint: #5a6168;
+    --long: #4ade80;
+    --short: #f87171;
+    --price: #fbbf24;
+    --new: #67e8f9;
+    --accent: #fbbf24;
+    --ticker-a: #67e8f9;
+    --ticker-b: #c084fc;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg); color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; min-height: 100vh; overflow-x: hidden;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0;
+    background:
+      radial-gradient(ellipse at top, rgba(251,191,36,0.04), transparent 60%),
+      repeating-linear-gradient(0deg, transparent, transparent 2px,
+        rgba(255,255,255,0.008) 2px, rgba(255,255,255,0.008) 3px);
+    pointer-events: none; z-index: 0;
+  }
+  .wrap {
+    position: relative; z-index: 1;
+    max-width: 1500px; margin: 0 auto; padding: 32px 24px;
+  }
+  header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    padding-bottom: 20px; margin-bottom: 24px;
+    border-bottom: 1px solid var(--grid-line);
+  }
+  h1 {
+    font-family: 'Fraunces', serif; font-weight: 600;
+    font-size: 28px; letter-spacing: -0.02em; color: var(--text);
+  }
+  h1 .accent { color: var(--accent); font-style: italic; }
+  .subtitle {
+    font-size: 10px; color: var(--text-dim);
+    margin-top: 8px; letter-spacing: 0.05em;
+  }
+  .meta {
+    font-size: 11px; color: var(--text-dim);
+    text-align: right; line-height: 1.6;
+  }
+  .meta .label { color: var(--text-faint); }
+  .meta .a { color: var(--ticker-a); }
+  .meta .b { color: var(--ticker-b); }
+
+  .config-panel {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    padding: 16px 20px; margin-bottom: 16px;
+  }
+  .config-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 14px 24px;
+  }
+  @media (max-width: 1100px) { .config-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .config-grid { grid-template-columns: 1fr; } }
+  .config-section-label {
+    font-size: 9px; text-transform: uppercase;
+    letter-spacing: 0.18em; color: var(--text-faint);
+    margin-bottom: 8px; padding-bottom: 6px;
+    border-bottom: 1px dashed var(--grid-line);
+  }
+  .config-section + .config-section { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--grid-line); }
+  .cfg-row { display: flex; align-items: center; gap: 10px; }
+  .cfg-row label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--text-dim); min-width: 84px;
+  }
+  .cfg-row input[type="range"] { flex: 1; min-width: 0; }
+  .cfg-row .val {
+    font-variant-numeric: tabular-nums; color: var(--text);
+    min-width: 92px; font-size: 11.5px; text-align: right;
+  }
+  .cfg-row .val .sub { color: var(--text-faint); font-size: 10px; }
+
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    height: 4px; background: var(--grid-line); outline: none; cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; background: var(--accent);
+    cursor: pointer; border-radius: 0;
+    box-shadow: 0 0 8px rgba(251,191,36,0.4);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; background: var(--accent);
+    cursor: pointer; border: none; border-radius: 0;
+  }
+
+  /* Layout: chart wide on top, then 3 stat panels in a row */
+  .chart-panel {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    padding: 20px; position: relative; margin-bottom: 16px;
+  }
+  .chart-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 12px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--grid-line);
+  }
+  .chart-title {
+    font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.15em; color: var(--text-dim);
+  }
+  .chart-readout { font-size: 11px; color: var(--text-dim); }
+  .chart-readout .px { color: var(--price); font-weight: 500; }
+  svg.chart { width: 100%; height: 440px; display: block; }
+
+  .controls {
+    margin-top: 16px; padding-top: 16px;
+    border-top: 1px solid var(--grid-line);
+  }
+  .slider-row {
+    display: flex; align-items: center; gap: 16px; margin-bottom: 12px;
+  }
+  .slider-row label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;
+    color: var(--text-dim); min-width: 60px;
+  }
+  .slider-row input[type="range"] { flex: 1; }
+  .tick-display {
+    font-variant-numeric: tabular-nums; color: var(--text);
+    min-width: 90px; text-align: right; font-size: 12px;
+  }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button {
+    background: transparent; border: 1px solid var(--grid-line);
+    color: var(--text-dim); font-family: inherit;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    padding: 6px 12px; cursor: pointer; transition: all 0.15s ease;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.active {
+    border-color: var(--accent); color: var(--accent);
+    background: rgba(251,191,36,0.06);
+  }
+
+  .panels-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 1000px) { .panels-row { grid-template-columns: 1fr; } }
+
+  .ticker-panel {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    padding: 18px; border-top-width: 2px;
+  }
+  .ticker-panel.a { border-top-color: var(--ticker-a); }
+  .ticker-panel.b { border-top-color: var(--ticker-b); }
+  .ticker-panel.combined { border-top-color: var(--accent); }
+
+  .ticker-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 14px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--grid-line);
+  }
+  .ticker-name {
+    font-family: 'Fraunces', serif; font-style: italic;
+    font-size: 18px; letter-spacing: -0.01em;
+  }
+  .ticker-panel.a .ticker-name { color: var(--ticker-a); }
+  .ticker-panel.b .ticker-name { color: var(--ticker-b); }
+  .ticker-panel.combined .ticker-name { color: var(--accent); }
+  .ticker-tag {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em;
+    padding: 2px 8px; border: 1px solid;
+  }
+  .ticker-tag.long { color: var(--long); border-color: var(--long); }
+  .ticker-tag.short { color: var(--short); border-color: var(--short); }
+  .ticker-tag.combined { color: var(--accent); border-color: var(--accent); }
+
+  /* Initials-off state: dim the side tags on A/B */
+  .ticker-tag.disabled-initial {
+    opacity: 0.35;
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+
+  /* Combined header right-side cluster */
+  .combined-head-right {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .initials-btn {
+    background: transparent;
+    border: 1px solid var(--grid-line);
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+  .initials-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .initials-btn.off {
+    border-color: var(--short);
+    color: var(--short);
+    background: rgba(248,113,113,0.06);
+  }
+  .initials-btn.off:hover {
+    border-color: var(--short);
+    color: var(--short);
+  }
+
+  .stat-row {
+    display: flex; justify-content: space-between;
+    padding: 4px 0; font-size: 11px;
+  }
+  .stat-row .k { color: var(--text-faint); }
+  .stat-row .v { color: var(--text); font-variant-numeric: tabular-nums; }
+  .stat-row .v.pos { color: var(--long); }
+  .stat-row .v.neg { color: var(--short); }
+  .stat-row.divider {
+    border-top: 1px dashed var(--grid-line);
+    margin-top: 4px; padding-top: 8px;
+  }
+  .stat-row.highlight {
+    background: rgba(251,191,36,0.04);
+    margin: 4px -8px 0;
+    padding: 8px 8px;
+    border-top: 1px solid rgba(251,191,36,0.2);
+  }
+
+  .footnote {
+    margin-top: 24px; font-size: 10.5px;
+    color: var(--text-faint); line-height: 1.7; max-width: 900px;
+  }
+  .footnote em {
+    color: var(--text-dim); font-style: normal; font-family: 'Fraunces', serif;
+  }
+
+  /* SVG */
+  .grid-line-h { stroke: var(--grid-line); stroke-width: 1; stroke-dasharray: 2 4; }
+  .entry-line {
+    stroke: var(--accent); stroke-width: 0.5;
+    stroke-dasharray: 1 5; opacity: 0.45;
+  }
+  .bound-line {
+    stroke: var(--text-faint); stroke-width: 1;
+    stroke-dasharray: 4 4; opacity: 0.5;
+  }
+  .grid-rung {
+    stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.55;
+  }
+  .grid-rung.buy { stroke: var(--long); }
+  .grid-rung.sell { stroke: var(--short); }
+  .price-path {
+    fill: none; stroke: var(--price); stroke-width: 1.5;
+    stroke-linejoin: round; stroke-linecap: round;
+  }
+  .price-path-future {
+    fill: none; stroke: var(--text-faint); stroke-width: 1;
+    stroke-dasharray: 2 3; opacity: 0.5;
+  }
+  .price-dot {
+    fill: var(--price); stroke: var(--bg); stroke-width: 2;
+    filter: drop-shadow(0 0 4px var(--price));
+  }
+  .fill-marker.buy { fill: var(--long); }
+  .fill-marker.sell { fill: var(--short); }
+  .axis-label {
+    font-size: 9.5px; fill: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .grid-label {
+    font-size: 9px; fill: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .grid-label.buy { fill: var(--long); }
+  .grid-label.sell { fill: var(--short); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Dual Ticker <span class="accent">Grid Bot Simulator</span></h1>
+      <div class="subtitle">
+        Two grid bots with shared settings on the same price path. Ticker A pre-loaded with long inventory, Ticker B with short.
+      </div>
+    </div>
+    <div class="meta">
+      <div><span class="label">ENTRY</span> &nbsp; <span style="color:var(--text)">$2,200.00</span></div>
+      <div id="meta-line-a"><span class="a">TICKER A</span> &nbsp; <span style="color:var(--long)">+$5,000 long</span></div>
+      <div id="meta-line-b"><span class="b">TICKER B</span> &nbsp; <span style="color:var(--short)">-$5,000 short</span></div>
+      <div><span class="label">QTY/TICKER</span> &nbsp; <span style="color:var(--text)" id="meta-initial-qty">2.27273</span></div>
+    </div>
+  </header>
+
+  <div class="config-panel">
+    <div class="config-section">
+      <div class="config-section-label">Initial Position (shared, opposite sides)</div>
+      <div class="config-grid">
+        <div class="cfg-row">
+          <label>Initial $</label>
+          <input type="range" id="cfg-initial" min="500" max="50000" step="500" value="5000">
+          <span class="val" id="val-initial">$5,000 <span class="sub">notional</span></span>
+        </div>
+        <div class="cfg-row">
+          <label>Volatility</label>
+          <input type="range" id="cfg-vol" min="0.5" max="10.0" step="0.5" value="3.0">
+          <span class="val" id="val-vol">3.0% <span class="sub">range</span></span>
+        </div>
+        <div class="cfg-row" style="visibility: hidden;"></div>
+      </div>
+    </div>
+    <div class="config-section">
+      <div class="config-section-label">Grid Bot Settings (shared)</div>
+      <div class="config-grid">
+        <div class="cfg-row">
+          <label>Grid invest $</label>
+          <input type="range" id="cfg-investment" min="100" max="10000" step="100" value="1000">
+          <span class="val" id="val-investment">$1,000 <span class="sub">USDC</span></span>
+        </div>
+        <div class="cfg-row">
+          <label>Leverage</label>
+          <input type="range" id="cfg-leverage" min="1" max="25" step="1" value="4">
+          <span class="val" id="val-leverage">4× <span class="sub">cross</span></span>
+        </div>
+        <div class="cfg-row">
+          <label>Grid count</label>
+          <input type="range" id="cfg-gridnum" min="4" max="60" step="2" value="8">
+          <span class="val" id="val-gridnum">8 <span class="sub">/ 4B 4S</span></span>
+        </div>
+        <div class="cfg-row">
+          <label>Band %</label>
+          <input type="range" id="cfg-band" min="0.5" max="10.0" step="0.1" value="2.0">
+          <span class="val" id="val-band">2.0% <span class="sub">±</span></span>
+        </div>
+        <div class="cfg-row" style="visibility: hidden;"></div>
+        <div class="cfg-row" style="visibility: hidden;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-panel">
+    <div class="chart-header">
+      <div class="chart-title">Price Action &times; Grid Levels &middot; <span id="tick-label-prefix">tick</span> <span id="tick-readout" style="color:var(--accent)">000</span></div>
+      <div class="chart-readout">mark <span class="px" id="px-readout">$2,200.00</span></div>
+    </div>
+    <svg class="chart" id="chart" viewBox="0 0 800 440" preserveAspectRatio="none"></svg>
+
+    <div class="controls">
+      <div class="slider-row">
+        <label>Time</label>
+        <input type="range" id="slider" min="0" max="200" value="0">
+        <div class="tick-display" id="tick-display">000 / 200</div>
+      </div>
+      <div class="btn-row">
+        <button id="btn-reset">Reset</button>
+        <button id="btn-play">Play ▶</button>
+        <button id="btn-step-back">◀ Step</button>
+        <button id="btn-step-fwd">Step ▶</button>
+        <span style="flex:1"></span>
+        <button class="active" data-scenario="rally">Rally</button>
+        <button data-scenario="dump">Dump</button>
+        <button data-scenario="oscillate">Oscillate</button>
+        <button data-scenario="chop">Chop</button>
+        <button data-scenario="rally-pullback">Rally → Pullback</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panels-row">
+    <div class="ticker-panel a">
+      <div class="ticker-head">
+        <div class="ticker-name">Ticker A</div>
+        <div class="ticker-tag long" id="a-tag">Started long</div>
+      </div>
+      <div class="stat-row"><span class="k">Net inventory</span><span class="v" id="a-inv">+2.27273</span></div>
+      <div class="stat-row"><span class="k">Avg entry</span><span class="v" id="a-entry">$2,200.00</span></div>
+      <div class="stat-row"><span class="k">Mark</span><span class="v" id="a-mark">$2,200.00</span></div>
+      <div class="stat-row divider"><span class="k">Realized PnL</span><span class="v" id="a-realized">$0.00</span></div>
+      <div class="stat-row"><span class="k">Unrealized PnL</span><span class="v" id="a-unrealized">$0.00</span></div>
+      <div class="stat-row highlight"><span class="k" style="color:var(--text-dim)">Total PnL</span><span class="v" id="a-total">$0.00</span></div>
+      <div class="stat-row" style="margin-top:6px;"><span class="k">Buy fills</span><span class="v" id="a-buys">0</span></div>
+      <div class="stat-row"><span class="k">Sell fills</span><span class="v" id="a-sells">0</span></div>
+      <div class="stat-row"><span class="k">Round-trips</span><span class="v" id="a-rt">0</span></div>
+      <div class="stat-row"><span class="k">Volume</span><span class="v" id="a-vol">$0.00</span></div>
+    </div>
+
+    <div class="ticker-panel b">
+      <div class="ticker-head">
+        <div class="ticker-name">Ticker B</div>
+        <div class="ticker-tag short" id="b-tag">Started short</div>
+      </div>
+      <div class="stat-row"><span class="k">Net inventory</span><span class="v" id="b-inv">-2.27273</span></div>
+      <div class="stat-row"><span class="k">Avg entry</span><span class="v" id="b-entry">$2,200.00</span></div>
+      <div class="stat-row"><span class="k">Mark</span><span class="v" id="b-mark">$2,200.00</span></div>
+      <div class="stat-row divider"><span class="k">Realized PnL</span><span class="v" id="b-realized">$0.00</span></div>
+      <div class="stat-row"><span class="k">Unrealized PnL</span><span class="v" id="b-unrealized">$0.00</span></div>
+      <div class="stat-row highlight"><span class="k" style="color:var(--text-dim)">Total PnL</span><span class="v" id="b-total">$0.00</span></div>
+      <div class="stat-row" style="margin-top:6px;"><span class="k">Buy fills</span><span class="v" id="b-buys">0</span></div>
+      <div class="stat-row"><span class="k">Sell fills</span><span class="v" id="b-sells">0</span></div>
+      <div class="stat-row"><span class="k">Round-trips</span><span class="v" id="b-rt">0</span></div>
+      <div class="stat-row"><span class="k">Volume</span><span class="v" id="b-vol">$0.00</span></div>
+    </div>
+
+    <div class="ticker-panel combined">
+      <div class="ticker-head">
+        <div class="ticker-name">Combined</div>
+        <div class="combined-head-right">
+          <button id="btn-initials-toggle" class="initials-btn">Turn off initials</button>
+          <div class="ticker-tag combined" id="combined-tag">A + B</div>
+        </div>
+      </div>
+      <div class="stat-row"><span class="k">Net inventory</span><span class="v" id="c-inv">0.00000</span></div>
+      <div class="stat-row" style="visibility:hidden;"><span class="k">.</span><span class="v">.</span></div>
+      <div class="stat-row" style="visibility:hidden;"><span class="k">.</span><span class="v">.</span></div>
+      <div class="stat-row divider"><span class="k">Realized PnL</span><span class="v" id="c-realized">$0.00</span></div>
+      <div class="stat-row"><span class="k">Unrealized PnL</span><span class="v" id="c-unrealized">$0.00</span></div>
+      <div class="stat-row highlight"><span class="k" style="color:var(--text-dim)">Total PnL</span><span class="v" id="c-total">$0.00</span></div>
+      <div class="stat-row" style="margin-top:6px;"><span class="k">Total buys</span><span class="v" id="c-buys">0</span></div>
+      <div class="stat-row"><span class="k">Total sells</span><span class="v" id="c-sells">0</span></div>
+      <div class="stat-row"><span class="k">Total round-trips</span><span class="v" id="c-rt">0</span></div>
+      <div class="stat-row"><span class="k">Total volume</span><span class="v" id="c-vol">$0.00</span></div>
+    </div>
+  </div>
+
+  <div class="footnote">
+    <em>How to read this.</em> Both tickers run identical grid bots ($1,000 × 4× leverage, 8 grids, 2% band by default)
+    around the $2,200 anchor. They differ only in their starting inventory: Ticker A holds the equivalent of $5,000 long,
+    Ticker B holds $5,000 short. The grid bots fire the same fills on both tickers (same price, same logic), but the
+    effect on each ticker's PnL diverges because of the different starting positions. <em>Unrealized PnL</em> reflects
+    each ticker's current mark-to-market against its current avg entry. <em>Realized PnL</em> accumulates from closed
+    grid round-trips. The combined panel shows whether the two-position book is net winning or losing as a system.
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CONSTANTS
+// ============================================================
+const ENTRY_PRICE = 2200;       // Anchor for both grid bots and initial position entry
+const TOTAL_TICKS = 200;
+
+let CFG = {
+  initialUsd: 5000,
+  volPct: 3.0,
+  investmentUsd: 1000,
+  leverage: 4,
+  gridNum: 8,
+  bandPct: 2.0,
+  ignoreInitials: false,
+};
+
+// ============================================================
+// DERIVE GRID PARAMETERS
+// ============================================================
+function deriveParams(cfg) {
+  const bandFraction = cfg.bandPct / 100;
+  const gridLower = ENTRY_PRICE * (1 - bandFraction);
+  const gridUpper = ENTRY_PRICE * (1 + bandFraction);
+  const totalRange = gridUpper - gridLower;
+  const spacing = totalRange / cfg.gridNum;
+  const notionalPerGrid = (cfg.investmentUsd * cfg.leverage) / cfg.gridNum;
+  const qtyPerGrid = notionalPerGrid / ENTRY_PRICE;
+  const halfCount = cfg.gridNum / 2;
+
+  // Initial grid levels (symmetric around anchor)
+  const levels = [];
+  for (let i = 1; i <= halfCount; i++) {
+    levels.push({ level: ENTRY_PRICE - i * spacing, side: 'buy' });
+    levels.push({ level: ENTRY_PRICE + i * spacing, side: 'sell' });
+  }
+  return {
+    gridLower, gridUpper, spacing, qtyPerGrid, notionalPerGrid,
+    levels, halfCount,
+  };
+}
+
+// ============================================================
+// SCENARIOS — same one for both tickers
+// ============================================================
+function buildScenarios() {
+  const E = ENTRY_PRICE;
+  const span = E * (CFG.volPct / 100);
+
+  return {
+    'rally': [
+      { t: 0,   p: E },
+      { t: 40,  p: E + span * 0.5 },
+      { t: 90,  p: E + span * 1.0 },
+      { t: 140, p: E + span * 1.3 },
+      { t: 200, p: E + span * 1.5 },
+    ],
+    'dump': [
+      { t: 0,   p: E },
+      { t: 40,  p: E - span * 0.5 },
+      { t: 90,  p: E - span * 1.0 },
+      { t: 140, p: E - span * 1.3 },
+      { t: 200, p: E - span * 1.5 },
+    ],
+    'oscillate': (() => {
+      const arr = [];
+      for (let t = 0; t <= TOTAL_TICKS; t += 5) {
+        const phase = (t / TOTAL_TICKS) * Math.PI * 4;
+        arr.push({ t, p: E + Math.sin(phase) * span * 0.9 });
+      }
+      return arr;
+    })(),
+    'rally-pullback': [
+      { t: 0,   p: E },
+      { t: 30,  p: E + span * 0.6 },
+      { t: 60,  p: E + span * 1.2 },
+      { t: 100, p: E + span * 0.4 },
+      { t: 140, p: E - span * 0.4 },
+      { t: 170, p: E + span * 0.1 },
+      { t: 200, p: E + span * 0.5 },
+    ],
+    'chop': (() => {
+      const arr = [{ t: 0, p: E }];
+      let p = E;
+      const seed = [0.4,-0.7,0.3,0.8,-0.5,-0.3,0.6,-0.4,0.2,0.7,
+                    -0.6,0.5,-0.8,0.4,-0.2,0.7,-0.5,0.3,-0.6,0.5];
+      for (let i = 0; i < 20; i++) {
+        p += seed[i] * span * 0.4;
+        if (p > E + span * 1.4) p = E + span * 1.4;
+        if (p < E - span * 1.4) p = E - span * 1.4;
+        arr.push({ t: (i+1) * 10, p });
+      }
+      return arr;
+    })(),
+  };
+}
+
+function interpolate(path, t) {
+  if (t <= path[0].t) return path[0].p;
+  if (t >= path[path.length-1].t) return path[path.length-1].p;
+  for (let i=0; i<path.length-1; i++) {
+    if (t >= path[i].t && t <= path[i+1].t) {
+      const a = path[i], b = path[i+1];
+      const f = (t - a.t) / (b.t - a.t);
+      return a.p + (b.p - a.p) * f;
+    }
+  }
+  return path[0].p;
+}
+
+// ============================================================
+// CREATE A GRID BOT STATE for a ticker with initial inventory
+// ============================================================
+function createBotState(params, initialQty, initialEntry) {
+  return {
+    orders: params.levels.map((o, i) => ({
+      id: 'o' + i,
+      level: o.level,
+      side: o.side,
+      status: 'open',
+      origin: 'initial',
+      pairedFrom: null,
+      filledAtTick: null,
+      placedAtTick: 0,
+    })),
+    nextId: params.levels.length,
+    inventory: initialQty,                            // starts non-zero
+    inventoryCost: initialQty * initialEntry,         // signed cost basis
+    realizedPnl: 0,
+    sellFills: 0,
+    buyFills: 0,
+    roundTrips: 0,
+    volumeUsd: 0,
+  };
+}
+
+// Process a price move from pPrev → pNow for one bot. Returns nothing,
+// mutates the bot state in place. Returns array of fill records this tick.
+function stepBot(bot, params, pPrev, pNow, t) {
+  const fills = [];
+  if (pPrev === pNow) return fills;
+  const lo = Math.min(pPrev, pNow);
+  const hi = Math.max(pPrev, pNow);
+  const direction = pNow > pPrev ? 'up' : 'down';
+
+  // Find orders that get crossed this step
+  const candidates = bot.orders.filter(o =>
+    o.status === 'open' &&
+    o.level >= lo - 1e-6 && o.level <= hi + 1e-6 &&
+    ((o.side === 'sell' && direction === 'up') ||
+     (o.side === 'buy' && direction === 'down'))
+  );
+  candidates.sort((a,b) => Math.abs(a.level - pPrev) - Math.abs(b.level - pPrev));
+
+  for (const ord of candidates) {
+    ord.status = 'filled';
+    ord.filledAtTick = t;
+    fills.push({ level: ord.level, side: ord.side, pairedFrom: ord.pairedFrom });
+
+    const q = params.qtyPerGrid;
+    const tradeQty = ord.side === 'buy' ? q : -q;
+    const newInventory = bot.inventory + tradeQty;
+
+    // Realize PnL on paired fills (closed round-trips)
+    if (ord.pairedFrom != null) {
+      bot.realizedPnl += params.spacing * q;
+      bot.roundTrips++;
+    }
+
+    // Update inventory cost basis (handles flips properly)
+    if (bot.inventory === 0) {
+      bot.inventoryCost = tradeQty * ord.level;
+    } else if (Math.sign(tradeQty) === Math.sign(bot.inventory)) {
+      bot.inventoryCost += tradeQty * ord.level;
+    } else {
+      // Reducing or flipping
+      if (Math.abs(tradeQty) <= Math.abs(bot.inventory)) {
+        // Partial/full close — also realize PnL on the closed portion vs avg entry
+        const avgEntry = bot.inventoryCost / bot.inventory;
+        const closedQty = -tradeQty;     // qty being removed (signed same as inventory)
+        // PnL of close = closedQty × (avgEntry - fillPrice)  [for long: closedQty>0, avgEntry<fillPrice means profit]
+        // Easier: sign-aware
+        const pnl = closedQty * (ord.level - avgEntry);  // for long closing: closedQty > 0, profit if ord.level > avgEntry
+        bot.realizedPnl += pnl;
+        // Reduce cost proportionally
+        const closeFrac = Math.abs(tradeQty) / Math.abs(bot.inventory);
+        bot.inventoryCost -= bot.inventoryCost * closeFrac;
+      } else {
+        // Flipping through zero — close full position, open remainder
+        const avgEntry = bot.inventoryCost / bot.inventory;
+        const closedQty = -bot.inventory;
+        const pnl = closedQty * (ord.level - avgEntry);
+        bot.realizedPnl += pnl;
+        const remainder = newInventory;
+        bot.inventoryCost = remainder * ord.level;
+      }
+    }
+    bot.inventory = newInventory;
+    if (Math.abs(bot.inventory) < 1e-10) {
+      bot.inventory = 0;
+      bot.inventoryCost = 0;
+    }
+
+    if (ord.side === 'sell') bot.sellFills++; else bot.buyFills++;
+    bot.volumeUsd += q * ord.level;
+
+    // Re-arm (paired replacement)
+    const newLevel = ord.side === 'sell' ? ord.level - params.spacing : ord.level + params.spacing;
+    const newSide = ord.side === 'sell' ? 'buy' : 'sell';
+    const conflict = bot.orders.find(o =>
+      o.status === 'open' &&
+      Math.abs(o.level - newLevel) < 1e-6 && o.side === newSide);
+    const inRange = newLevel >= params.gridLower - 1e-6 && newLevel <= params.gridUpper + 1e-6;
+
+    if (!conflict && inRange) {
+      bot.orders.push({
+        id: 'o' + (bot.nextId++),
+        level: newLevel, side: newSide,
+        status: 'open', origin: 'rearm',
+        pairedFrom: ord.id,
+        filledAtTick: null,
+        placedAtTick: t,
+      });
+    }
+  }
+  return fills;
+}
+
+// ============================================================
+// SIMULATION — runs both bots side by side
+// ============================================================
+function simulate(scenarioName) {
+  const params = deriveParams(CFG);
+  const scenarios = buildScenarios();
+  const path = scenarios[scenarioName] || scenarios['rally'];
+  const N = TOTAL_TICKS + 1;
+  const prices = [];
+  for (let t = 0; t < N; t++) prices.push(interpolate(path, t));
+
+  // Initial qty: $initialUsd at $2,200 entry. Zero if "ignore initials" mode is on.
+  const initQty = CFG.ignoreInitials ? 0 : (CFG.initialUsd / ENTRY_PRICE);
+  const initEntry = CFG.ignoreInitials ? ENTRY_PRICE : ENTRY_PRICE;  // unused when qty=0
+
+  const botA = createBotState(params, +initQty, initEntry);
+  const botB = createBotState(params, -initQty, initEntry);
+
+  const snapshots = [];
+
+  // t=0 snapshot
+  snapshots.push(buildSnapshot(0, prices[0], botA, botB));
+
+  for (let t = 1; t < N; t++) {
+    const pPrev = prices[t-1];
+    const pNow = prices[t];
+    stepBot(botA, params, pPrev, pNow, t);
+    stepBot(botB, params, pPrev, pNow, t);
+    snapshots.push(buildSnapshot(t, pNow, botA, botB));
+  }
+
+  // Fixed chart y-bounds for consistent viewport
+  const FIXED_PX_MIN = 2000;
+  const FIXED_PX_MAX = 2500;
+  return {
+    prices, snapshots, params,
+    pxMin: FIXED_PX_MIN,
+    pxMax: FIXED_PX_MAX,
+  };
+}
+
+function buildSnapshot(t, price, botA, botB) {
+  const unrealA = botA.inventory === 0 ? 0 :
+    botA.inventory * (price - botA.inventoryCost / botA.inventory);
+  const unrealB = botB.inventory === 0 ? 0 :
+    botB.inventory * (price - botB.inventoryCost / botB.inventory);
+  const totalA = botA.realizedPnl + unrealA;
+  const totalB = botB.realizedPnl + unrealB;
+  return {
+    tick: t,
+    price,
+    // A snapshot
+    a: {
+      inventory: botA.inventory,
+      avgEntry: botA.inventory === 0 ? null : botA.inventoryCost / botA.inventory,
+      realized: botA.realizedPnl,
+      unrealized: unrealA,
+      total: totalA,
+      buyFills: botA.buyFills,
+      sellFills: botA.sellFills,
+      roundTrips: botA.roundTrips,
+      volume: botA.volumeUsd,
+      orders: botA.orders.map(o => ({...o})),
+    },
+    b: {
+      inventory: botB.inventory,
+      avgEntry: botB.inventory === 0 ? null : botB.inventoryCost / botB.inventory,
+      realized: botB.realizedPnl,
+      unrealized: unrealB,
+      total: totalB,
+      buyFills: botB.buyFills,
+      sellFills: botB.sellFills,
+      roundTrips: botB.roundTrips,
+      volume: botB.volumeUsd,
+      orders: botB.orders.map(o => ({...o})),
+    },
+    combined: {
+      inventory: botA.inventory + botB.inventory,
+      realized: botA.realizedPnl + botB.realizedPnl,
+      unrealized: unrealA + unrealB,
+      total: totalA + totalB,
+      buyFills: botA.buyFills + botB.buyFills,
+      sellFills: botA.sellFills + botB.sellFills,
+      roundTrips: botA.roundTrips + botB.roundTrips,
+      volume: botA.volumeUsd + botB.volumeUsd,
+    },
+  };
+}
+
+// ============================================================
+// FORMATTERS
+// ============================================================
+function fmt2(n) { return n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+function fmt5(n) { return n.toLocaleString('en-US', {minimumFractionDigits:5, maximumFractionDigits:5}); }
+function fmtSigned$(n) {
+  if (Math.abs(n) < 0.005) return '$0.00';
+  return (n >= 0 ? '$' : '-$') + fmt2(Math.abs(n));
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+const W = 800, H = 440;
+const PAD_L = 64, PAD_R = 60, PAD_T = 16, PAD_B = 28;
+const CW = W - PAD_L - PAD_R;
+const CH = H - PAD_T - PAD_B;
+
+let currentScenario = 'rally';
+let sim;
+let currentTick = 0;
+
+function xOf(t) { return PAD_L + (t / TOTAL_TICKS) * CW; }
+function yOf(p) {
+  const f = (p - sim.pxMin) / (sim.pxMax - sim.pxMin);
+  return PAD_T + (1 - f) * CH;
+}
+
+function recompute() {
+  sim = simulate(currentScenario);
+  if (currentTick > TOTAL_TICKS) currentTick = TOTAL_TICKS;
+}
+
+function render() {
+  const svg = document.getElementById('chart');
+  const snap = sim.snapshots[currentTick];
+  const params = sim.params;
+  let html = '';
+
+  // Clip definition — prevents price line / fills from rendering outside chart area
+  html += `<defs><clipPath id="chart-clip"><rect x="${PAD_L}" y="${PAD_T}" width="${CW}" height="${CH}"/></clipPath></defs>`;
+
+  // Time axis
+  for (let t = 0; t <= TOTAL_TICKS; t += 40) {
+    const x = xOf(t);
+    html += `<line x1="${x}" y1="${H-PAD_B}" x2="${x}" y2="${H-PAD_B+4}" stroke="var(--text-faint)" stroke-width="1"/>`;
+    html += `<text class="axis-label" x="${x}" y="${H-PAD_B+16}" text-anchor="middle">t${t}</text>`;
+  }
+
+  // Grid bounds and entry
+  const yEntry = yOf(ENTRY_PRICE);
+  const yLower = yOf(params.gridLower);
+  const yUpper = yOf(params.gridUpper);
+
+  // Chart range endpoints (fixed $2,000 - $2,500)
+  html += `<text class="axis-label" x="${PAD_L-8}" y="${PAD_T+10}" text-anchor="end" style="opacity:0.7;">$${fmt2(sim.pxMax)}</text>`;
+  html += `<text class="axis-label" x="${PAD_L-8}" y="${H-PAD_B-2}" text-anchor="end" style="opacity:0.7;">$${fmt2(sim.pxMin)}</text>`;
+
+  html += `<line class="bound-line" x1="${PAD_L}" y1="${yLower}" x2="${W-PAD_R}" y2="${yLower}"/>`;
+  html += `<line class="bound-line" x1="${PAD_L}" y1="${yUpper}" x2="${W-PAD_R}" y2="${yUpper}"/>`;
+  html += `<text class="axis-label" x="${PAD_L-8}" y="${yLower+3}" text-anchor="end">$${fmt2(params.gridLower)}</text>`;
+  html += `<text class="axis-label" x="${PAD_L-8}" y="${yUpper+3}" text-anchor="end">$${fmt2(params.gridUpper)}</text>`;
+
+  html += `<line class="entry-line" x1="${PAD_L}" y1="${yEntry}" x2="${W-PAD_R}" y2="${yEntry}"/>`;
+  html += `<text class="axis-label" x="${PAD_L-8}" y="${yEntry+3}" text-anchor="end" style="fill:var(--accent); opacity:0.8;">$${fmt2(ENTRY_PRICE)}</text>`;
+
+  // Show grid rungs (single set — both bots share identical grid).
+  // Use Ticker A's open-or-currently-cancelled orders as reference (same as B).
+  const refOrders = snap.a.orders.filter(o => o.placedAtTick <= currentTick);
+
+  // Filled orders: dim ghost segments
+  for (const o of refOrders.filter(o => o.status === 'filled' && o.filledAtTick <= currentTick)) {
+    const y = yOf(o.level);
+    const xStart = xOf(o.placedAtTick);
+    const xEnd = xOf(o.filledAtTick);
+    html += `<line x1="${xStart}" y1="${y}" x2="${xEnd}" y2="${y}" stroke="var(--text-faint)" stroke-width="1" stroke-dasharray="1 5" opacity="0.4"/>`;
+    html += `<circle class="fill-marker ${o.side}" cx="${xEnd}" cy="${y}" r="3"/>`;
+  }
+  // Live orders
+  const liveOrders = refOrders.filter(o =>
+    o.status === 'open' || (o.status === 'filled' && o.filledAtTick > currentTick));
+  for (const o of liveOrders) {
+    const y = yOf(o.level);
+    const xStart = xOf(o.placedAtTick);
+    const xEnd = xOf(currentTick);
+    html += `<line class="grid-rung ${o.side}" x1="${xStart}" y1="${y}" x2="${xEnd}" y2="${y}"/>`;
+  }
+  // Grid level labels on the right edge (deduplicated by level)
+  const labelStep = CFG.gridNum <= 10 ? 1 :
+                    CFG.gridNum <= 20 ? 2 :
+                    Math.ceil(CFG.gridNum / 12);
+  const liveSorted = [...liveOrders].sort((a,b) => b.level - a.level);
+  for (let i = 0; i < liveSorted.length; i++) {
+    if (i % labelStep !== 0) continue;
+    const o = liveSorted[i];
+    const y = yOf(o.level);
+    const tag = o.side === 'buy' ? 'B' : 'S';
+    html += `<text class="grid-label ${o.side}" x="${W-PAD_R+4}" y="${y+3}">${tag} ${fmt2(o.level)}</text>`;
+  }
+
+  // Past price path (clipped to chart area in case price exits bounds)
+  let pathD = '';
+  for (let t = 0; t <= currentTick; t++) {
+    pathD += (t === 0 ? 'M' : 'L') + xOf(t) + ',' + yOf(sim.prices[t]) + ' ';
+  }
+  html += `<g clip-path="url(#chart-clip)">`;
+  html += `<path class="price-path" d="${pathD}"/>`;
+
+  // Future
+  let futD = '';
+  for (let t = currentTick; t <= TOTAL_TICKS; t++) {
+    futD += (t === currentTick ? 'M' : 'L') + xOf(t) + ',' + yOf(sim.prices[t]) + ' ';
+  }
+  html += `<path class="price-path-future" d="${futD}"/>`;
+
+  // Price dot
+  const px = sim.prices[currentTick];
+  // Only draw the dot if price is within visible bounds, otherwise indicate off-screen
+  if (px >= sim.pxMin && px <= sim.pxMax) {
+    html += `<circle class="price-dot" cx="${xOf(currentTick)}" cy="${yOf(px)}" r="5"/>`;
+  } else {
+    // Edge indicator: clamp to bound and use a chevron-style marker
+    const clampedY = px > sim.pxMax ? PAD_T + 4 : H - PAD_B - 4;
+    const arrow = px > sim.pxMax ? '▲' : '▼';
+    html += `<text x="${xOf(currentTick)}" y="${clampedY}" text-anchor="middle" style="font-size:14px; fill:var(--price); filter: drop-shadow(0 0 4px var(--price));">${arrow}</text>`;
+  }
+  html += `</g>`;
+
+  svg.innerHTML = html;
+
+  // Header readouts
+  document.getElementById('tick-readout').textContent = String(currentTick).padStart(3, '0');
+  document.getElementById('tick-display').textContent = String(currentTick).padStart(3, '0') + ' / ' + TOTAL_TICKS;
+  document.getElementById('px-readout').textContent = '$' + fmt2(px);
+
+  // === Ticker A ===
+  renderTickerStats('a', snap.a, px);
+  // === Ticker B ===
+  renderTickerStats('b', snap.b, px);
+  // === Combined ===
+  document.getElementById('c-inv').textContent =
+    (snap.combined.inventory >= 0 ? '+' : '') + fmt5(snap.combined.inventory);
+  setSignedPnl('c-realized', snap.combined.realized);
+  setSignedPnl('c-unrealized', snap.combined.unrealized);
+  setSignedPnl('c-total', snap.combined.total);
+  document.getElementById('c-buys').textContent = snap.combined.buyFills;
+  document.getElementById('c-sells').textContent = snap.combined.sellFills;
+  document.getElementById('c-rt').textContent = snap.combined.roundTrips;
+  document.getElementById('c-vol').textContent = fmtVolume(snap.combined.volume);
+}
+
+function renderTickerStats(prefix, t, mark) {
+  const invEl = document.getElementById(prefix + '-inv');
+  invEl.textContent = (t.inventory >= 0 ? '+' : '') + fmt5(t.inventory);
+  invEl.className = 'v ' + (t.inventory > 1e-9 ? 'pos' : t.inventory < -1e-9 ? 'neg' : '');
+  document.getElementById(prefix + '-entry').textContent =
+    t.avgEntry == null ? '—' : '$' + fmt2(t.avgEntry);
+  document.getElementById(prefix + '-mark').textContent = '$' + fmt2(mark);
+  setSignedPnl(prefix + '-realized', t.realized);
+  setSignedPnl(prefix + '-unrealized', t.unrealized);
+  setSignedPnl(prefix + '-total', t.total);
+  document.getElementById(prefix + '-buys').textContent = t.buyFills;
+  document.getElementById(prefix + '-sells').textContent = t.sellFills;
+  document.getElementById(prefix + '-rt').textContent = t.roundTrips;
+  document.getElementById(prefix + '-vol').textContent = fmtVolume(t.volume);
+}
+
+function setSignedPnl(elId, value) {
+  const el = document.getElementById(elId);
+  el.textContent = fmtSigned$(value);
+  el.className = 'v ' + (value > 0.005 ? 'pos' : value < -0.005 ? 'neg' : '');
+}
+
+function fmtVolume(n) {
+  if (n >= 10000) return '$' + (n / 1000).toFixed(2) + 'k';
+  return '$' + fmt2(n);
+}
+
+// ============================================================
+// CONFIG UI
+// ============================================================
+function updateConfigDisplay() {
+  document.getElementById('val-initial').innerHTML =
+    `$${CFG.initialUsd.toLocaleString('en-US')} <span class="sub">notional</span>`;
+  document.getElementById('val-vol').innerHTML =
+    `${CFG.volPct.toFixed(1)}% <span class="sub">range</span>`;
+  document.getElementById('val-investment').innerHTML =
+    `$${CFG.investmentUsd.toLocaleString('en-US')} <span class="sub">USDC</span>`;
+  document.getElementById('val-leverage').innerHTML =
+    `${CFG.leverage}× <span class="sub">cross</span>`;
+  const half = CFG.gridNum / 2;
+  document.getElementById('val-gridnum').innerHTML =
+    `${CFG.gridNum} <span class="sub">/ ${half}B ${half}S</span>`;
+  document.getElementById('val-band').innerHTML =
+    `${CFG.bandPct.toFixed(1)}% <span class="sub">±</span>`;
+
+  // Initial qty in header
+  const initQty = CFG.ignoreInitials ? 0 : (CFG.initialUsd / ENTRY_PRICE);
+  document.getElementById('meta-initial-qty').textContent = initQty.toFixed(5);
+
+  // Toggle UI: button label, combined tag, side tags, header meta lines
+  const btn = document.getElementById('btn-initials-toggle');
+  const combinedTag = document.getElementById('combined-tag');
+  const aTag = document.getElementById('a-tag');
+  const bTag = document.getElementById('b-tag');
+  const metaA = document.getElementById('meta-line-a');
+  const metaB = document.getElementById('meta-line-b');
+
+  if (CFG.ignoreInitials) {
+    btn.textContent = 'Turn ON initials';
+    btn.classList.add('off');
+    combinedTag.textContent = 'no carry';
+    aTag.classList.add('disabled-initial');
+    bTag.classList.add('disabled-initial');
+    metaA.innerHTML = `<span class="a">TICKER A</span> &nbsp; <span style="color:var(--text-faint); text-decoration: line-through;">+$${CFG.initialUsd.toLocaleString('en-US')} long</span>`;
+    metaB.innerHTML = `<span class="b">TICKER B</span> &nbsp; <span style="color:var(--text-faint); text-decoration: line-through;">-$${CFG.initialUsd.toLocaleString('en-US')} short</span>`;
+  } else {
+    btn.textContent = 'Turn off initials';
+    btn.classList.remove('off');
+    combinedTag.textContent = 'A + B';
+    aTag.classList.remove('disabled-initial');
+    bTag.classList.remove('disabled-initial');
+    metaA.innerHTML = `<span class="a">TICKER A</span> &nbsp; <span style="color:var(--long)">+$${CFG.initialUsd.toLocaleString('en-US')} long</span>`;
+    metaB.innerHTML = `<span class="b">TICKER B</span> &nbsp; <span style="color:var(--short)">-$${CFG.initialUsd.toLocaleString('en-US')} short</span>`;
+  }
+}
+
+function wireSlider(id, key, parser = parseFloat) {
+  document.getElementById(id).addEventListener('input', e => {
+    CFG[key] = parser(e.target.value);
+    updateConfigDisplay();
+    recompute();
+    render();
+  });
+}
+wireSlider('cfg-initial', 'initialUsd', parseInt);
+wireSlider('cfg-vol', 'volPct');
+wireSlider('cfg-investment', 'investmentUsd', parseInt);
+wireSlider('cfg-leverage', 'leverage', parseInt);
+wireSlider('cfg-gridnum', 'gridNum', parseInt);
+wireSlider('cfg-band', 'bandPct');
+
+// Initials toggle button
+const initialsBtn = document.getElementById('btn-initials-toggle');
+initialsBtn.addEventListener('click', () => {
+  CFG.ignoreInitials = !CFG.ignoreInitials;
+  updateConfigDisplay();
+  recompute();
+  render();
+});
+
+// ============================================================
+// PLAYBACK
+// ============================================================
+const slider = document.getElementById('slider');
+slider.max = TOTAL_TICKS;
+slider.addEventListener('input', e => {
+  currentTick = parseInt(e.target.value);
+  render();
+});
+document.getElementById('btn-reset').addEventListener('click', () => {
+  currentTick = 0; slider.value = 0; render();
+});
+document.getElementById('btn-step-fwd').addEventListener('click', () => {
+  if (currentTick < TOTAL_TICKS) { currentTick++; slider.value = currentTick; render(); }
+});
+document.getElementById('btn-step-back').addEventListener('click', () => {
+  if (currentTick > 0) { currentTick--; slider.value = currentTick; render(); }
+});
+
+let playing = false;
+let playInterval = null;
+const playBtn = document.getElementById('btn-play');
+playBtn.addEventListener('click', () => {
+  if (playing) {
+    clearInterval(playInterval);
+    playBtn.textContent = 'Play ▶';
+    playing = false;
+  } else {
+    playBtn.textContent = 'Pause ❚❚';
+    playing = true;
+    playInterval = setInterval(() => {
+      if (currentTick >= TOTAL_TICKS) {
+        clearInterval(playInterval);
+        playBtn.textContent = 'Play ▶';
+        playing = false;
+        return;
+      }
+      currentTick++;
+      slider.value = currentTick;
+      render();
+    }, 60);
+  }
+});
+
+document.querySelectorAll('[data-scenario]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-scenario]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentScenario = btn.dataset.scenario;
+    currentTick = 0;
+    slider.value = 0;
+    if (playing) {
+      clearInterval(playInterval);
+      playBtn.textContent = 'Play ▶';
+      playing = false;
+    }
+    recompute();
+    render();
+  });
+});
+
+// Boot
+updateConfigDisplay();
+recompute();
+render();
+</script>
+</body>
+</html>
