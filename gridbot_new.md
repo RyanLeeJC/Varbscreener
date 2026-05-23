@@ -269,9 +269,9 @@ Write `gridstrat_rearm.py` first and test it standalone before touching the exch
 
 ---
 
-## Interval risk rebalance (IM ≥ 50%)
+## Interval risk rebalance (IM ≥ 80%)
 
-When **initial margin (IM) usage** is **≥ 50%** (default trigger), Varibot runs this rebalance **every interval** while you have positions and IM stays above the threshold: equal **target notional** per leg (7 long / 7 short on 14 tickers when N=15, smallest dropped). One **market order per ticker** (net delta, not reduce-only). Pending grid limits are **not** canceled. There is **no latch file** — each cycle decides independently from the latest portfolio snapshot.
+When **initial margin (IM) usage** is **≥ 80%** (default trigger), Varibot runs this rebalance **every interval** while you have positions and IM stays above the threshold: equal **target notional** per leg (7 long / 7 short on 14 tickers when N=15, smallest dropped). One **market order per ticker** (net delta, not reduce-only). Pending grid limits are **not** canceled. There is **no latch file** — each cycle decides independently from the latest portfolio snapshot.
 
 ### Run live from terminal
 
@@ -297,7 +297,7 @@ python3 rebalance_run.py
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `VARIBOT_REBALANCE_IM_TRIGGER` | `0.50` | Fire when IM usage ≥ this |
+| `VARIBOT_REBALANCE_IM_TRIGGER` | `0.80` | Fire when IM usage ≥ this |
 | `VARIBOT_REBALANCE_MM_TRIGGER` | *(deprecated)* | Alias for IM trigger if `IM_TRIGGER` unset |
 | `VARIBOT_REBALANCE_IM_TARGET` | `0.20` | Target notional sizing fraction in planner formula |
 | `VARIBOT_REBALANCE_ROUND_TO` | `10` | Round target notional to nearest $10 |

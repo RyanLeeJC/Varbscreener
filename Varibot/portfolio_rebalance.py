@@ -15,7 +15,7 @@ from variationalbot.domain import PortfolioSnapshot
 from variationalbot.vari.endpoints import Instrument, VariEndpoints, format_qty_for_indicative_api
 
 # --- constants (override via VARIBOT_REBALANCE_* env in helpers) ---
-IM_TRIGGER: float = 0.50
+IM_TRIGGER: float = 0.80
 IM_TARGET: float = 0.20
 ROUND_TO: float = 10.0
 MIN_ORDER_USD: float = 5.0
@@ -28,7 +28,7 @@ ENV_MIN_ORDER_USD = "VARIBOT_REBALANCE_MIN_ORDER_USD"
 ENV_REBALANCE_ORDER_INTERVAL_S = "VARIBOT_REBALANCE_ORDER_INTERVAL_S"
 ENV_TRIM_MULTIPLE = "VARIBOT_REBALANCE_TRIM_MULTIPLE"
 ENV_TRIM_FRACTION = "VARIBOT_REBALANCE_TRIM_FRACTION"
-DEFAULT_TRIM_MULTIPLE: float = 15.0
+DEFAULT_TRIM_MULTIPLE: float = 0.0  # <= 0 disables per-ticker position trim
 DEFAULT_TRIM_FRACTION: float = 0.5
 # Each market leg: 2× indicative quote + 1× POST market (see VariEndpoints.quote_id_for_order_qty).
 MARKET_LEG_HTTP_CALLS: int = 3
@@ -624,7 +624,7 @@ def rebalance_portfolio(
     Portfolio maintenance on each call when positions exist:
 
     1. **Oversized trim** — reduce-only market orders when abs notional exceeds
-       ``VARIBOT_REBALANCE_TRIM_MULTIPLE × grid_rung_usd`` (default 15× $200).
+       ``VARIBOT_REBALANCE_TRIM_MULTIPLE × grid_rung_usd`` (default off; set e.g. 15 for 15× rung).
     2. **IM interval risk** — equal-notional rebalance when IM% ≥ trigger.
 
     ``varibot_dir`` is kept for API compatibility but no longer used for persistence.
