@@ -100,7 +100,7 @@ DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses
 # RWA commodity perps (Vari Beta): use ``perpetual_rwa_future`` + ``kind: commodity`` on the API
 # (no ``funding_interval_s``). Varibot ``Instrument.for_underlying`` reads ``GRID_RWA_TICKERS``.
 # -----------------------------------------------------------------------------
-GRID_RWA_COMMODITY_TICKERS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COPPER", "SPCX"})
+GRID_RWA_COMMODITY_TICKERS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COPPER"})
 
 # -----------------------------------------------------------------------------
 # Multi-ticker grid — edit here: each ticker is managed independently (own state + gridlimits).
@@ -119,7 +119,7 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     "SOL": 2.0,
     "XRP": 2.0,
     "CL": 2.0,
-    "SPCX": 2.0,
+    "LINK": 2.0,
     # ±3% band
     "SUI": 3.0,
     "TAO": 3.0,
