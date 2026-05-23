@@ -171,7 +171,7 @@ class LeverageResult:
     max: int
 
 
-_DEFAULT_RWA_COMMODITY_UNDERLYINGS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COPPER"})
+_DEFAULT_RWA_COMMODITY_UNDERLYINGS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COPPER", "SPCX"})
 
 
 def rwa_commodity_underlyings() -> frozenset[str]:
