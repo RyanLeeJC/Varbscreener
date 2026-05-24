@@ -245,6 +245,33 @@ def _fill_open_order_and_rearm(
     state["volume_usd"] = volume_usd
 
 
+def _pending_keys_from_state(state: Dict[str, Any]) -> Set[Tuple[str, str]]:
+    """Previous-cycle venue (side, price_key) snapshot stored on paired state."""
+    raw = state.get("last_venue_pending_keys")
+    if not isinstance(raw, list):
+        return set()
+    out: Set[Tuple[str, str]] = set()
+    for item in raw:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            side = str(item[0]).strip().lower()
+            if side in ("buy", "sell"):
+                out.add((side, str(item[1])))
+    return out
+
+
+def record_venue_pending_snapshot(
+    state: Dict[str, Any],
+    *,
+    pending_keys: Optional[Set[Tuple[str, str]]],
+) -> None:
+    """Persist venue pending keys for next cycle's venue-cleared fill detection."""
+    if pending_keys is None:
+        return
+    state["last_venue_pending_keys"] = [
+        [str(side).lower(), str(pxk)] for side, pxk in sorted(pending_keys)
+    ]
+
+
 def apply_venue_cleared_limits_as_fills(
     state: Dict[str, Any],
     *,
@@ -254,10 +281,17 @@ def apply_venue_cleared_limits_as_fills(
     Venue sync before mark step: resting limits cleared on exchange but still OPEN in sim
     are treated as filled, with paired re-arm (interval check catches fills between marks).
 
+    Only orders that were on the venue in the **previous** cycle (``last_venue_pending_keys``)
+    count as fills. Missing sim rungs that were never posted stay OPEN so drift reconcile
+    can POST them — avoids falsely filling sells during fast pumps when reconcile lags.
+
     Requires a non-empty ``pending_keys`` snapshot. An empty set means "no orders on book yet",
     not "every sim order filled" — callers must skip when ``len(pending_keys) == 0``.
     """
     if not pending_keys:
+        return []
+    last_seen = _pending_keys_from_state(state)
+    if not last_seen:
         return []
     logs: List[str] = []
     t = int(state.get("tick") or 0)
@@ -270,7 +304,10 @@ def apply_venue_cleared_limits_as_fills(
             pxk = grid_limit_price_key(lv)
         except (TypeError, ValueError):
             continue
-        if (side, pxk) in pending_keys:
+        key = (side, pxk)
+        if key in pending_keys:
+            continue
+        if key not in last_seen:
             continue
         parent_px = float(ord_["level"])
         _fill_open_order_and_rearm(state, ord_, tick=t, logs=logs)

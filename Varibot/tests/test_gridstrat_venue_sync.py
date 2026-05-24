@@ -1,0 +1,82 @@
+"""Tests for paired-limit venue pending snapshot / cleared-fill sync."""
+
+from __future__ import annotations
+
+import unittest
+
+from strategy.gridstrat_rearm import (
+    _new_order,
+    apply_venue_cleared_limits_as_fills,
+    record_venue_pending_snapshot,
+)
+
+
+class TestVenueClearedFillSync(unittest.TestCase):
+    def _minimal_state(self) -> dict:
+        tick = 0
+        orders = [
+            _new_order("o0", 99.0, "buy", "initial", None, tick),
+            _new_order("o1", 101.0, "sell", "initial", None, tick),
+        ]
+        return {
+            "schema_version": 3,
+            "grid_num": 10,
+            "orders": orders,
+            "next_id": 2,
+            "tick": tick,
+            "current_anchor": 100.0,
+            "current_grid_lower": 95.0,
+            "current_grid_upper": 105.0,
+            "spacing": 1.0,
+            "qty_per_grid": 1.0,
+            "inventory": 0.0,
+            "inventory_cost": 0.0,
+            "realized_pnl": 0.0,
+            "volume_usd": 0.0,
+            "reset_count": 0,
+        }
+
+    def test_never_posted_sell_not_treated_as_filled(self) -> None:
+        state = self._minimal_state()
+        orders = state["orders"]
+        sell = next(o for o in orders if o["side"] == "sell" and o["status"] == "open")
+        pending = {
+            (o["side"], f"{float(o['level']):.2f}")
+            for o in orders
+            if o["side"] == "buy" and o["status"] == "open"
+        }
+        # Simulate prior cycle: only buys were on venue.
+        record_venue_pending_snapshot(state, pending_keys=pending)
+        logs = apply_venue_cleared_limits_as_fills(state, pending_keys=pending)
+        self.assertEqual(logs, [])
+        self.assertEqual(sell["status"], "open")
+
+    def test_cleared_sell_fills_when_it_was_on_venue_last_cycle(self) -> None:
+        state = self._minimal_state()
+        orders = state["orders"]
+        sell = next(o for o in orders if o["side"] == "sell" and o["status"] == "open")
+        sell_key = ("sell", f"{float(sell['level']):.2f}")
+        pending_with_sell = {
+            (o["side"], f"{float(o['level']):.2f}")
+            for o in orders
+            if o["status"] == "open"
+        }
+        record_venue_pending_snapshot(state, pending_keys=pending_with_sell)
+        pending_after_fill = pending_with_sell - {sell_key}
+        logs = apply_venue_cleared_limits_as_fills(
+            state, pending_keys=pending_after_fill
+        )
+        self.assertTrue(any("venue sync SELL filled" in ln for ln in logs))
+        self.assertEqual(sell["status"], "filled")
+
+    def test_empty_last_snapshot_skips_all_clears(self) -> None:
+        state = self._minimal_state()
+        pending = {("buy", "99.00")}
+        logs = apply_venue_cleared_limits_as_fills(state, pending_keys=pending)
+        self.assertEqual(logs, [])
+        open_n = sum(1 for o in state["orders"] if o["status"] == "open")
+        self.assertGreater(open_n, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

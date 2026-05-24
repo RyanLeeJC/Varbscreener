@@ -50,6 +50,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, 
 from strategy.gridstrat_rearm import (
     PairedGridNumericConfig,
     apply_venue_cleared_limits_as_fills,
+    record_venue_pending_snapshot,
     derive_sim_ladder_params,
     ensure_bracket_rungs_around_mark,
     init_paired_state,
@@ -864,6 +865,8 @@ def _pick_tickers_one_asset(
         state["grid_reset"] = bool(breach_re)
 
     paired_step_logs.extend(ensure_bracket_rungs_around_mark(state, mark=float(mark)))
+
+    record_venue_pending_snapshot(state, pending_keys=venue_pending_keys)
 
     buys, sells = open_rungs_for_meta(state)
     qty_pg = float(state.get("qty_per_grid") or params["qty_per_grid"])
