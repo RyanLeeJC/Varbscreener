@@ -30,6 +30,11 @@ ENV_TRIM_MULTIPLE = "VARIBOT_REBALANCE_TRIM_MULTIPLE"
 ENV_TRIM_FRACTION = "VARIBOT_REBALANCE_TRIM_FRACTION"
 DEFAULT_TRIM_MULTIPLE: float = 0.0  # <= 0 disables per-ticker position trim
 DEFAULT_TRIM_FRACTION: float = 0.5
+# Per-ticker reduce-only trim when position value exceeds cap (e.g. venue $5K @ 50x limit).
+ENV_NOTIONAL_CAP_TRIM_USD = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD"
+ENV_NOTIONAL_CAP_TRIM_FRACTION = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION"
+DEFAULT_NOTIONAL_CAP_TRIM_USD: float = 4500.0
+DEFAULT_NOTIONAL_CAP_TRIM_FRACTION: float = 0.5
 # Each market leg: 2× indicative quote + 1× POST market (see VariEndpoints.quote_id_for_order_qty).
 MARKET_LEG_HTTP_CALLS: int = 3
 
@@ -192,6 +197,80 @@ def trim_constants() -> Tuple[float, float, float]:
     )
 
 
+def notional_cap_trim_constants() -> Tuple[float, float]:
+    """(cap_usd, trim_fraction). cap_usd <= 0 disables notional-cap trimming."""
+    return (
+        _env_float(ENV_NOTIONAL_CAP_TRIM_USD, DEFAULT_NOTIONAL_CAP_TRIM_USD),
+        _env_float(ENV_NOTIONAL_CAP_TRIM_FRACTION, DEFAULT_NOTIONAL_CAP_TRIM_FRACTION),
+    )
+
+
+def _planned_trim_order(
+    pos: LivePosition,
+    *,
+    threshold: float,
+    frac: float,
+    rung_usd: float,
+    min_usd: float,
+) -> Optional[PlannedTrimOrder]:
+    if pos.mark_price <= 0 or pos.quantity <= 0:
+        return None
+    notional = float(pos.notional)
+    if notional <= float(threshold):
+        return None
+    trim_qty = float(pos.quantity) * float(frac)
+    order_notional = trim_qty * float(pos.mark_price)
+    if order_notional < float(min_usd):
+        return None
+    order_side = "sell" if pos.side == "long" else "buy"
+    return PlannedTrimOrder(
+        ticker=pos.ticker,
+        current_side=pos.side,
+        current_notional=notional,
+        rung_usd=float(rung_usd),
+        threshold_notional=float(threshold),
+        trim_fraction=float(frac),
+        order_side=order_side,
+        order_quantity=float(trim_qty),
+        order_notional=float(order_notional),
+    )
+
+
+def plan_notional_cap_trims(
+    positions: Sequence[LivePosition],
+    *,
+    cap_usd: Optional[float] = None,
+    trim_fraction: Optional[float] = None,
+    min_order_usd: Optional[float] = None,
+) -> List[PlannedTrimOrder]:
+    """
+    Reduce-only trim when position value exceeds ``cap_usd`` (default $4,500).
+
+    Trims ``trim_fraction`` of position qty (default 50%) via market order.
+    Set ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD=0`` to disable.
+    """
+    thr, frac = notional_cap_trim_constants()
+    if cap_usd is not None:
+        thr = float(cap_usd)
+    if trim_fraction is not None:
+        frac = float(trim_fraction)
+    _, _, _, min_usd = rebalance_constants()
+    if min_order_usd is not None:
+        min_usd = float(min_order_usd)
+
+    if thr <= 0 or frac <= 0 or frac > 1.0:
+        return []
+
+    out: List[PlannedTrimOrder] = []
+    for pos in positions:
+        planned = _planned_trim_order(
+            pos, threshold=thr, frac=frac, rung_usd=0.0, min_usd=min_usd
+        )
+        if planned is not None:
+            out.append(planned)
+    return out
+
+
 def plan_position_trims(
     positions: Sequence[LivePosition],
     *,
@@ -220,29 +299,11 @@ def plan_position_trims(
     threshold = float(mult) * float(rung)
     out: List[PlannedTrimOrder] = []
     for pos in positions:
-        if pos.mark_price <= 0 or pos.quantity <= 0:
-            continue
-        notional = float(pos.notional)
-        if notional <= threshold:
-            continue
-        trim_qty = float(pos.quantity) * float(frac)
-        order_notional = trim_qty * float(pos.mark_price)
-        if order_notional < float(min_usd):
-            continue
-        order_side = "sell" if pos.side == "long" else "buy"
-        out.append(
-            PlannedTrimOrder(
-                ticker=pos.ticker,
-                current_side=pos.side,
-                current_notional=notional,
-                rung_usd=float(rung),
-                threshold_notional=float(threshold),
-                trim_fraction=float(frac),
-                order_side=order_side,
-                order_quantity=float(trim_qty),
-                order_notional=float(order_notional),
-            )
+        planned = _planned_trim_order(
+            pos, threshold=threshold, frac=frac, rung_usd=float(rung), min_usd=min_usd
         )
+        if planned is not None:
+            out.append(planned)
     return out
 
 
@@ -542,21 +603,25 @@ def _execute_trim_orders(
     dry_run: bool,
     log: Callable[[str], None],
     max_slippage: float,
+    log_tag: str = "position trim",
+    summary_line: Optional[str] = None,
 ) -> bool:
     """Place reduce-only market trims. Returns True if any trim was planned and dry-run/live attempted."""
     if not trims:
         return False
 
-    mult, frac, rung = trim_constants()
     total_vol = sum(t.order_notional for t in trims)
-    log(
-        f"position trim: {len(trims)} ticker(s) over {mult:g}× rung "
-        f"(${rung:g} → threshold ${mult * rung:g}); "
-        f"trim {frac * 100:g}% each; projected_volume=${total_vol:.2f}"
-    )
+    if summary_line is None:
+        mult, frac, rung = trim_constants()
+        summary_line = (
+            f"{log_tag}: {len(trims)} ticker(s) over {mult:g}× rung "
+            f"(${rung:g} → threshold ${mult * rung:g}); "
+            f"trim {frac * 100:g}% each; projected_volume=${total_vol:.2f}"
+        )
+    log(summary_line)
     for t in trims:
         log(
-            f"position trim[{t.ticker}]: {t.current_side} "
+            f"{log_tag}[{t.ticker}]: {t.current_side} "
             f"notional=${t.current_notional:.2f} > ${t.threshold_notional:g} — "
             f"{t.order_side} {t.trim_fraction * 100:g}% qty={t.order_quantity:g} "
             f"notional=${t.order_notional:.2f}"
@@ -564,13 +629,13 @@ def _execute_trim_orders(
 
     if dry_run or not live:
         log(
-            f"position trim: dry-run — would place {len(trims)} reduce-only market order(s); "
+            f"{log_tag}: dry-run — would place {len(trims)} reduce-only market order(s); "
             f"volume≈${total_vol:.2f}"
         )
         return True
 
     pace_s = rebalance_sleep_between_market_orders_s()
-    log(f"position trim: reduce-only market orders; pacing {pace_s:.2f}s between tickers")
+    log(f"{log_tag}: reduce-only market orders; pacing {pace_s:.2f}s between tickers")
     legs_ok = 0
     legs_fail = 0
     n = len(trims)
@@ -586,14 +651,14 @@ def _execute_trim_orders(
         if rc != 0:
             legs_fail += 1
             log(
-                f"position trim[{t.ticker}]: {t.order_side} "
+                f"{log_tag}[{t.ticker}]: {t.order_side} "
                 f"qty={format_qty_for_indicative_api(t.order_quantity)} "
                 f"FAILED ({err or 'unknown'})"
             )
         else:
             legs_ok += 1
             log(
-                f"position trim[{t.ticker}]: {t.order_side} "
+                f"{log_tag}[{t.ticker}]: {t.order_side} "
                 f"qty={format_qty_for_indicative_api(t.order_quantity)} "
                 f"ok order_id={oid!r}"
             )
@@ -601,7 +666,7 @@ def _execute_trim_orders(
             time.sleep(pace_s)
 
     log(
-        f"position trim: complete — ok={legs_ok} failed={legs_fail} "
+        f"{log_tag}: complete — ok={legs_ok} failed={legs_fail} "
         f"(planned volume ${total_vol:.2f})"
     )
     return legs_fail == 0
@@ -623,9 +688,12 @@ def rebalance_portfolio(
     """
     Portfolio maintenance on each call when positions exist:
 
-    1. **Oversized trim** — reduce-only market orders when abs notional exceeds
-       ``VARIBOT_REBALANCE_TRIM_MULTIPLE × grid_rung_usd`` (default off; set e.g. 15 for 15× rung).
-    2. **IM interval risk** — equal-notional rebalance when IM% ≥ trigger.
+    1. **Notional cap trim** — reduce-only market when position value exceeds
+       ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD`` (default $4,500) by
+       ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION`` (default 50%).
+    2. **Rung multiple trim** — when abs notional exceeds
+       ``VARIBOT_REBALANCE_TRIM_MULTIPLE × grid_rung_usd`` (default off).
+    3. **IM interval risk** — equal-notional rebalance when IM% ≥ trigger.
 
     ``varibot_dir`` is kept for API compatibility but no longer used for persistence.
     """
@@ -656,6 +724,25 @@ def rebalance_portfolio(
     elif len(positions) < len(parse_live_positions_from_raw(positions_raw)):
         log("rebalance: some positions skipped — mark_price missing in API payload")
 
+    cap_thr, cap_frac = notional_cap_trim_constants()
+    cap_trims = plan_notional_cap_trims(positions, min_order_usd=min_usd)
+    cap_ran = _execute_trim_orders(
+        ep=ep,
+        trims=cap_trims,
+        live=live,
+        dry_run=dry_run,
+        log=log,
+        max_slippage=max_slippage,
+        log_tag="notional cap trim",
+        summary_line=(
+            f"notional cap trim: {len(cap_trims)} ticker(s) over ${cap_thr:g}; "
+            f"trim {cap_frac * 100:g}% each (reduce-only market); "
+            f"projected_volume=${sum(t.order_notional for t in cap_trims):.2f}"
+            if cap_trims
+            else None
+        ),
+    )
+
     trim_ran = _execute_trim_orders(
         ep=ep,
         trims=plan_position_trims(positions, min_order_usd=min_usd),
@@ -664,6 +751,7 @@ def rebalance_portfolio(
         log=log,
         max_slippage=max_slippage,
     )
+    trim_ran = cap_ran or trim_ran
 
     if im_usage is None:
         log("interval risk: skip — im_usage missing from portfolio snapshot")

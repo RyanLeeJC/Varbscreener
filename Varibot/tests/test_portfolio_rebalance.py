@@ -8,6 +8,7 @@ from portfolio_rebalance import (
     IM_TARGET,
     LivePosition,
     grid_rung_usd_notional,
+    plan_notional_cap_trims,
     plan_portfolio_rebalance,
     plan_position_trims,
     round_to_nearest,
@@ -220,9 +221,54 @@ class TestPlanPortfolioRebalance(unittest.TestCase):
             self.assertEqual(eth.order_side, "sell")
 
 
+class TestPlanNotionalCapTrims(unittest.TestCase):
+    def test_trims_when_over_4500(self) -> None:
+        # $5000 long @ $2000 → sell 50% = 1.25 ETH
+        trims = plan_notional_cap_trims(
+            [_pos("ETH", "long", 2.5, 2000.0)],
+            cap_usd=4500.0,
+            trim_fraction=0.5,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(len(trims), 1)
+        t = trims[0]
+        self.assertEqual(t.order_side, "sell")
+        self.assertAlmostEqual(t.order_quantity, 1.25)
+        self.assertAlmostEqual(t.order_notional, 2500.0)
+        self.assertAlmostEqual(t.threshold_notional, 4500.0)
+
+    def test_at_cap_no_trim(self) -> None:
+        trims = plan_notional_cap_trims(
+            [_pos("ETH", "long", 2.0, 2000.0)],
+            cap_usd=4500.0,
+            trim_fraction=0.5,
+        )
+        self.assertEqual(trims, [])
+
+    def test_short_over_cap_buys(self) -> None:
+        trims = plan_notional_cap_trims(
+            [_pos("XRP", "short", 4000.0, 1.2)],
+            cap_usd=4500.0,
+            trim_fraction=0.5,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(len(trims), 1)
+        self.assertEqual(trims[0].order_side, "buy")
+        self.assertAlmostEqual(trims[0].order_quantity, 2000.0)
+
+    def test_disabled_when_cap_zero(self) -> None:
+        trims = plan_notional_cap_trims(
+            [_pos("ETH", "long", 10.0, 1000.0)],
+            cap_usd=0.0,
+            trim_fraction=0.5,
+        )
+        self.assertEqual(trims, [])
+
+
 class TestPlanPositionTrims(unittest.TestCase):
-    def test_rung_usd_default_200(self) -> None:
-        self.assertEqual(grid_rung_usd_notional(), 200.0)
+    def test_rung_usd_default_matches_gridstrat(self) -> None:
+        # DEFAULT_GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM (20 × 50 / 10 = 100)
+        self.assertEqual(grid_rung_usd_notional(), 100.0)
 
     def test_trims_when_over_threshold(self) -> None:
         # 15 × $200 = $3000; $3500 long → sell 50% of qty

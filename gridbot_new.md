@@ -305,6 +305,10 @@ python3 rebalance_run.py
 | `VARIBOT_REBALANCE_ORDER_INTERVAL_S` | *(auto)* | Seconds between each ticker’s market order; default ≈3.2s at Vari 10 req/10s (3 HTTP calls per leg) |
 | `VARI_RATE_LIMIT_MAX` / `VARI_RATE_LIMIT_WINDOW_S` | `10` / `10` | Per-IP cap used to compute default pacing (also enforced on every HTTP call) |
 | `MAX_SLIPPAGE` | `0.002` | Market order slippage cap |
+| `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD` | `4500` | Per-ticker reduce-only market trim when position value exceeds this (`0` = off) |
+| `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION` | `0.5` | Fraction of position qty to cut per trim (default 50%) |
+
+**Notional cap trim** runs every cycle when you have open positions (before IM rebalance): if any ticker’s position value is **over $4,500**, the bot places a **reduce-only market** order for **50%** of that position’s qty. Grid limits are not canceled.
 
 `varibot.py --live` calls the same logic at the **start of each cycle** when positions exist (no latch).
 
@@ -373,6 +377,39 @@ On the first cycle, `grid_limits_reconcile.run_grid_limits_bootstrap` runs a **h
 2. **`set_leverage` once per asset per cycle** — `_grid_limits_place_limit_fn` calls `set_leverage` on every limit POST (~10× per ticker). Cache per-asset leverage for the reconcile loop.
 
 3. **Env tuning (ops, no code)** — `GRID_ORDERS_MAX_PAGES=2` if full history is needed on cycle 1; avoid `VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE=1` unless debugging.
+
+---
+
+## Render logs (`fetch_render_logs.py`)
+
+Download service logs via the Render API (`GET /v1/logs`). The path `/v1/services/{id}/logs` returns 404; use `Varibot/fetch_render_logs.py` instead (paginates with `hasMore`, max 100 lines per page).
+
+### Usage
+
+From repo root — loads `Render_API_KEY` / `RENDER_API_KEY` from `Varibot/.env` automatically (shell export optional):
+
+```bash
+python3 Varibot/fetch_render_logs.py -o logs.txt
+```
+
+**Defaults:**
+
+- Service: `srv-d86tvu3eo5us73ccj3jg`
+- Window: last 24 hours
+- Output: `logs.txt` (tab-separated `timestamp` + `message`)
+
+**Options:**
+
+```bash
+python3 Varibot/fetch_render_logs.py --hours 48 -o logs.txt
+python3 Varibot/fetch_render_logs.py --all-types          # include build/request logs
+python3 Varibot/fetch_render_logs.py --resume             # after 429 or Ctrl-C
+python3 Varibot/fetch_render_logs.py --delay 2 --chunk-hours 4   # slower / safer
+```
+
+Defaults to **`app` logs only** (fewer API pages than build/request). Paces at **1.25s/page**, splits the window into **4h chunks** with a **5s pause** between chunks, **retries 429** with backoff, and writes **`logs.txt.progress.json`** for `--resume`.
+
+Resolves `ownerId` from the service automatically. A full 24h run can take **~20–40+ minutes** depending on log volume; use `--resume` if rate-limited.
 
 ---
 
