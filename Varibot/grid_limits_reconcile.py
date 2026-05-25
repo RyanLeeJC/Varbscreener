@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from strategy.gridstrat import ROOT_STATE_SCHEMA_VERSION, _default_state_path, iter_grid_asset_metas
+from strategy.gridstrat_rearm import (
+    _pending_keys_from_state,
+    apply_venue_cleared_limits_as_fills,
+)
+from strategy.gridstrat_state import load_state, save_state
 
 from variationalbot.vari.endpoints import VariEndpoints, limit_price_key
 
@@ -513,12 +518,13 @@ def _post_missing_limits(
     place_limit: Callable[..., int],
     log: Callable[[str], None],
     log_prefix: str = "gridlimits reconcile",
-) -> int:
+) -> List[Tuple[str, str]]:
+    """POST missing limits; return (side, price_key) tuples successfully placed."""
     if not want_post:
-        return 0
+        return []
     lim_mark = bool(meta.get("grid_limit_use_mark_price"))
     log(f"{log_prefix}: posting {len(want_post)} missing limit(s) …")
-    ok = 0
+    placed: List[Tuple[str, str]] = []
     for side, px, usd, lq in want_post:
         try:
             rc = place_limit(
@@ -530,11 +536,89 @@ def _post_missing_limits(
                 lq,
             )
             if int(rc) == 0:
-                ok += 1
+                placed.append(limit_price_key(side, float(px)))
         except Exception as e:
             log(f"{log_prefix}: place {side} @ {px:g} failed ({type(e).__name__}: {e})")
-    log(f"{log_prefix}: finished ({ok}/{len(want_post)} placed).")
-    return ok
+    log(f"{log_prefix}: finished ({len(placed)}/{len(want_post)} placed).")
+    return placed
+
+
+def _append_last_venue_pending_keys(asset: str, keys: Set[Tuple[str, str]]) -> None:
+    """Merge keys into gridstrat ``last_venue_pending_keys`` (drift posts run after the tick snapshot)."""
+    if not keys:
+        return
+    path = _default_state_path()
+    root = load_state(path)
+    want = str(asset).strip().upper()
+    asset_st: Optional[Dict[str, Any]] = None
+    if int(root.get("schema_version") or 0) == ROOT_STATE_SCHEMA_VERSION and isinstance(
+        root.get("assets"), dict
+    ):
+        raw = root["assets"].get(want)
+        asset_st = raw if isinstance(raw, dict) else None
+    else:
+        legacy = (os.environ.get("GRID_ASSET") or "BTC").strip().upper()
+        if want == legacy or not root.get("assets"):
+            asset_st = root if isinstance(root, dict) else None
+    if not asset_st:
+        return
+    merged = _pending_keys_from_state(asset_st) | set(keys)
+    asset_st["last_venue_pending_keys"] = [
+        [str(side).lower(), str(pxk)] for side, pxk in sorted(merged)
+    ]
+    if int(root.get("schema_version") or 0) == ROOT_STATE_SCHEMA_VERSION and isinstance(
+        root.get("assets"), dict
+    ):
+        root["assets"][want] = asset_st
+    else:
+        root = asset_st
+    save_state(path, root)
+
+
+def _save_gridstrat_asset_state(asset: str, asset_st: Dict[str, Any]) -> None:
+    path = _default_state_path()
+    root = load_state(path)
+    want = str(asset).strip().upper()
+    if int(root.get("schema_version") or 0) == ROOT_STATE_SCHEMA_VERSION and isinstance(
+        root.get("assets"), dict
+    ):
+        root["assets"][want] = asset_st
+        save_state(path, root)
+        return
+    legacy = (os.environ.get("GRID_ASSET") or "BTC").strip().upper()
+    if want == legacy or not root.get("assets"):
+        save_state(path, asset_st)
+
+
+def _sync_sim_fills_after_drift_post(
+    ep: VariEndpoints,
+    *,
+    asset: str,
+    posted_keys: List[Tuple[str, str]],
+    log: Callable[[str], None],
+    tag: str,
+) -> None:
+    """
+    Drift limits are posted after ``pick_tickers`` snapshots venue pending. Record posted keys
+    and apply venue-cleared fill sync so immediate fills re-arm in sim instead of reposting.
+    """
+    if not posted_keys:
+        return
+    _append_last_venue_pending_keys(asset, set(posted_keys))
+    asset_st = _load_gridstrat_asset_state(asset)
+    if not asset_st:
+        return
+    try:
+        pending_keys = _fetch_pending_limit_keys(ep, asset=asset)
+    except Exception as e:
+        log(f"gridlimits{tag} drift fill-sync: pending refresh failed ({type(e).__name__}: {e})")
+        return
+    logs = apply_venue_cleared_limits_as_fills(asset_st, pending_keys=pending_keys)
+    if not logs:
+        return
+    for ln in logs:
+        log(f"gridlimits{tag} drift fill-sync: {ln}")
+    _save_gridstrat_asset_state(asset, asset_st)
 
 
 def _bootstrap_pending_map(
@@ -855,13 +939,16 @@ def _reconcile_one_ticker(
                 apply_mark_filter=not paired_drift,
             )
             if want_post:
-                _post_missing_limits(
+                placed = _post_missing_limits(
                     meta=ameta,
                     asset=asset,
                     want_post=want_post,
                     place_limit=place_limit,
                     log=log,
                     log_prefix=f"gridlimits{tag} re-arm",
+                )
+                _sync_sim_fills_after_drift_post(
+                    ep, asset=asset, posted_keys=placed, log=log, tag=tag
                 )
             elif template_missing:
                 log(
@@ -892,7 +979,7 @@ def _reconcile_one_ticker(
             log(f"gridlimits{tag} reconcile: no missing buy/sell limits to refill (vs template + mark).")
         return
 
-    _post_missing_limits(
+    placed = _post_missing_limits(
         meta=ameta,
         asset=asset,
         want_post=want_post,
@@ -900,6 +987,7 @@ def _reconcile_one_ticker(
         log=log,
         log_prefix=f"gridlimits{tag} reconcile",
     )
+    _sync_sim_fills_after_drift_post(ep, asset=asset, posted_keys=placed, log=log, tag=tag)
 
 
 def run_grid_limits_bootstrap(

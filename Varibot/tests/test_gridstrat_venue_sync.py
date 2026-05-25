@@ -10,6 +10,11 @@ from strategy.gridstrat_rearm import (
     record_venue_pending_snapshot,
 )
 
+try:
+    from variationalbot.vari.endpoints import limit_price_key
+except ImportError:
+    from Varibot.variationalbot.vari.endpoints import limit_price_key  # type: ignore
+
 
 class TestVenueClearedFillSync(unittest.TestCase):
     def _minimal_state(self) -> dict:
@@ -41,7 +46,7 @@ class TestVenueClearedFillSync(unittest.TestCase):
         orders = state["orders"]
         sell = next(o for o in orders if o["side"] == "sell" and o["status"] == "open")
         pending = {
-            (o["side"], f"{float(o['level']):.2f}")
+            limit_price_key(str(o["side"]), float(o["level"]))
             for o in orders
             if o["side"] == "buy" and o["status"] == "open"
         }
@@ -55,9 +60,9 @@ class TestVenueClearedFillSync(unittest.TestCase):
         state = self._minimal_state()
         orders = state["orders"]
         sell = next(o for o in orders if o["side"] == "sell" and o["status"] == "open")
-        sell_key = ("sell", f"{float(sell['level']):.2f}")
+        sell_key = limit_price_key("sell", float(sell["level"]))
         pending_with_sell = {
-            (o["side"], f"{float(o['level']):.2f}")
+            limit_price_key(str(o["side"]), float(o["level"]))
             for o in orders
             if o["status"] == "open"
         }
@@ -76,6 +81,20 @@ class TestVenueClearedFillSync(unittest.TestCase):
         self.assertEqual(logs, [])
         open_n = sum(1 for o in state["orders"] if o["status"] == "open")
         self.assertGreater(open_n, 0)
+
+    def test_empty_pending_with_last_snapshot_fills_cleared(self) -> None:
+        state = self._minimal_state()
+        orders = state["orders"]
+        buy = next(o for o in orders if o["side"] == "buy" and o["status"] == "open")
+        pending_with_buy = {
+            limit_price_key(str(o["side"]), float(o["level"]))
+            for o in orders
+            if o["status"] == "open"
+        }
+        record_venue_pending_snapshot(state, pending_keys=pending_with_buy)
+        logs = apply_venue_cleared_limits_as_fills(state, pending_keys=set())
+        self.assertTrue(any("venue sync BUY filled" in ln for ln in logs))
+        self.assertEqual(buy["status"], "filled")
 
 
 if __name__ == "__main__":

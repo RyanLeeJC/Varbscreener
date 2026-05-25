@@ -285,11 +285,9 @@ def apply_venue_cleared_limits_as_fills(
     count as fills. Missing sim rungs that were never posted stay OPEN so drift reconcile
     can POST them — avoids falsely filling sells during fast pumps when reconcile lags.
 
-    Requires a non-empty ``pending_keys`` snapshot. An empty set means "no orders on book yet",
-    not "every sim order filled" — callers must skip when ``len(pending_keys) == 0``.
+    When ``pending_keys`` is empty but ``last_venue_pending_keys`` is not, treat cleared keys as
+    fills (entire book filled/cancelled). Skip only when there is no prior snapshot (never seeded).
     """
-    if not pending_keys:
-        return []
     last_seen = _pending_keys_from_state(state)
     if not last_seen:
         return []

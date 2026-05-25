@@ -49,6 +49,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, 
 
 from strategy.gridstrat_rearm import (
     PairedGridNumericConfig,
+    _pending_keys_from_state,
     apply_venue_cleared_limits_as_fills,
     record_venue_pending_snapshot,
     derive_sim_ladder_params,
@@ -846,7 +847,9 @@ def _pick_tickers_one_asset(
         paired["cfg_fingerprint"] = fp
         state = paired
     else:
-        if venue_pending_keys is not None and len(venue_pending_keys) > 0:
+        if venue_pending_keys is not None and (
+            len(venue_pending_keys) > 0 or _pending_keys_from_state(state)
+        ):
             paired_step_logs.extend(
                 apply_venue_cleared_limits_as_fills(state, pending_keys=venue_pending_keys)
             )
