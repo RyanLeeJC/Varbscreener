@@ -400,7 +400,7 @@
       </div>
     </div>
     <div class="meta">
-      <div><span class="label">SYMBOL</span> &nbsp; BTC-PERP</div>
+      <div><span class="label">SYMBOL</span> &nbsp; <span id="meta-symbol">BTC-PERP</span></div>
       <div><span class="label">ANCHOR</span> &nbsp; <span style="color:var(--text)" id="meta-anchor">80,000</span></div>
       <div><span class="label">NOTIONAL</span> &nbsp; <span style="color:var(--text)" id="meta-notional">$400</span></div>
       <div><span class="label">SPACING</span> &nbsp; <span style="color:var(--text)" id="meta-spacing">400 / 0.50%</span></div>
@@ -412,7 +412,7 @@
     <div class="config-grid">
       <div class="cfg-row">
         <label>Investment</label>
-        <input type="range" id="cfg-investment" min="50" max="5000" step="50" value="100">
+        <input type="range" id="cfg-investment" min="10" max="5000" step="10" value="100">
         <span class="val" id="val-investment">$100 <span class="sub">USDC</span></span>
       </div>
       <div class="cfg-row">
@@ -527,6 +527,33 @@
 // ============================================================
 let ANCHOR = 80000;        // mutable: replaced by first close of loaded CSV
 let CUSTOM_DATA = null;    // loaded CSV { prices: number[], times: string[], name: string }
+let ASSET_UNIT = 'BTC';    // from CSV filename (e.g. BINANCE_TONUSDT_1m.csv → TON)
+let PRICE_DECIMALS = 0;    // max dp in loaded CSV price columns (chart axis, marks, levels)
+
+/** Token between first _ and USDT in filename, e.g. BINANCE_TONUSDT_1m.csv → TON */
+function assetFromFilename(filename) {
+  if (!filename) return 'BTC';
+  const base = filename.replace(/\.[^.]+$/, '');
+  const m = base.match(/_([^_]+?)USDT/i);
+  return m ? m[1].toUpperCase() : 'BTC';
+}
+
+function decimalsInCell(s) {
+  const m = String(s).trim().match(/\.(\d+)/);
+  return m ? m[1].length : 0;
+}
+
+/** Max decimal places across OHLC/close columns in CSV text (from raw strings, not floats). */
+function maxDecimalsFromCsvLines(lines, colIndices, startRow = 1) {
+  let max = 0;
+  for (let i = startRow; i < lines.length; i++) {
+    const cells = lines[i].split(',');
+    for (const idx of colIndices) {
+      if (cells[idx] != null) max = Math.max(max, decimalsInCell(cells[idx]));
+    }
+  }
+  return max;
+}
 const TOTAL_TICKS = 200;
 const MM_RATE = 0.005;   // 0.5% maintenance margin (typical for BTC perp)
 
@@ -885,10 +912,22 @@ function simulate(scenarioName, cfg) {
 }
 
 function fmt(n) {
-  return n.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
+  return n.toLocaleString('en-US', {
+    minimumFractionDigits: PRICE_DECIMALS,
+    maximumFractionDigits: PRICE_DECIMALS,
+  });
 }
 function fmt2(n) {
   return n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function formatInventoryQty(inventory, markPrice) {
+  const invSign = inventory >= 0 ? '+' : '-';
+  const qty = Math.abs(inventory).toFixed(2);
+  const notionalUsd = Math.abs(inventory * markPrice);
+  const usd = '($' + notionalUsd.toLocaleString('en-US', {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }) + ')';
+  return invSign + qty + ' ' + ASSET_UNIT + ' ' + usd;
 }
 
 // ============================================================
@@ -1048,12 +1087,11 @@ function render() {
 
   // Stats
   const invEl = document.getElementById('s-inv');
-  const invSign = snap.inventory >= 0 ? '+' : '';
-  invEl.textContent = invSign + snap.inventory.toFixed(6) + ' BTC';
+  invEl.textContent = formatInventoryQty(snap.inventory, px);
   invEl.className = 'v ' + (snap.inventory > 0 ? 'pos' : snap.inventory < 0 ? 'neg' : '');
 
   document.getElementById('s-avg').textContent =
-    snap.avgEntry == null ? '—' : fmt2(snap.avgEntry);
+    snap.avgEntry == null ? '—' : fmt(snap.avgEntry);
 
   const pnlEl = document.getElementById('s-pnl');
   pnlEl.textContent = '$' + fmt2(snap.realizedPnl);
@@ -1106,13 +1144,13 @@ function render() {
 
     if (snap.inventory > 0) {
       // Long position — long liq is the active one
-      liqLongEl.textContent = '$' + fmt2(liqLong);
+      liqLongEl.textContent = fmt(liqLong);
       liqLongEl.className = 'v neg';
       liqShortEl.textContent = '—';
       liqShortEl.className = 'v';
     } else {
       // Short position — short liq is the active one
-      liqShortEl.textContent = '$' + fmt2(liqShort);
+      liqShortEl.textContent = fmt(liqShort);
       liqShortEl.className = 'v neg';
       liqLongEl.textContent = '—';
       liqLongEl.className = 'v';
@@ -1169,9 +1207,11 @@ function updateConfigDisplay() {
   document.getElementById('meta-notional').textContent =
     '$' + (CFG.investmentUsd * CFG.leverage).toLocaleString('en-US');
   document.getElementById('meta-spacing').textContent =
-    `${params.spacing.toFixed(params.spacing < 10 ? 2 : 0)} / ${(params.spacing/ANCHOR*100).toFixed(3)}%`;
+    `${params.spacing.toFixed(PRICE_DECIMALS)} / ${(params.spacing/ANCHOR*100).toFixed(3)}%`;
   document.getElementById('meta-qty').textContent =
-    `${params.qtyPerGrid.toFixed(6)} BTC`;
+    `${params.qtyPerGrid.toFixed(6)} ${ASSET_UNIT}`;
+  document.getElementById('meta-symbol').textContent =
+    CUSTOM_DATA ? `${ASSET_UNIT}-PERP` : 'BTC-PERP';
 }
 
 document.getElementById('cfg-gridnum').addEventListener('input', e => {
@@ -1296,6 +1336,12 @@ function parseCsv(text) {
   }
   if (timeIdx < 0) throw new Error('CSV must have a "time" column');
 
+  const ohlcCols = ['open', 'high', 'low', 'close', 'price']
+    .map(n => headerCells.indexOf(n))
+    .filter(i => i >= 0);
+  const priceDecimals = maxDecimalsFromCsvLines(
+    lines, ohlcCols.length ? ohlcCols : [closeIdx]);
+
   const prices = [];
   const times = [];
   for (let i = 1; i < lines.length; i++) {
@@ -1308,10 +1354,11 @@ function parseCsv(text) {
     prices.push(p);
   }
   if (prices.length < 2) throw new Error('CSV contains fewer than 2 valid rows');
-  return { prices, times };
+  return { prices, times, priceDecimals };
 }
 
 function parseCsvNoHeader(lines) {
+  const priceDecimals = maxDecimalsFromCsvLines(lines, [1], 0);
   const prices = [], times = [];
   for (let i = 0; i < lines.length; i++) {
     const cells = lines[i].split(',');
@@ -1322,7 +1369,7 @@ function parseCsvNoHeader(lines) {
     prices.push(p);
   }
   if (prices.length < 2) throw new Error('CSV contains fewer than 2 valid rows');
-  return { prices, times };
+  return { prices, times, priceDecimals };
 }
 
 function formatTimeRange(times) {
@@ -1349,12 +1396,16 @@ csvInput.addEventListener('change', (e) => {
       const text = ev.target.result;
       const parsed = parseCsv(text);
       CUSTOM_DATA = { ...parsed, name: file.name };
+      ASSET_UNIT = assetFromFilename(file.name);
+      PRICE_DECIMALS = parsed.priceDecimals ?? 0;
 
       // Set anchor to first close — this is the bot's deploy-time mark
       ANCHOR = parsed.prices[0];
 
       // Update status UI
-      const range = `${parsed.prices.length} rows · ${formatTimeRange(parsed.times)} · ${parsed.prices.length} closes (${Math.min(...parsed.prices).toFixed(0)}–${Math.max(...parsed.prices).toFixed(0)})`;
+      const pMin = Math.min(...parsed.prices);
+      const pMax = Math.max(...parsed.prices);
+      const range = `${parsed.prices.length} rows · ${formatTimeRange(parsed.times)} · ${parsed.prices.length} closes (${pMin.toFixed(PRICE_DECIMALS)}–${pMax.toFixed(PRICE_DECIMALS)})`;
       csvStatus.textContent = `${file.name} — ${range}`;
       csvStatus.className = 'csv-status active';
       csvLoadBtn.classList.add('loaded');
@@ -1397,6 +1448,8 @@ csvInput.addEventListener('change', (e) => {
 
 csvClearBtn.addEventListener('click', () => {
   CUSTOM_DATA = null;
+  ASSET_UNIT = 'BTC';
+  PRICE_DECIMALS = 0;
   ANCHOR = 80000;
   csvStatus.textContent = 'no file — using synthetic scenarios';
   csvStatus.className = 'csv-status';

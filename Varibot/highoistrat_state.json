@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "btc": {
+    "qty": 0.25,
+    "avg": 79763.78659098006,
+    "realized": 0.0,
+    "volume_usd": 19940.946647745015,
+    "adj_count": 2
+  },
+  "eth": {
+    "qty": -9.09090909090909,
+    "avg": 2192.5877357607287,
+    "realized": 0.0,
+    "volume_usd": 19932.615779642987,
+    "adj_count": 2
+  },
+  "reduce_count": 1,
+  "add_count": 0,
+  "rebalance_count": 0,
+  "last_check_unix": 1779618736.936873,
+  "sync_count": 0,
+  "last_ethbtc": 0.0
+}
