@@ -115,7 +115,7 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     "XAU": 1.0,
     "COPPER": 1.0,
     "BNB": 1.0,
-    "XPT": 1.5,
+    "XPT": 1.0,
     # ±2% band
     "AVAX": 2.0,
     "AAVE": 2.0,
