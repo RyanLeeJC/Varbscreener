@@ -91,9 +91,9 @@ class TestRemnantUsesConfiguredBand(unittest.TestCase):
             result=result, venue_pending_keys=pending, mark=1.795
         )
         # With depth-only cancels, 1.859 isn't canceled unless keep depth is exceeded.
+        # Outward-only refill: next rung above 1.848 exceeds expanded band at this mark → skip.
         sell_posts = [px for side, px in post if side == "sell"]
-        self.assertEqual(len(sell_posts), 1)
-        self.assertAlmostEqual(sell_posts[0], 1.8052, places=3)
+        self.assertEqual(len(sell_posts), 0)
 
 
 class TestRemnantProtectedWindow(unittest.TestCase):
@@ -127,17 +127,17 @@ class TestRemnantProtectedWindow(unittest.TestCase):
 
 class TestRemnantProximityHug(unittest.TestCase):
     def test_posts_intermediate_rungs_toward_mark(self) -> None:
-        # One sell short of window N; proximity should fill inward toward mark.
+        # One in-band sell short of window N; refill posts one rung (outward or toward mark).
         pending = {
-            ("sell", grid_limit_price_key(110.0)),
-            ("sell", grid_limit_price_key(111.0)),
-            ("sell", grid_limit_price_key(112.0)),
-            ("sell", grid_limit_price_key(113.0)),
-            ("buy", grid_limit_price_key(90.0)),
-            ("buy", grid_limit_price_key(89.0)),
-            ("buy", grid_limit_price_key(88.0)),
-            ("buy", grid_limit_price_key(87.0)),
-            ("buy", grid_limit_price_key(86.0)),
+            ("sell", grid_limit_price_key(101.0)),
+            ("sell", grid_limit_price_key(102.0)),
+            ("sell", grid_limit_price_key(103.0)),
+            ("sell", grid_limit_price_key(104.0)),
+            ("buy", grid_limit_price_key(99.0)),
+            ("buy", grid_limit_price_key(98.0)),
+            ("buy", grid_limit_price_key(97.0)),
+            ("buy", grid_limit_price_key(96.0)),
+            ("buy", grid_limit_price_key(95.0)),
         }
         result = infer_ladder_from_remnants(
             mark=100.0,
@@ -147,12 +147,12 @@ class TestRemnantProximityHug(unittest.TestCase):
             upper=150.0,
             grid_num=10,
             nearest_n=5,
-            grid_band_pct=10.0,
+            grid_band_pct=20.0,
         )
         cancel, post = compute_venue_actions(result=result, venue_pending_keys=pending, mark=100.0)
         sell_posts = [px for side, px in post if side == "sell"]
-        # Should try to insert 109 (from nearest sell=110 toward mark); not when already at N sells.
-        self.assertTrue(any(abs(px - 109.0) < 1e-6 for px in sell_posts))
+        self.assertEqual(1, len(sell_posts))
+        self.assertTrue(abs(sell_posts[0] - 105.0) < 1e-6)  # outward from 104
 
     def test_sufficient_window_skips_proximity_hug(self) -> None:
         # Rungs inside expanded ±20% band around mark=100 (avoid far 110+ sells outside win_upper).
@@ -181,6 +181,33 @@ class TestRemnantProximityHug(unittest.TestCase):
         self.assertTrue(result.sufficient)
         _, post = compute_venue_actions(result=result, venue_pending_keys=pending, mark=100.0)
         self.assertEqual([], [px for side, px in post if side == "sell"])
+
+    def test_at_most_one_post_per_missing_inband_rung(self) -> None:
+        # 4 in-band sells, N=5 → at most 1 sell post this cycle (no gap + count double-up).
+        pending = {
+            ("sell", grid_limit_price_key(110.0)),
+            ("sell", grid_limit_price_key(111.0)),
+            ("sell", grid_limit_price_key(112.0)),
+            ("sell", grid_limit_price_key(113.0)),
+            ("buy", grid_limit_price_key(90.0)),
+            ("buy", grid_limit_price_key(89.0)),
+            ("buy", grid_limit_price_key(88.0)),
+            ("buy", grid_limit_price_key(87.0)),
+            ("buy", grid_limit_price_key(86.0)),
+        }
+        result = infer_ladder_from_remnants(
+            mark=100.0,
+            venue_pending_keys=pending,
+            configured_spacing=1.0,
+            lower=50.0,
+            upper=150.0,
+            grid_num=10,
+            nearest_n=5,
+            grid_band_pct=10.0,
+        )
+        _, post = compute_venue_actions(result=result, venue_pending_keys=pending, mark=100.0)
+        sell_posts = [px for side, px in post if side == "sell"]
+        self.assertLessEqual(len(sell_posts), 1)
 
 
 if __name__ == "__main__":

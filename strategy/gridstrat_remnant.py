@@ -374,10 +374,11 @@ def _missing_rungs_to_post(
     Fill toward the mark first, then outward from existing remnants (no full re-lattice).
     If there are no remnants on this side, seed from the mark-centered window.
     """
-    need = n - len(inband)
-    if need <= 0:
+    initial_need = n - len(inband)
+    if initial_need <= 0:
         return []
 
+    need = initial_need
     mark_f = float(mark)
     posts: List[float] = []
 
@@ -393,10 +394,10 @@ def _missing_rungs_to_post(
         for px in seed:
             if not _on_venue(venue_pending_keys, side, px):
                 posts.append(px)
-        return posts[:need]
+        return posts[:initial_need]
 
     if side == "sell":
-        # Outward first: resting limits away from mark are less likely to fill instantly.
+        # Outward only — toward-mark refills fill instantly on RWAs and loop every cycle.
         base = max(inband)
         for _ in range(n + 2):
             if need <= 0:
@@ -408,21 +409,8 @@ def _missing_rungs_to_post(
                 posts.append(cand)
                 need -= 1
             base = cand
-        # Toward mark only if still short on count.
-        if need > 0:
-            base = min(inband)
-            for _ in range(n + 2):
-                if need <= 0:
-                    break
-                cand = _price_key_float(base - spacing)
-                if cand <= mark_f + 1e-9:
-                    break
-                if cand >= win_lower - 1e-9 and not _on_venue(venue_pending_keys, side, cand):
-                    posts.append(cand)
-                    need -= 1
-                base = cand
     else:
-        # buy: outward = step down from lowest buy; toward mark = step up from highest buy.
+        # buy: outward = step down from lowest buy (away from mark).
         base = min(inband)
         for _ in range(n + 2):
             if need <= 0:
@@ -434,20 +422,8 @@ def _missing_rungs_to_post(
                 posts.append(cand)
                 need -= 1
             base = cand
-        if need > 0:
-            base = max(inband)
-            for _ in range(n + 2):
-                if need <= 0:
-                    break
-                cand = _price_key_float(base + spacing)
-                if cand >= mark_f - 1e-9:
-                    break
-                if cand <= win_upper + 1e-9 and not _on_venue(venue_pending_keys, side, cand):
-                    posts.append(cand)
-                    need -= 1
-                base = cand
 
-    return posts
+    return posts[:initial_need]
 
 
 def _infer_spacing_from_remnants(
@@ -747,67 +723,53 @@ def compute_venue_actions(
             for _, k in sells[keep_depth:]:
                 cancel_keys.add(k)
 
-    # --- Posts: optional proximity hug (only when short on in-band count), then count fill ---
+    # --- Posts: at most (N - inband) per side per cycle (outward-first via _missing_rungs_to_post) ---
     post_rungs: List[Tuple[str, float]] = []
     tmp_pending = set(venue_pending_keys)
 
-    # Proximity gap fills toward mark can rest inside 1 spacing and fill every cycle on RWAs.
-    # Only run when the side is actually short on in-band depth.
-    if len(result.inband_buys) < n:
-        for px in _gap_posts_toward_mark(
+    def _append_posts(side: str, prices: List[float], *, cap: int) -> None:
+        if cap <= 0:
+            return
+        added = 0
+        for px in prices:
+            if added >= cap:
+                break
+            if not _far_enough(side, px):
+                continue
+            post_rungs.append((side, px))
+            tmp_pending.add((side, grid_limit_price_key(px)))
+            added += 1
+
+    # At most one POST per side per cycle (prevents same-tick double posts on RWAs).
+    buy_need = min(1, max(0, n - len(result.inband_buys)))
+    sell_need = min(1, max(0, n - len(result.inband_sells)))
+    _append_posts(
+        "buy",
+        _missing_rungs_to_post(
             side="buy",
             mark=mark_f,
             spacing=float(result.buy_spacing),
+            n=n,
             inband=list(result.inband_buys),
             win_lower=float(result.lower),
             win_upper=float(result.upper),
             venue_pending_keys=tmp_pending,
-            max_steps=n + 2,
-        ):
-            if _far_enough("buy", px):
-                post_rungs.append(("buy", px))
-                tmp_pending.add(("buy", grid_limit_price_key(px)))
-    if len(result.inband_sells) < n:
-        for px in _gap_posts_toward_mark(
+        ),
+        cap=buy_need,
+    )
+    _append_posts(
+        "sell",
+        _missing_rungs_to_post(
             side="sell",
             mark=mark_f,
             spacing=float(result.sell_spacing),
+            n=n,
             inband=list(result.inband_sells),
             win_lower=float(result.lower),
             win_upper=float(result.upper),
             venue_pending_keys=tmp_pending,
-            max_steps=n + 2,
-        ):
-            if _far_enough("sell", px):
-                post_rungs.append(("sell", px))
-                tmp_pending.add(("sell", grid_limit_price_key(px)))
-
-    # Count fill (uses updated tmp_pending so we don't double-post)
-    for px in _missing_rungs_to_post(
-        side="buy",
-        mark=mark_f,
-        spacing=float(result.buy_spacing),
-        n=n,
-        inband=list(result.inband_buys),
-        win_lower=float(result.lower),
-        win_upper=float(result.upper),
-        venue_pending_keys=tmp_pending,
-    ):
-        if _far_enough("buy", px):
-            post_rungs.append(("buy", px))
-            tmp_pending.add(("buy", grid_limit_price_key(px)))
-    for px in _missing_rungs_to_post(
-        side="sell",
-        mark=mark_f,
-        spacing=float(result.sell_spacing),
-        n=n,
-        inband=list(result.inband_sells),
-        win_lower=float(result.lower),
-        win_upper=float(result.upper),
-        venue_pending_keys=tmp_pending,
-    ):
-        if _far_enough("sell", px):
-            post_rungs.append(("sell", px))
-            tmp_pending.add(("sell", grid_limit_price_key(px)))
+        ),
+        cap=sell_need,
+    )
 
     return cancel_keys, post_rungs
