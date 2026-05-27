@@ -2591,14 +2591,19 @@ def one_cycle(
             _log(f"step: gridstrat grid_mode events={n_ev}")
             if meta.get("grid_paired_limit_mode"):
                 _log_gridstrat_step_summary(meta, positions_label="flat")
-            _run_grid_limits_bootstrap_if_grid(
-                ep=ep,
-                meta=meta,
-                args=args,
-                cycle_index=cycle_index,
-                has_positions=bool(has_pos and not grid_ignore_pos),
-                pending_by_asset=cycle_pending_by,
-            )
+            # Prevent double-posting: if gridstrat emitted limit events this cycle, let those run
+            # and skip remnant reconcile (which may otherwise post the same rung concurrently).
+            if n_ev == 0:
+                _run_grid_limits_bootstrap_if_grid(
+                    ep=ep,
+                    meta=meta,
+                    args=args,
+                    cycle_index=cycle_index,
+                    has_positions=bool(has_pos and not grid_ignore_pos),
+                    pending_by_asset=cycle_pending_by,
+                )
+            else:
+                _log("gridlimits reconcile: skip (gridstrat emitted events this cycle).")
             _execute_grid_market_events(meta, args=args)
             return False
 
@@ -2690,14 +2695,17 @@ def one_cycle(
                 if meta_g.get("grid_paired_limit_mode"):
                     _log_gridstrat_step_summary(meta_g, positions_label="open positions")
                     _log_gridstrat_paired_step(meta_g, prefix="gridstrat")
-                _run_grid_limits_bootstrap_if_grid(
-                    ep=ep,
-                    meta=meta_g,
-                    args=args,
-                    cycle_index=cycle_index,
-                    has_positions=True,
-                    pending_by_asset=cycle_pending_pos,
-                )
+                if n_ev == 0:
+                    _run_grid_limits_bootstrap_if_grid(
+                        ep=ep,
+                        meta=meta_g,
+                        args=args,
+                        cycle_index=cycle_index,
+                        has_positions=True,
+                        pending_by_asset=cycle_pending_pos,
+                    )
+                else:
+                    _log("gridlimits reconcile: skip (gridstrat emitted events this cycle).")
                 _execute_grid_market_events(meta_g, args=args)
                 return False
         except Exception as e:
