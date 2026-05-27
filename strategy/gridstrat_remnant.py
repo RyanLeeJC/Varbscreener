@@ -505,6 +505,8 @@ class RemnantInferenceResult:
         spacing: float,
         lower: float,
         upper: float,
+        band_frac: float,
+        grid_num: int,
         protected_buys: List[float],
         protected_sells: List[float],
         inband_buys: List[float],
@@ -517,6 +519,8 @@ class RemnantInferenceResult:
         self.spacing = spacing
         self.lower = lower
         self.upper = upper
+        self.band_frac = float(band_frac)
+        self.grid_num = int(grid_num)
         self.protected_buys = protected_buys
         self.protected_sells = protected_sells
         self.inband_buys = inband_buys
@@ -561,8 +565,8 @@ def infer_ladder_from_remnants(
     n = nearest_n if nearest_n is not None else _env_nearest_n(grid_num)
 
     # Expanded band around *today's mark* from configured grid_band_pct (+ N formula).
-    band_pct = half_band_fraction(grid_band_pct=grid_band_pct, lower=lower, upper=upper)
-    band_tol = expanded_band_tolerance(band_pct, grid_num)
+    band_frac = half_band_fraction(grid_band_pct=grid_band_pct, lower=lower, upper=upper)
+    band_tol = expanded_band_tolerance(band_frac, grid_num)
     win_lower = mark_f * (1.0 - band_tol)
     win_upper = mark_f * (1.0 + band_tol)
 
@@ -650,6 +654,8 @@ def infer_ladder_from_remnants(
         spacing=use_spacing,
         lower=float(win_lower),
         upper=float(win_upper),
+        band_frac=float(band_frac),
+        grid_num=int(grid_num),
         protected_buys=protected_buys,
         protected_sells=protected_sells,
         inband_buys=inband_buys,
@@ -681,6 +687,20 @@ def compute_venue_actions(
 
     mark_f = float(mark)
     n = int(result.window_n)
+    grid_num = max(1, int(getattr(result, "grid_num", n * 2)))
+    band_frac = float(getattr(result, "band_frac", 0.0))
+
+    # Never post within 1/4 rung of mark.
+    # rung_pct ≈ (2 * band_frac) / grid_num  => buffer = rung_pct / 4 = band_frac / (2*grid_num)
+    buffer_frac = band_frac / (2.0 * grid_num) if band_frac > 0 else 0.0
+    min_gap = mark_f * buffer_frac
+
+    def _far_enough(side: str, px: float) -> bool:
+        if min_gap <= 0:
+            return True
+        if side == "buy":
+            return (mark_f - float(px)) >= (min_gap - 1e-9)
+        return (float(px) - mark_f) >= (min_gap - 1e-9)
 
     # Protected window keys
     protected_keys: Set[Tuple[str, str]] = set()
@@ -742,8 +762,9 @@ def compute_venue_actions(
         venue_pending_keys=tmp_pending,
         max_steps=n + 2,
     ):
-        post_rungs.append(("buy", px))
-        tmp_pending.add(("buy", grid_limit_price_key(px)))
+        if _far_enough("buy", px):
+            post_rungs.append(("buy", px))
+            tmp_pending.add(("buy", grid_limit_price_key(px)))
     for px in _gap_posts_toward_mark(
         side="sell",
         mark=mark_f,
@@ -754,8 +775,9 @@ def compute_venue_actions(
         venue_pending_keys=tmp_pending,
         max_steps=n + 2,
     ):
-        post_rungs.append(("sell", px))
-        tmp_pending.add(("sell", grid_limit_price_key(px)))
+        if _far_enough("sell", px):
+            post_rungs.append(("sell", px))
+            tmp_pending.add(("sell", grid_limit_price_key(px)))
 
     # Count fill (uses updated tmp_pending so we don't double-post)
     for px in _missing_rungs_to_post(
@@ -768,8 +790,9 @@ def compute_venue_actions(
         win_upper=float(result.upper),
         venue_pending_keys=tmp_pending,
     ):
-        post_rungs.append(("buy", px))
-        tmp_pending.add(("buy", grid_limit_price_key(px)))
+        if _far_enough("buy", px):
+            post_rungs.append(("buy", px))
+            tmp_pending.add(("buy", grid_limit_price_key(px)))
     for px in _missing_rungs_to_post(
         side="sell",
         mark=mark_f,
@@ -780,7 +803,8 @@ def compute_venue_actions(
         win_upper=float(result.upper),
         venue_pending_keys=tmp_pending,
     ):
-        post_rungs.append(("sell", px))
-        tmp_pending.add(("sell", grid_limit_price_key(px)))
+        if _far_enough("sell", px):
+            post_rungs.append(("sell", px))
+            tmp_pending.add(("sell", grid_limit_price_key(px)))
 
     return cancel_keys, post_rungs

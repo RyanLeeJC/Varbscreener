@@ -3,694 +3,694 @@
   "tickers": {
     "XAG": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"XAG\", \"band_pct\": 1.0, \"bounds_auto\": true, \"lower\": 74.91527760622277, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 76.42871755786364}",
+      "meta_fingerprint": "{\"asset\": \"XAG\", \"band_pct\": 1.0, \"bounds_auto\": true, \"lower\": 75.23938681012393, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 76.75937442244967}",
       "grid_asset": "XAG",
-      "grid_mark_at_write": 75.6719975820432,
+      "grid_mark_at_write": 75.9993806162868,
       "bounds": {
-        "lower": 74.91527760622277,
-        "upper": 76.42871755786364,
+        "lower": 75.23938681012393,
+        "upper": 76.75937442244967,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "0.6607",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "1.316",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 74.91527760622277,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 75.23938681012393,
+          "usd": 100.0,
+          "qty": "1.316"
         },
         {
           "side": "buy",
-          "limit_price": 75.06662160138686,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 75.39138557135651,
+          "usd": 100.0,
+          "qty": "1.316"
         },
         {
           "side": "buy",
-          "limit_price": 75.21796559655094,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 75.54338433258908,
+          "usd": 100.0,
+          "qty": "1.316"
         },
         {
           "side": "buy",
-          "limit_price": 75.36930959171504,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 75.69538309382165,
+          "usd": 100.0,
+          "qty": "1.316"
         },
         {
           "side": "buy",
-          "limit_price": 75.52065358687912,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 75.84738185505422,
+          "usd": 100.0,
+          "qty": "1.316"
         },
         {
           "side": "sell",
-          "limit_price": 75.82334157720729,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 76.15137937751938,
+          "usd": 100.0,
+          "qty": "1.316"
         },
         {
           "side": "sell",
-          "limit_price": 75.97468557237137,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 76.30337813875195,
+          "usd": 100.0,
+          "qty": "1.316"
         },
         {
           "side": "sell",
-          "limit_price": 76.12602956753547,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 76.45537689998451,
+          "usd": 100.0,
+          "qty": "1.316"
         },
         {
           "side": "sell",
-          "limit_price": 76.27737356269955,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 76.60737566121709,
+          "usd": 100.0,
+          "qty": "1.316"
         },
         {
           "side": "sell",
-          "limit_price": 76.42871755786364,
-          "usd": 50.0,
-          "qty": "0.6607"
+          "limit_price": 76.75937442244967,
+          "usd": 100.0,
+          "qty": "1.316"
         }
       ]
     },
     "XAU": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"XAU\", \"band_pct\": 1.0, \"bounds_auto\": true, \"lower\": 4466.71118222202, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 4556.94777176186}",
+      "meta_fingerprint": "{\"asset\": \"XAU\", \"band_pct\": 1.0, \"bounds_auto\": true, \"lower\": 4457.193142822892, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 4547.237448738505}",
       "grid_asset": "XAU",
-      "grid_mark_at_write": 4511.82947699194,
+      "grid_mark_at_write": 4502.215295780698,
       "bounds": {
-        "lower": 4466.71118222202,
-        "upper": 4556.94777176186,
+        "lower": 4457.193142822892,
+        "upper": 4547.237448738505,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "0.01108",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "0.02221",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 4466.71118222202,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4457.193142822892,
+          "usd": 100.0,
+          "qty": "0.02221"
         },
         {
           "side": "buy",
-          "limit_price": 4475.734841176004,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4466.1975734144535,
+          "usd": 100.0,
+          "qty": "0.02221"
         },
         {
           "side": "buy",
-          "limit_price": 4484.7585001299885,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4475.202004006014,
+          "usd": 100.0,
+          "qty": "0.02221"
         },
         {
           "side": "buy",
-          "limit_price": 4493.782159083972,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4484.206434597576,
+          "usd": 100.0,
+          "qty": "0.02221"
         },
         {
           "side": "buy",
-          "limit_price": 4502.805818037957,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4493.210865189137,
+          "usd": 100.0,
+          "qty": "0.02221"
         },
         {
           "side": "sell",
-          "limit_price": 4520.853135945924,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4511.21972637226,
+          "usd": 100.0,
+          "qty": "0.02221"
         },
         {
           "side": "sell",
-          "limit_price": 4529.876794899908,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4520.224156963821,
+          "usd": 100.0,
+          "qty": "0.02221"
         },
         {
           "side": "sell",
-          "limit_price": 4538.900453853892,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4529.228587555383,
+          "usd": 100.0,
+          "qty": "0.02221"
         },
         {
           "side": "sell",
-          "limit_price": 4547.924112807877,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4538.233018146943,
+          "usd": 100.0,
+          "qty": "0.02221"
         },
         {
           "side": "sell",
-          "limit_price": 4556.94777176186,
-          "usd": 50.0,
-          "qty": "0.01108"
+          "limit_price": 4547.237448738505,
+          "usd": 100.0,
+          "qty": "0.02221"
         }
       ]
     },
     "COPPER": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"COPPER\", \"band_pct\": 1.0, \"bounds_auto\": true, \"lower\": 6.282733549750465, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 6.409657459846435}",
+      "meta_fingerprint": "{\"asset\": \"COPPER\", \"band_pct\": 1.0, \"bounds_auto\": true, \"lower\": 6.327723914704873, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 6.455556721062547}",
       "grid_asset": "COPPER",
-      "grid_mark_at_write": 6.34619550479845,
+      "grid_mark_at_write": 6.39164031788371,
       "bounds": {
-        "lower": 6.282733549750465,
-        "upper": 6.409657459846435,
+        "lower": 6.327723914704873,
+        "upper": 6.455556721062547,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "7.879",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "15.65",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 6.282733549750465,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.327723914704873,
+          "usd": 100.0,
+          "qty": "15.65"
         },
         {
           "side": "buy",
-          "limit_price": 6.295425940760062,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.340507195340641,
+          "usd": 100.0,
+          "qty": "15.65"
         },
         {
           "side": "buy",
-          "limit_price": 6.308118331769659,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.353290475976408,
+          "usd": 100.0,
+          "qty": "15.65"
         },
         {
           "side": "buy",
-          "limit_price": 6.320810722779256,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.366073756612176,
+          "usd": 100.0,
+          "qty": "15.65"
         },
         {
           "side": "buy",
-          "limit_price": 6.333503113788853,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.3788570372479425,
+          "usd": 100.0,
+          "qty": "15.65"
         },
         {
           "side": "sell",
-          "limit_price": 6.358887895808047,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.404423598519478,
+          "usd": 100.0,
+          "qty": "15.65"
         },
         {
           "side": "sell",
-          "limit_price": 6.371580286817644,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.417206879155245,
+          "usd": 100.0,
+          "qty": "15.65"
         },
         {
           "side": "sell",
-          "limit_price": 6.384272677827241,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.4299901597910125,
+          "usd": 100.0,
+          "qty": "15.65"
         },
         {
           "side": "sell",
-          "limit_price": 6.396965068836838,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.442773440426779,
+          "usd": 100.0,
+          "qty": "15.65"
         },
         {
           "side": "sell",
-          "limit_price": 6.409657459846435,
-          "usd": 50.0,
-          "qty": "7.879"
+          "limit_price": 6.455556721062547,
+          "usd": 100.0,
+          "qty": "15.65"
         }
       ]
     },
     "BNB": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"BNB\", \"band_pct\": 1.0, \"bounds_auto\": true, \"lower\": 640.2463917989297, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 653.1806623403223}",
+      "meta_fingerprint": "{\"asset\": \"BNB\", \"band_pct\": 1.0, \"bounds_auto\": true, \"lower\": 650.8284339925169, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 663.976483164083}",
       "grid_asset": "BNB",
-      "grid_mark_at_write": 646.713527069626,
+      "grid_mark_at_write": 657.4024585783,
       "bounds": {
-        "lower": 640.2463917989297,
-        "upper": 653.1806623403223,
+        "lower": 650.8284339925169,
+        "upper": 663.976483164083,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "0.07731",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "0.1521",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 640.2463917989297,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 650.8284339925169,
+          "usd": 100.0,
+          "qty": "0.1521"
         },
         {
           "side": "buy",
-          "limit_price": 641.5398188530689,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 652.1432389096735,
+          "usd": 100.0,
+          "qty": "0.1521"
         },
         {
           "side": "buy",
-          "limit_price": 642.8332459072083,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 653.4580438268301,
+          "usd": 100.0,
+          "qty": "0.1521"
         },
         {
           "side": "buy",
-          "limit_price": 644.1266729613475,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 654.7728487439867,
+          "usd": 100.0,
+          "qty": "0.1521"
         },
         {
           "side": "buy",
-          "limit_price": 645.4201000154868,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 656.0876536611433,
+          "usd": 100.0,
+          "qty": "0.1521"
         },
         {
           "side": "sell",
-          "limit_price": 648.0069541237652,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 658.7172634954566,
+          "usd": 100.0,
+          "qty": "0.1521"
         },
         {
           "side": "sell",
-          "limit_price": 649.3003811779046,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 660.0320684126132,
+          "usd": 100.0,
+          "qty": "0.1521"
         },
         {
           "side": "sell",
-          "limit_price": 650.5938082320438,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 661.3468733297698,
+          "usd": 100.0,
+          "qty": "0.1521"
         },
         {
           "side": "sell",
-          "limit_price": 651.8872352861831,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 662.6616782469264,
+          "usd": 100.0,
+          "qty": "0.1521"
         },
         {
           "side": "sell",
-          "limit_price": 653.1806623403223,
-          "usd": 50.0,
-          "qty": "0.07731"
+          "limit_price": 663.976483164083,
+          "usd": 100.0,
+          "qty": "0.1521"
         }
       ]
     },
     "AVAX": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"AVAX\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 8.93103327688104, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 9.29556524736598}",
+      "meta_fingerprint": "{\"asset\": \"AVAX\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 9.040904708861774, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 9.409921227590825}",
       "grid_asset": "AVAX",
-      "grid_mark_at_write": 9.11329926212351,
+      "grid_mark_at_write": 9.2254129682263,
       "bounds": {
-        "lower": 8.93103327688104,
-        "upper": 9.29556524736598,
+        "lower": 9.040904708861774,
+        "upper": 9.409921227590825,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "5.486",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "10.84",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 8.93103327688104,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.040904708861774,
+          "usd": 100.0,
+          "qty": "10.84"
         },
         {
           "side": "buy",
-          "limit_price": 8.967486473929535,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.077806360734678,
+          "usd": 100.0,
+          "qty": "10.84"
         },
         {
           "side": "buy",
-          "limit_price": 9.003939670978028,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.114708012607585,
+          "usd": 100.0,
+          "qty": "10.84"
         },
         {
           "side": "buy",
-          "limit_price": 9.040392868026522,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.151609664480489,
+          "usd": 100.0,
+          "qty": "10.84"
         },
         {
           "side": "buy",
-          "limit_price": 9.076846065075015,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.188511316353395,
+          "usd": 100.0,
+          "qty": "10.84"
         },
         {
           "side": "sell",
-          "limit_price": 9.149752459172005,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.262314620099204,
+          "usd": 100.0,
+          "qty": "10.84"
         },
         {
           "side": "sell",
-          "limit_price": 9.186205656220498,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.29921627197211,
+          "usd": 100.0,
+          "qty": "10.84"
         },
         {
           "side": "sell",
-          "limit_price": 9.222658853268992,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.336117923845014,
+          "usd": 100.0,
+          "qty": "10.84"
         },
         {
           "side": "sell",
-          "limit_price": 9.259112050317485,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.37301957571792,
+          "usd": 100.0,
+          "qty": "10.84"
         },
         {
           "side": "sell",
-          "limit_price": 9.29556524736598,
-          "usd": 50.0,
-          "qty": "5.486"
+          "limit_price": 9.409921227590825,
+          "usd": 100.0,
+          "qty": "10.84"
         }
       ]
     },
     "AAVE": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"AAVE\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 83.3961302699219, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 86.80005395440851}",
+      "meta_fingerprint": "{\"asset\": \"AAVE\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 84.38797784182577, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 87.83238510067582}",
       "grid_asset": "AAVE",
-      "grid_mark_at_write": 85.0980921121652,
+      "grid_mark_at_write": 86.1101814712508,
       "bounds": {
-        "lower": 83.3961302699219,
-        "upper": 86.80005395440851,
+        "lower": 84.38797784182577,
+        "upper": 87.83238510067582,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "0.5876",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "1.161",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 83.3961302699219,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 84.38797784182577,
+          "usd": 100.0,
+          "qty": "1.161"
         },
         {
           "side": "buy",
-          "limit_price": 83.73652263837056,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 84.73241856771078,
+          "usd": 100.0,
+          "qty": "1.161"
         },
         {
           "side": "buy",
-          "limit_price": 84.07691500681922,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 85.07685929359579,
+          "usd": 100.0,
+          "qty": "1.161"
         },
         {
           "side": "buy",
-          "limit_price": 84.41730737526788,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 85.42130001948078,
+          "usd": 100.0,
+          "qty": "1.161"
         },
         {
           "side": "buy",
-          "limit_price": 84.75769974371654,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 85.76574074536579,
+          "usd": 100.0,
+          "qty": "1.161"
         },
         {
           "side": "sell",
-          "limit_price": 85.43848448061387,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 86.4546221971358,
+          "usd": 100.0,
+          "qty": "1.161"
         },
         {
           "side": "sell",
-          "limit_price": 85.77887684906253,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 86.79906292302081,
+          "usd": 100.0,
+          "qty": "1.161"
         },
         {
           "side": "sell",
-          "limit_price": 86.11926921751119,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 87.1435036489058,
+          "usd": 100.0,
+          "qty": "1.161"
         },
         {
           "side": "sell",
-          "limit_price": 86.45966158595985,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 87.48794437479081,
+          "usd": 100.0,
+          "qty": "1.161"
         },
         {
           "side": "sell",
-          "limit_price": 86.80005395440851,
-          "usd": 50.0,
-          "qty": "0.5876"
+          "limit_price": 87.83238510067582,
+          "usd": 100.0,
+          "qty": "1.161"
         }
       ]
     },
     "SOL": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"SOL\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 82.12516423622043, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 85.47721175606617}",
+      "meta_fingerprint": "{\"asset\": \"SOL\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 82.27151529323689, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 85.62953632561391}",
       "grid_asset": "SOL",
-      "grid_mark_at_write": 83.8011879961433,
+      "grid_mark_at_write": 83.9505258094254,
       "bounds": {
-        "lower": 82.12516423622043,
-        "upper": 85.47721175606617,
+        "lower": 82.27151529323689,
+        "upper": 85.62953632561391,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "0.5967",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "1.191",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 82.12516423622043,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 82.27151529323689,
+          "usd": 100.0,
+          "qty": "1.191"
         },
         {
           "side": "buy",
-          "limit_price": 82.460368988205,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 82.60731739647458,
+          "usd": 100.0,
+          "qty": "1.191"
         },
         {
           "side": "buy",
-          "limit_price": 82.79557374018958,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 82.9431194997123,
+          "usd": 100.0,
+          "qty": "1.191"
         },
         {
           "side": "buy",
-          "limit_price": 83.13077849217414,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 83.27892160294999,
+          "usd": 100.0,
+          "qty": "1.191"
         },
         {
           "side": "buy",
-          "limit_price": 83.46598324415872,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 83.6147237061877,
+          "usd": 100.0,
+          "qty": "1.191"
         },
         {
           "side": "sell",
-          "limit_price": 84.13639274812788,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 84.2863279126631,
+          "usd": 100.0,
+          "qty": "1.191"
         },
         {
           "side": "sell",
-          "limit_price": 84.47159750011245,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 84.62213001590081,
+          "usd": 100.0,
+          "qty": "1.191"
         },
         {
           "side": "sell",
-          "limit_price": 84.80680225209701,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 84.9579321191385,
+          "usd": 100.0,
+          "qty": "1.191"
         },
         {
           "side": "sell",
-          "limit_price": 85.14200700408159,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 85.29373422237622,
+          "usd": 100.0,
+          "qty": "1.191"
         },
         {
           "side": "sell",
-          "limit_price": 85.47721175606617,
-          "usd": 50.0,
-          "qty": "0.5967"
+          "limit_price": 85.62953632561391,
+          "usd": 100.0,
+          "qty": "1.191"
         }
       ]
     },
     "XRP": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"XRP\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 1.3094853716609463, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 1.3629337541777196}",
+      "meta_fingerprint": "{\"asset\": \"XRP\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 1.3118666313857552, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 1.3654122081770106}",
       "grid_asset": "XRP",
-      "grid_mark_at_write": 1.336209562919333,
+      "grid_mark_at_write": 1.338639419781383,
       "bounds": {
-        "lower": 1.3094853716609463,
-        "upper": 1.3629337541777196,
+        "lower": 1.3118666313857552,
+        "upper": 1.3654122081770106,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "37.42",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "74.7",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 1.3094853716609463,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.3118666313857552,
+          "usd": 100.0,
+          "qty": "74.7"
         },
         {
           "side": "buy",
-          "limit_price": 1.3148302099126237,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.3172211890648808,
+          "usd": 100.0,
+          "qty": "74.7"
         },
         {
           "side": "buy",
-          "limit_price": 1.3201750481643009,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.3225757467440062,
+          "usd": 100.0,
+          "qty": "74.7"
         },
         {
           "side": "buy",
-          "limit_price": 1.3255198864159783,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.3279303044231319,
+          "usd": 100.0,
+          "qty": "74.7"
         },
         {
           "side": "buy",
-          "limit_price": 1.3308647246676555,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.3332848621022573,
+          "usd": 100.0,
+          "qty": "74.7"
         },
         {
           "side": "sell",
-          "limit_price": 1.3415544011710103,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.3439939774605085,
+          "usd": 100.0,
+          "qty": "74.7"
         },
         {
           "side": "sell",
-          "limit_price": 1.3468992394226875,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.349348535139634,
+          "usd": 100.0,
+          "qty": "74.7"
         },
         {
           "side": "sell",
-          "limit_price": 1.352244077674365,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.3547030928187596,
+          "usd": 100.0,
+          "qty": "74.7"
         },
         {
           "side": "sell",
-          "limit_price": 1.3575889159260421,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.360057650497885,
+          "usd": 100.0,
+          "qty": "74.7"
         },
         {
           "side": "sell",
-          "limit_price": 1.3629337541777196,
-          "usd": 50.0,
-          "qty": "37.42"
+          "limit_price": 1.3654122081770106,
+          "usd": 100.0,
+          "qty": "74.7"
         }
       ]
     },
     "CL": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"CL\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 94.54914314384344, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 98.40829184359215}",
+      "meta_fingerprint": "{\"asset\": \"CL\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 92.14194018891396, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 95.90283570682882}",
       "grid_asset": "CL",
-      "grid_mark_at_write": 96.4787174937178,
+      "grid_mark_at_write": 94.0223879478714,
       "bounds": {
-        "lower": 94.54914314384344,
-        "upper": 98.40829184359215,
+        "lower": 92.14194018891396,
+        "upper": 95.90283570682882,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "0.5182",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "1.064",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 94.54914314384344,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 92.14194018891396,
+          "usd": 100.0,
+          "qty": "1.064"
         },
         {
           "side": "buy",
-          "limit_price": 94.9350580138183,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 92.51802974070544,
+          "usd": 100.0,
+          "qty": "1.064"
         },
         {
           "side": "buy",
-          "limit_price": 95.32097288379317,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 92.89411929249694,
+          "usd": 100.0,
+          "qty": "1.064"
         },
         {
           "side": "buy",
-          "limit_price": 95.70688775376806,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 93.27020884428842,
+          "usd": 100.0,
+          "qty": "1.064"
         },
         {
           "side": "buy",
-          "limit_price": 96.09280262374293,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 93.64629839607991,
+          "usd": 100.0,
+          "qty": "1.064"
         },
         {
           "side": "sell",
-          "limit_price": 96.86463236369266,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 94.39847749966287,
+          "usd": 100.0,
+          "qty": "1.064"
         },
         {
           "side": "sell",
-          "limit_price": 97.25054723366753,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 94.77456705145437,
+          "usd": 100.0,
+          "qty": "1.064"
         },
         {
           "side": "sell",
-          "limit_price": 97.63646210364242,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 95.15065660324585,
+          "usd": 100.0,
+          "qty": "1.064"
         },
         {
           "side": "sell",
-          "limit_price": 98.02237697361728,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 95.52674615503734,
+          "usd": 100.0,
+          "qty": "1.064"
         },
         {
           "side": "sell",
-          "limit_price": 98.40829184359215,
-          "usd": 50.0,
-          "qty": "0.5182"
+          "limit_price": 95.90283570682882,
+          "usd": 100.0,
+          "qty": "1.064"
         }
       ]
     },
@@ -773,155 +773,155 @@
     },
     "SUI": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"SUI\", \"band_pct\": 3.0, \"bounds_auto\": true, \"lower\": 1.0091306845715373, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 1.0715511392873027}",
+      "meta_fingerprint": "{\"asset\": \"SUI\", \"band_pct\": 3.0, \"bounds_auto\": true, \"lower\": 0.9866336658391484, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 1.0476625523858998}",
       "grid_asset": "SUI",
-      "grid_mark_at_write": 1.04034091192942,
+      "grid_mark_at_write": 1.017148109112524,
       "bounds": {
-        "lower": 1.0091306845715373,
-        "upper": 1.0715511392873027,
+        "lower": 0.9866336658391484,
+        "upper": 1.0476625523858998,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "48.06",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "98.31",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 1.0091306845715373,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 0.9866336658391484,
+          "usd": 100.0,
+          "qty": "98.31"
         },
         {
           "side": "buy",
-          "limit_price": 1.015372730043114,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 0.9927365544938235,
+          "usd": 100.0,
+          "qty": "98.31"
         },
         {
           "side": "buy",
-          "limit_price": 1.0216147755146905,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 0.9988394431484986,
+          "usd": 100.0,
+          "qty": "98.31"
         },
         {
           "side": "buy",
-          "limit_price": 1.0278568209862669,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 1.0049423318031738,
+          "usd": 100.0,
+          "qty": "98.31"
         },
         {
           "side": "buy",
-          "limit_price": 1.0340988664578434,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 1.0110452204578488,
+          "usd": 100.0,
+          "qty": "98.31"
         },
         {
           "side": "sell",
-          "limit_price": 1.0465829574009966,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 1.0232509977671993,
+          "usd": 100.0,
+          "qty": "98.31"
         },
         {
           "side": "sell",
-          "limit_price": 1.0528250028725732,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 1.0293538864218743,
+          "usd": 100.0,
+          "qty": "98.31"
         },
         {
           "side": "sell",
-          "limit_price": 1.0590670483441496,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 1.0354567750765495,
+          "usd": 100.0,
+          "qty": "98.31"
         },
         {
           "side": "sell",
-          "limit_price": 1.0653090938157261,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 1.0415596637312245,
+          "usd": 100.0,
+          "qty": "98.31"
         },
         {
           "side": "sell",
-          "limit_price": 1.0715511392873027,
-          "usd": 50.0,
-          "qty": "48.06"
+          "limit_price": 1.0476625523858998,
+          "usd": 100.0,
+          "qty": "98.31"
         }
       ]
     },
     "TAO": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"TAO\", \"band_pct\": 3.0, \"bounds_auto\": true, \"lower\": 262.70211266419875, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 278.951727880541}",
+      "meta_fingerprint": "{\"asset\": \"TAO\", \"band_pct\": 3.0, \"bounds_auto\": true, \"lower\": 274.48794339047475, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 291.4665790641124}",
       "grid_asset": "TAO",
-      "grid_mark_at_write": 270.8269202723699,
+      "grid_mark_at_write": 282.9772612272936,
       "bounds": {
-        "lower": 262.70211266419875,
-        "upper": 278.951727880541,
+        "lower": 274.48794339047475,
+        "upper": 291.4665790641124,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "0.1846",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "0.3534",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 262.70211266419875,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 274.48794339047475,
+          "usd": 100.0,
+          "qty": "0.3534"
         },
         {
           "side": "buy",
-          "limit_price": 264.327074185833,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 276.1858069578385,
+          "usd": 100.0,
+          "qty": "0.3534"
         },
         {
           "side": "buy",
-          "limit_price": 265.9520357074672,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 277.88367052520226,
+          "usd": 100.0,
+          "qty": "0.3534"
         },
         {
           "side": "buy",
-          "limit_price": 267.57699722910144,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 279.5815340925661,
+          "usd": 100.0,
+          "qty": "0.3534"
         },
         {
           "side": "buy",
-          "limit_price": 269.2019587507356,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 281.2793976599298,
+          "usd": 100.0,
+          "qty": "0.3534"
         },
         {
           "side": "sell",
-          "limit_price": 272.4518817940041,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 284.67512479465734,
+          "usd": 100.0,
+          "qty": "0.3534"
         },
         {
           "side": "sell",
-          "limit_price": 274.0768433156383,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 286.3729883620211,
+          "usd": 100.0,
+          "qty": "0.3534"
         },
         {
           "side": "sell",
-          "limit_price": 275.70180483727256,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 288.0708519293849,
+          "usd": 100.0,
+          "qty": "0.3534"
         },
         {
           "side": "sell",
-          "limit_price": 277.32676635890675,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 289.76871549674865,
+          "usd": 100.0,
+          "qty": "0.3534"
         },
         {
           "side": "sell",
-          "limit_price": 278.951727880541,
-          "usd": 50.0,
-          "qty": "0.1846"
+          "limit_price": 291.4665790641124,
+          "usd": 100.0,
+          "qty": "0.3534"
         }
       ]
     },
@@ -1004,158 +1004,312 @@
     },
     "VIRTUAL": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"VIRTUAL\", \"band_pct\": 3.0, \"bounds_auto\": true, \"lower\": 0.7023655011515268, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 0.7458107898825492}",
+      "meta_fingerprint": "{\"asset\": \"VIRTUAL\", \"band_pct\": 3.0, \"bounds_auto\": true, \"lower\": 0.7923433793141947, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 0.8413543099934233}",
       "grid_asset": "VIRTUAL",
-      "grid_mark_at_write": 0.724088145517038,
+      "grid_mark_at_write": 0.816848844653809,
       "bounds": {
-        "lower": 0.7023655011515268,
-        "upper": 0.7458107898825492,
+        "lower": 0.7923433793141947,
+        "upper": 0.8413543099934233,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "69.05",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "122.4",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 0.7023655011515268,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.7923433793141947,
+          "usd": 100.0,
+          "qty": "122.4"
         },
         {
           "side": "buy",
-          "limit_price": 0.7067100300246291,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.7972444723821176,
+          "usd": 100.0,
+          "qty": "122.4"
         },
         {
           "side": "buy",
-          "limit_price": 0.7110545588977313,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.8021455654500405,
+          "usd": 100.0,
+          "qty": "122.4"
         },
         {
           "side": "buy",
-          "limit_price": 0.7153990877708336,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.8070466585179633,
+          "usd": 100.0,
+          "qty": "122.4"
         },
         {
           "side": "buy",
-          "limit_price": 0.7197436166439358,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.8119477515858862,
+          "usd": 100.0,
+          "qty": "122.4"
         },
         {
           "side": "sell",
-          "limit_price": 0.7284326743901403,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.8217499377217319,
+          "usd": 100.0,
+          "qty": "122.4"
         },
         {
           "side": "sell",
-          "limit_price": 0.7327772032632425,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.8266510307896547,
+          "usd": 100.0,
+          "qty": "122.4"
         },
         {
           "side": "sell",
-          "limit_price": 0.7371217321363448,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.8315521238575776,
+          "usd": 100.0,
+          "qty": "122.4"
         },
         {
           "side": "sell",
-          "limit_price": 0.741466261009447,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.8364532169255005,
+          "usd": 100.0,
+          "qty": "122.4"
         },
         {
           "side": "sell",
-          "limit_price": 0.7458107898825492,
-          "usd": 50.0,
-          "qty": "69.05"
+          "limit_price": 0.8413543099934233,
+          "usd": 100.0,
+          "qty": "122.4"
         }
       ]
     },
     "TON": {
       "version": 2,
-      "meta_fingerprint": "{\"asset\": \"TON\", \"band_pct\": 3.0, \"bounds_auto\": true, \"lower\": 1.722816220293852, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 1.829382172064606}",
+      "meta_fingerprint": "{\"asset\": \"TON\", \"band_pct\": 3.0, \"bounds_auto\": true, \"lower\": 1.8464754983280918, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 1.960690477606118}",
       "grid_asset": "TON",
-      "grid_mark_at_write": 1.776099196179229,
+      "grid_mark_at_write": 1.903582987967105,
       "bounds": {
-        "lower": 1.722816220293852,
-        "upper": 1.829382172064606,
+        "lower": 1.8464754983280918,
+        "upper": 1.960690477606118,
         "n_grids": 10,
         "grid_type": "arithmetic"
       },
-      "per_rung_usd": 50.0,
-      "per_rung_qty": "28.15",
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "52.53",
       "grid_limit_sizing": "qty",
       "limits": [
         {
           "side": "buy",
-          "limit_price": 1.722816220293852,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.8464754983280918,
+          "usd": 100.0,
+          "qty": "52.53"
         },
         {
           "side": "buy",
-          "limit_price": 1.7334728154709274,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.8578969962558944,
+          "usd": 100.0,
+          "qty": "52.53"
         },
         {
           "side": "buy",
-          "limit_price": 1.7441294106480028,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.869318494183697,
+          "usd": 100.0,
+          "qty": "52.53"
         },
         {
           "side": "buy",
-          "limit_price": 1.7547860058250782,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.8807399921114996,
+          "usd": 100.0,
+          "qty": "52.53"
         },
         {
           "side": "buy",
-          "limit_price": 1.7654426010021536,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.8921614900393022,
+          "usd": 100.0,
+          "qty": "52.53"
         },
         {
           "side": "sell",
-          "limit_price": 1.7867557913563044,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.9150044858949076,
+          "usd": 100.0,
+          "qty": "52.53"
         },
         {
           "side": "sell",
-          "limit_price": 1.7974123865333798,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.9264259838227102,
+          "usd": 100.0,
+          "qty": "52.53"
         },
         {
           "side": "sell",
-          "limit_price": 1.8080689817104552,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.9378474817505127,
+          "usd": 100.0,
+          "qty": "52.53"
         },
         {
           "side": "sell",
-          "limit_price": 1.8187255768875306,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.9492689796783154,
+          "usd": 100.0,
+          "qty": "52.53"
         },
         {
           "side": "sell",
-          "limit_price": 1.829382172064606,
-          "usd": 50.0,
-          "qty": "28.15"
+          "limit_price": 1.960690477606118,
+          "usd": 100.0,
+          "qty": "52.53"
+        }
+      ]
+    },
+    "XPT": {
+      "version": 2,
+      "meta_fingerprint": "{\"asset\": \"XPT\", \"band_pct\": 1.5, \"bounds_auto\": true, \"lower\": 1916.5474507610004, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 1974.9194543374774}",
+      "grid_asset": "XPT",
+      "grid_mark_at_write": 1945.733452549239,
+      "bounds": {
+        "lower": 1916.5474507610004,
+        "upper": 1974.9194543374774,
+        "n_grids": 10,
+        "grid_type": "arithmetic"
+      },
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "0.05139",
+      "grid_limit_sizing": "qty",
+      "limits": [
+        {
+          "side": "buy",
+          "limit_price": 1916.5474507610002,
+          "usd": 100.0,
+          "qty": "0.05139"
+        },
+        {
+          "side": "buy",
+          "limit_price": 1922.384651118648,
+          "usd": 100.0,
+          "qty": "0.05139"
+        },
+        {
+          "side": "buy",
+          "limit_price": 1928.2218514762958,
+          "usd": 100.0,
+          "qty": "0.05139"
+        },
+        {
+          "side": "buy",
+          "limit_price": 1934.0590518339434,
+          "usd": 100.0,
+          "qty": "0.05139"
+        },
+        {
+          "side": "buy",
+          "limit_price": 1939.896252191591,
+          "usd": 100.0,
+          "qty": "0.05139"
+        },
+        {
+          "side": "sell",
+          "limit_price": 1951.5706529068866,
+          "usd": 100.0,
+          "qty": "0.05139"
+        },
+        {
+          "side": "sell",
+          "limit_price": 1957.4078532645342,
+          "usd": 100.0,
+          "qty": "0.05139"
+        },
+        {
+          "side": "sell",
+          "limit_price": 1963.2450536221818,
+          "usd": 100.0,
+          "qty": "0.05139"
+        },
+        {
+          "side": "sell",
+          "limit_price": 1969.0822539798296,
+          "usd": 100.0,
+          "qty": "0.05139"
+        },
+        {
+          "side": "sell",
+          "limit_price": 1974.9194543374774,
+          "usd": 100.0,
+          "qty": "0.05139"
+        }
+      ]
+    },
+    "LINK": {
+      "version": 2,
+      "meta_fingerprint": "{\"asset\": \"LINK\", \"band_pct\": 2.0, \"bounds_auto\": true, \"lower\": 9.226921482339897, \"n\": 10, \"type\": \"arithmetic\", \"upper\": 9.603530522435403}",
+      "grid_asset": "LINK",
+      "grid_mark_at_write": 9.41522600238765,
+      "bounds": {
+        "lower": 9.226921482339897,
+        "upper": 9.603530522435403,
+        "n_grids": 10,
+        "grid_type": "arithmetic"
+      },
+      "per_rung_usd": 100.0,
+      "per_rung_qty": "10.62",
+      "grid_limit_sizing": "qty",
+      "limits": [
+        {
+          "side": "buy",
+          "limit_price": 9.226921482339897,
+          "usd": 100.0,
+          "qty": "10.62"
+        },
+        {
+          "side": "buy",
+          "limit_price": 9.264582386349447,
+          "usd": 100.0,
+          "qty": "10.62"
+        },
+        {
+          "side": "buy",
+          "limit_price": 9.302243290358998,
+          "usd": 100.0,
+          "qty": "10.62"
+        },
+        {
+          "side": "buy",
+          "limit_price": 9.339904194368549,
+          "usd": 100.0,
+          "qty": "10.62"
+        },
+        {
+          "side": "buy",
+          "limit_price": 9.3775650983781,
+          "usd": 100.0,
+          "qty": "10.62"
+        },
+        {
+          "side": "sell",
+          "limit_price": 9.4528869063972,
+          "usd": 100.0,
+          "qty": "10.62"
+        },
+        {
+          "side": "sell",
+          "limit_price": 9.49054781040675,
+          "usd": 100.0,
+          "qty": "10.62"
+        },
+        {
+          "side": "sell",
+          "limit_price": 9.528208714416301,
+          "usd": 100.0,
+          "qty": "10.62"
+        },
+        {
+          "side": "sell",
+          "limit_price": 9.565869618425852,
+          "usd": 100.0,
+          "qty": "10.62"
+        },
+        {
+          "side": "sell",
+          "limit_price": 9.603530522435403,
+          "usd": 100.0,
+          "qty": "10.62"
         }
       ]
     }
   },
-  "updated_at": "2026-05-23T15:33:06.867324+00:00"
+  "updated_at": "2026-05-26T16:13:28.849511+00:00"
 }
