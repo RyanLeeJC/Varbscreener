@@ -127,13 +127,12 @@ class TestRemnantProtectedWindow(unittest.TestCase):
 
 class TestRemnantProximityHug(unittest.TestCase):
     def test_posts_intermediate_rungs_toward_mark(self) -> None:
-        # Sells are far above mark but "sufficient" by count; proximity should fill inward.
+        # One sell short of window N; proximity should fill inward toward mark.
         pending = {
             ("sell", grid_limit_price_key(110.0)),
             ("sell", grid_limit_price_key(111.0)),
             ("sell", grid_limit_price_key(112.0)),
             ("sell", grid_limit_price_key(113.0)),
-            ("sell", grid_limit_price_key(114.0)),
             ("buy", grid_limit_price_key(90.0)),
             ("buy", grid_limit_price_key(89.0)),
             ("buy", grid_limit_price_key(88.0)),
@@ -152,9 +151,36 @@ class TestRemnantProximityHug(unittest.TestCase):
         )
         cancel, post = compute_venue_actions(result=result, venue_pending_keys=pending, mark=100.0)
         sell_posts = [px for side, px in post if side == "sell"]
-        # Should try to insert 109, 108, 107, 106 (from nearest sell=110 toward mark).
+        # Should try to insert 109 (from nearest sell=110 toward mark); not when already at N sells.
         self.assertTrue(any(abs(px - 109.0) < 1e-6 for px in sell_posts))
-        self.assertTrue(any(abs(px - 108.0) < 1e-6 for px in sell_posts))
+
+    def test_sufficient_window_skips_proximity_hug(self) -> None:
+        # Rungs inside expanded ±20% band around mark=100 (avoid far 110+ sells outside win_upper).
+        pending = {
+            ("sell", grid_limit_price_key(101.0)),
+            ("sell", grid_limit_price_key(102.0)),
+            ("sell", grid_limit_price_key(103.0)),
+            ("sell", grid_limit_price_key(104.0)),
+            ("sell", grid_limit_price_key(105.0)),
+            ("buy", grid_limit_price_key(99.0)),
+            ("buy", grid_limit_price_key(98.0)),
+            ("buy", grid_limit_price_key(97.0)),
+            ("buy", grid_limit_price_key(96.0)),
+            ("buy", grid_limit_price_key(95.0)),
+        }
+        result = infer_ladder_from_remnants(
+            mark=100.0,
+            venue_pending_keys=pending,
+            configured_spacing=1.0,
+            lower=50.0,
+            upper=150.0,
+            grid_num=10,
+            nearest_n=5,
+            grid_band_pct=20.0,
+        )
+        self.assertTrue(result.sufficient)
+        _, post = compute_venue_actions(result=result, venue_pending_keys=pending, mark=100.0)
+        self.assertEqual([], [px for side, px in post if side == "sell"])
 
 
 if __name__ == "__main__":

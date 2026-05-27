@@ -396,53 +396,53 @@ def _missing_rungs_to_post(
         return posts[:need]
 
     if side == "sell":
-        # Toward mark: step down from nearest sell above mark.
-        base = min(inband)
-        for _ in range(n + 2):
-            if need <= 0:
-                break
-            cand = _price_key_float(base - spacing)
-            if cand <= mark_f + 1e-9:
-                break
-            if cand >= win_lower - 1e-9 and not _on_venue(venue_pending_keys, side, cand):
-                posts.append(cand)
-                need -= 1
-            base = cand
-        # Outward: step up from furthest sell.
-        if need > 0:
-            base = max(inband)
-            for _ in range(n + 2):
-                if need <= 0:
-                    break
-                cand = _price_key_float(base + spacing)
-                if cand > win_upper + 1e-9:
-                    break
-                if cand > mark_f + 1e-9 and not _on_venue(venue_pending_keys, side, cand):
-                    posts.append(cand)
-                    need -= 1
-                base = cand
-    else:
-        # buy: toward mark = step up from highest buy; outward = step down from lowest buy.
+        # Outward first: resting limits away from mark are less likely to fill instantly.
         base = max(inband)
         for _ in range(n + 2):
             if need <= 0:
                 break
             cand = _price_key_float(base + spacing)
-            if cand >= mark_f - 1e-9:
+            if cand > win_upper + 1e-9:
                 break
-            if cand <= win_upper + 1e-9 and not _on_venue(venue_pending_keys, side, cand):
+            if cand > mark_f + 1e-9 and not _on_venue(venue_pending_keys, side, cand):
                 posts.append(cand)
                 need -= 1
             base = cand
+        # Toward mark only if still short on count.
         if need > 0:
             base = min(inband)
             for _ in range(n + 2):
                 if need <= 0:
                     break
                 cand = _price_key_float(base - spacing)
-                if cand < win_lower - 1e-9:
+                if cand <= mark_f + 1e-9:
                     break
-                if cand < mark_f - 1e-9 and not _on_venue(venue_pending_keys, side, cand):
+                if cand >= win_lower - 1e-9 and not _on_venue(venue_pending_keys, side, cand):
+                    posts.append(cand)
+                    need -= 1
+                base = cand
+    else:
+        # buy: outward = step down from lowest buy; toward mark = step up from highest buy.
+        base = min(inband)
+        for _ in range(n + 2):
+            if need <= 0:
+                break
+            cand = _price_key_float(base - spacing)
+            if cand < win_lower - 1e-9:
+                break
+            if cand < mark_f - 1e-9 and not _on_venue(venue_pending_keys, side, cand):
+                posts.append(cand)
+                need -= 1
+            base = cand
+        if need > 0:
+            base = max(inband)
+            for _ in range(n + 2):
+                if need <= 0:
+                    break
+                cand = _price_key_float(base + spacing)
+                if cand >= mark_f - 1e-9:
+                    break
+                if cand <= win_upper + 1e-9 and not _on_venue(venue_pending_keys, side, cand):
                     posts.append(cand)
                     need -= 1
                 base = cand
@@ -747,37 +747,40 @@ def compute_venue_actions(
             for _, k in sells[keep_depth:]:
                 cancel_keys.add(k)
 
-    # --- Posts: proximity fill toward mark, then fill missing count per side ---
+    # --- Posts: optional proximity hug (only when short on in-band count), then count fill ---
     post_rungs: List[Tuple[str, float]] = []
     tmp_pending = set(venue_pending_keys)
 
-    # Proximity gap fills (minimal churn)
-    for px in _gap_posts_toward_mark(
-        side="buy",
-        mark=mark_f,
-        spacing=float(result.buy_spacing),
-        inband=list(result.inband_buys),
-        win_lower=float(result.lower),
-        win_upper=float(result.upper),
-        venue_pending_keys=tmp_pending,
-        max_steps=n + 2,
-    ):
-        if _far_enough("buy", px):
-            post_rungs.append(("buy", px))
-            tmp_pending.add(("buy", grid_limit_price_key(px)))
-    for px in _gap_posts_toward_mark(
-        side="sell",
-        mark=mark_f,
-        spacing=float(result.sell_spacing),
-        inband=list(result.inband_sells),
-        win_lower=float(result.lower),
-        win_upper=float(result.upper),
-        venue_pending_keys=tmp_pending,
-        max_steps=n + 2,
-    ):
-        if _far_enough("sell", px):
-            post_rungs.append(("sell", px))
-            tmp_pending.add(("sell", grid_limit_price_key(px)))
+    # Proximity gap fills toward mark can rest inside 1 spacing and fill every cycle on RWAs.
+    # Only run when the side is actually short on in-band depth.
+    if len(result.inband_buys) < n:
+        for px in _gap_posts_toward_mark(
+            side="buy",
+            mark=mark_f,
+            spacing=float(result.buy_spacing),
+            inband=list(result.inband_buys),
+            win_lower=float(result.lower),
+            win_upper=float(result.upper),
+            venue_pending_keys=tmp_pending,
+            max_steps=n + 2,
+        ):
+            if _far_enough("buy", px):
+                post_rungs.append(("buy", px))
+                tmp_pending.add(("buy", grid_limit_price_key(px)))
+    if len(result.inband_sells) < n:
+        for px in _gap_posts_toward_mark(
+            side="sell",
+            mark=mark_f,
+            spacing=float(result.sell_spacing),
+            inband=list(result.inband_sells),
+            win_lower=float(result.lower),
+            win_upper=float(result.upper),
+            venue_pending_keys=tmp_pending,
+            max_steps=n + 2,
+        ):
+            if _far_enough("sell", px):
+                post_rungs.append(("sell", px))
+                tmp_pending.add(("sell", grid_limit_price_key(px)))
 
     # Count fill (uses updated tmp_pending so we don't double-post)
     for px in _missing_rungs_to_post(

@@ -593,7 +593,7 @@ def _remnant_rearm_one_ticker(
             f"(venue pending={len(pending_keys)}, mark={mark_f:g})"
         )
 
-    # Decide actions every cycle (proximity hugging can post/cancel even when sufficient).
+    # Decide actions every cycle (proximity hug only when a side is short on in-band depth).
     cancel_keys, post_rungs = compute_venue_actions(
         result=result,
         venue_pending_keys=pending_keys,
