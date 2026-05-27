@@ -56,8 +56,8 @@ CHECK_INTERVAL_MIN: int = 1
 # - Optionally refill closed slots by refreshing the Varibot strategy listing snapshot and opening replacements.
 PM_REFILL_DEFAULT_ON: bool = True
 
-# Grid (``strategy/gridstrat``): after each ``grid_mode`` tick, write ``Varibot/gridlimits.json`` via
-# ``sync_gridlimits_json`` for ``grid_limits_reconcile``. Set ``VARIBOT_SYNC_GRIDLIMITS_JSON=0`` to skip.
+# Grid (``strategy/gridstrat``): after each ``grid_mode`` tick, ``grid_limits_reconcile`` runs remnant
+# re-arm (``VARIBOT_GRID_LIMITS_RECONCILE=0`` to disable live limit POST/cancel).
 # Live limit reconcile defaults ON (``grid_limits_reconcile.GRID_LIMITS_RECONCILE_DEFAULT``); no Railway env
 # required. Set ``VARIBOT_GRID_LIMITS_RECONCILE=0`` to disable. Drift refill auto-on with paired_limit;
 # drift cancel defaults off (refill missing rungs after fills; see grid_limits_reconcile).
@@ -131,6 +131,7 @@ from grid_limits_reconcile import (  # noqa: E402
     bulk_pending_fetch_enabled,
     fetch_pending_limit_keys_by_assets,
     fetch_pending_limit_keys_for_asset,
+    grid_limits_reconcile_enabled,
     run_grid_limits_bootstrap,
 )
 from positions import _instrument_label  # noqa: E402
@@ -1534,15 +1535,6 @@ def run_multimarket_asset_side(
     return _run_script(script, cwd=_VARIBOT_DIR, args=cmd_args, timeout_s=None)
 
 
-def _gridlimits_sync_enabled() -> bool:
-    return (os.environ.get("VARIBOT_SYNC_GRIDLIMITS_JSON") or "").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-        "off",
-    )
-
-
 def _grid_limits_place_limit_fn(
     ep: VariEndpoints,
     args: argparse.Namespace,
@@ -1610,8 +1602,7 @@ def _run_grid_limits_bootstrap_if_grid(
 ) -> None:
     if not meta.get("grid_mode"):
         return
-    if not _gridlimits_sync_enabled():
-        _log("step: VARIBOT_SYNC_GRIDLIMITS_JSON=0 — skip gridlimits bootstrap (no template sync / reconcile)")
+    if not grid_limits_reconcile_enabled():
         return
     run_grid_limits_bootstrap(
         ep=ep,

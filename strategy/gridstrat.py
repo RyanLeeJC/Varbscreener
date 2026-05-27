@@ -3,9 +3,9 @@ Vari grid strategy (``gridbot.md`` / ``gridbot_new.md``).
 
 **Default (``GRID_EXECUTION`` unset or ``paired_limit``):** sim-aligned **paired limit** engine
 (``strategy/gridstrat_rearm.py``): arithmetic ladder, one-for-one re-arm after each crossed rung,
-optional breach **re-anchor** (same as ``grid_rearm_sim.html`` with ``gridReset: true``). Desired venue
-limits are written to ``Varibot/gridlimits.json`` via ``sync_gridlimits_json`` from Varibot; no
-``grid_market_events`` in this mode.
+optional breach **re-anchor** (off by default; set ``GRID_REARM_ON_BREACH=reanchor`` to enable).
+Venue limits are maintained each cycle via remnant re-arm in
+``Varibot/grid_limits_reconcile.py`` (``strategy/gridstrat_remnant.py``); no ``grid_market_events`` in this mode.
 
 **Legacy (``GRID_EXECUTION=legacy_market``):** discrete mark snapshots → ``grid_market_events`` market
 legs (interior ladder + buy restoration gate). See ``advance_grid_state``.
@@ -13,7 +13,7 @@ legs (interior ladder + buy restoration gate). See ``advance_grid_state``.
 Configure via environment variables (override file-level ``DEFAULT_*`` constants in this module):
 
   GRID_EXECUTION=paired_limit   # paired_limit (default) | legacy_market
-  GRID_REARM_ON_BREACH=reanchor # reanchor | slide (same as reanchor) | halt — paired mode only
+  GRID_REARM_ON_BREACH=halt     # halt (default) | reanchor | slide — paired mode only
   GRID_ASSET=BTC              # legacy single-ticker fallback when GRID_TRADING_TICKERS is empty
   GRID_LOWER=86000
   GRID_UPPER=89000
@@ -81,8 +81,8 @@ STRATEGY_NAME: str = "vari_grid"
 
 # Default ``paired_limit`` matches ``grid_rearm_sim.html``; set ``legacy_market`` for mark-only events.
 GRID_EXECUTION_DEFAULT: str = "paired_limit"
-# Paired mode: ``reanchor`` / ``slide`` = reset ladder on band breach (sim default); ``halt`` = no reset.
-GRID_REARM_ON_BREACH_DEFAULT: str = "reanchor"
+# Paired mode: ``halt`` = no ladder reset on breach (default); ``reanchor`` / ``slide`` = reset on breach.
+GRID_REARM_ON_BREACH_DEFAULT: str = "halt"
 
 # -----------------------------------------------------------------------------
 # Edit these defaults here; ``GRID_*`` environment variables override when set.
@@ -110,24 +110,25 @@ GRID_RWA_COMMODITY_TICKERS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COP
 # Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
 # -----------------------------------------------------------------------------
 GRID_TRADING_TICKERS: Dict[str, float] = {
-    # ±1% band
-    "XAG": 1.0,
-    "XAU": 1.0,
-    "COPPER": 1.0,
-    "BNB": 1.0,
-    "XPT": 1.0,
-    # ±2% band
-    "AVAX": 2.0,
-    "AAVE": 2.0,
-    "SOL": 2.0,
-    "XRP": 2.0,
-    "CL": 2.0,
-    "LINK": 2.0,
-    # ±3% band
-    "SUI": 3.0,
-    "TAO": 3.0,
-    "VIRTUAL": 3.0,
-    "TON": 3.0,
+    # Enabled
+    "ETH": 0.5,
+
+    # Disabled (commented out)
+    # "XAG": 1.0,
+    # "XAU": 1.0,
+    # "COPPER": 1.0,
+    # "BNB": 1.0,
+    # "XPT": 1.0,
+    # "AVAX": 2.0,
+    # "AAVE": 2.0,
+    # "SOL": 2.0,
+    # "XRP": 2.0,
+    # "CL": 2.0,
+    # "LINK": 2.0,
+    # "SUI": 3.0,
+    # "TAO": 3.0,
+    # "VIRTUAL": 3.0,
+    # "TON": 3.0,
 }
 
 
@@ -246,7 +247,7 @@ DEFAULT_MAX_TICKER_ENTRIES: int = max(1, len(GRID_TRADING_TICKERS) or 1)
 
 TRADE_THESIS: str = (
     "Default: paired arithmetic limit grid (sim-aligned) with optional breach re-anchor; "
-    "Varibot mirrors open rungs to gridlimits.json. "
+    "Varibot syncs open rungs to the venue via remnant re-arm each cycle. "
     "Legacy mode: interior ladder with market events and buy restoration after first-sell anchor cross."
 )
 
@@ -898,6 +899,8 @@ def _pick_tickers_one_asset(
         "grid_type": cfg_eff.grid_type,
         "grid_buy_rungs": buys,
         "grid_sell_rungs": sells,
+        "grid_spacing": float(state.get("spacing") or params["spacing"]),
+        "grid_anchor": float(state.get("current_anchor") or params["anchor"]),
         "grid_per_rung_usd": per_usd,
         "grid_per_rung_qty": format_qty_for_grid_limit(qty_pg),
         "grid_limit_sizing": "qty",

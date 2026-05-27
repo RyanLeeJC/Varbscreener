@@ -1,20 +1,20 @@
-"""Tests for paired-grid drift reconcile (refill-first, narrow cancel)."""
+"""Tests for grid limit reconcile helpers."""
 
 from __future__ import annotations
 
-import json
 import os
-import tempfile
 import unittest
 from unittest.mock import patch
 
-from grid_limits_reconcile import (
-    _drift_cancel_enabled,
-    _drift_cancel_orphan_keys,
-    _state_open_limit_keys,
+from grid_limits_reconcile import _drift_cancel_enabled
+from strategy.gridstrat import breach_reanchors_on_breach, gridstrat_flat_rebalance_enabled
+from strategy.gridstrat_remnant import (
+    compute_venue_actions,
+    expanded_band_tolerance,
+    half_band_fraction,
+    infer_ladder_from_remnants,
 )
-from strategy.gridstrat import gridstrat_flat_rebalance_enabled
-from variationalbot.vari.endpoints import instrument_query_param
+from variationalbot.vari.endpoints import grid_limit_price_key, instrument_query_param
 
 
 class TestInstrumentQueryParam(unittest.TestCase):
@@ -26,6 +26,13 @@ class TestInstrumentQueryParam(unittest.TestCase):
         self.assertIsNone(instrument_query_param("COPPER"))
 
 
+class TestBreachDefault(unittest.TestCase):
+    def test_breach_reset_default_off(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("GRID_REARM_ON_BREACH", None)
+            self.assertFalse(breach_reanchors_on_breach())
+
+
 class TestFlatRebalanceDefault(unittest.TestCase):
     def test_flat_rebalance_default_off(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
@@ -34,50 +41,120 @@ class TestFlatRebalanceDefault(unittest.TestCase):
 
 
 class TestDriftCancelDefaults(unittest.TestCase):
-    def test_drift_cancel_default_on(self) -> None:
+    def test_drift_cancel_default_off(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("VARIBOT_GRID_LIMITS_DRIFT_CANCEL", None)
-            self.assertTrue(_drift_cancel_enabled())
+            self.assertFalse(_drift_cancel_enabled())
 
 
-class TestDriftCancelOrphanKeys(unittest.TestCase):
-    def test_protects_sim_open_book(self) -> None:
-        state = {
-            "schema_version": 4,
-            "assets": {
-                "ETH": {
-                    "orders": [
-                        {"side": "sell", "level": 2119.27, "status": "open"},
-                        {"side": "buy", "level": 2098.20, "status": "open"},
-                    ],
-                },
-            },
-        }
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump(state, f)
-            path = f.name
-        try:
-            with patch("grid_limits_reconcile._default_state_path", return_value=path):
-                sim_keys = _state_open_limit_keys("ETH")
-                orphans = {("sell", "2119.27"), ("buy", "2098.20"), ("sell", "2999.00")}
-                cancel = _drift_cancel_orphan_keys(
-                    asset="ETH",
-                    pending_orphans=orphans,
-                    ameta={},
-                )
-                self.assertEqual(cancel, {("sell", "2999.00")})
-                self.assertIn(("sell", "2119.27"), sim_keys)
-        finally:
-            os.unlink(path)
+class TestExpandedBandTolerance(unittest.TestCase):
+    def test_band_scales_with_grid_num(self) -> None:
+        self.assertAlmostEqual(expanded_band_tolerance(0.03, 10), 0.035454545454545456)
+        self.assertAlmostEqual(expanded_band_tolerance(0.03, 20), 0.032857142857142856)
 
-    def test_flat_rebalance_cancels_all_orphans(self) -> None:
-        orphans = {("sell", "2119.27"), ("buy", "2098.20")}
-        cancel = _drift_cancel_orphan_keys(
-            asset="ETH",
-            pending_orphans=orphans,
-            ameta={"grid_flat_inventory_rebalance": True},
+    def test_half_band_prefers_grid_band_pct(self) -> None:
+        self.assertAlmostEqual(
+            half_band_fraction(grid_band_pct=3.0, lower=1.846, upper=1.961),
+            0.03,
         )
-        self.assertEqual(cancel, orphans)
+        # Fallback: half-band from pinned bounds ratio (not exactly 3% unless symmetric).
+        fb = half_band_fraction(grid_band_pct=None, lower=0.94, upper=1.06)
+        self.assertGreater(fb, 0.05)
+
+
+class TestRemnantUsesConfiguredBand(unittest.TestCase):
+    def test_farthest_sell_out_when_mark_drifts(self) -> None:
+        """At mark 1.795, sell 1.859 is outside ±3.545% when grid_band_pct=3."""
+        pending = {
+            ("buy", grid_limit_price_key(1.783)),
+            ("buy", grid_limit_price_key(1.773)),
+            ("buy", grid_limit_price_key(1.762)),
+            ("buy", grid_limit_price_key(1.751)),
+            ("sell", grid_limit_price_key(1.816)),
+            ("sell", grid_limit_price_key(1.827)),
+            ("sell", grid_limit_price_key(1.837)),
+            ("sell", grid_limit_price_key(1.848)),
+            ("sell", grid_limit_price_key(1.859)),
+        }
+        result = infer_ladder_from_remnants(
+            mark=1.795,
+            venue_pending_keys=pending,
+            configured_spacing=0.01083,
+            lower=1.846,
+            upper=1.961,
+            grid_num=10,
+            grid_band_pct=3.0,
+        )
+        self.assertEqual(len(result.inband_sells), 4)
+        self.assertNotIn(1.859, result.inband_sells)
+        cancel, post = compute_venue_actions(
+            result=result, venue_pending_keys=pending, mark=1.795
+        )
+        # With depth-only cancels, 1.859 isn't canceled unless keep depth is exceeded.
+        sell_posts = [px for side, px in post if side == "sell"]
+        self.assertEqual(len(sell_posts), 1)
+        self.assertAlmostEqual(sell_posts[0], 1.8052, places=3)
+
+
+class TestRemnantProtectedWindow(unittest.TestCase):
+    def test_outside_window_orphans_cancelled(self) -> None:
+        pending = {
+            ("buy", grid_limit_price_key(0.9)),
+            ("buy", grid_limit_price_key(0.8)),
+            ("sell", grid_limit_price_key(1.1)),
+            ("sell", grid_limit_price_key(1.2)),
+            ("sell", grid_limit_price_key(2.5)),  # far orphan
+        }
+        result = infer_ladder_from_remnants(
+            mark=1.0,
+            venue_pending_keys=pending,
+            configured_spacing=0.1,
+            lower=0.5,
+            upper=1.5,
+            grid_num=10,
+            nearest_n=5,
+        )
+        cancel, post = compute_venue_actions(
+            result=result, venue_pending_keys=pending, mark=1.0
+        )
+        # Depth cancels only: ensure far orphan is canceled when depth is small.
+        with patch.dict(os.environ, {"VARIBOT_GRID_LIMITS_KEEP_DEPTH": "1"}, clear=False):
+            cancel, _ = compute_venue_actions(
+                result=result, venue_pending_keys=pending, mark=1.0
+            )
+            self.assertIn(("sell", grid_limit_price_key(2.5)), cancel)
+
+
+class TestRemnantProximityHug(unittest.TestCase):
+    def test_posts_intermediate_rungs_toward_mark(self) -> None:
+        # Sells are far above mark but "sufficient" by count; proximity should fill inward.
+        pending = {
+            ("sell", grid_limit_price_key(110.0)),
+            ("sell", grid_limit_price_key(111.0)),
+            ("sell", grid_limit_price_key(112.0)),
+            ("sell", grid_limit_price_key(113.0)),
+            ("sell", grid_limit_price_key(114.0)),
+            ("buy", grid_limit_price_key(90.0)),
+            ("buy", grid_limit_price_key(89.0)),
+            ("buy", grid_limit_price_key(88.0)),
+            ("buy", grid_limit_price_key(87.0)),
+            ("buy", grid_limit_price_key(86.0)),
+        }
+        result = infer_ladder_from_remnants(
+            mark=100.0,
+            venue_pending_keys=pending,
+            configured_spacing=1.0,
+            lower=50.0,
+            upper=150.0,
+            grid_num=10,
+            nearest_n=5,
+            grid_band_pct=10.0,
+        )
+        cancel, post = compute_venue_actions(result=result, venue_pending_keys=pending, mark=100.0)
+        sell_posts = [px for side, px in post if side == "sell"]
+        # Should try to insert 109, 108, 107, 106 (from nearest sell=110 toward mark).
+        self.assertTrue(any(abs(px - 109.0) < 1e-6 for px in sell_posts))
+        self.assertTrue(any(abs(px - 108.0) < 1e-6 for px in sell_posts))
 
 
 if __name__ == "__main__":

@@ -26,7 +26,6 @@ from variationalbot.vari.endpoints import Instrument, limit_price_key  # noqa: E
 
 from grid_limits_reconcile import (  # noqa: E402
     _fetch_pending_limit_rows,
-    build_gridlimits_ticker_doc,
     run_grid_limits_bootstrap,
 )
 from strategy.gridstrat import pick_tickers  # noqa: E402
@@ -78,10 +77,10 @@ def main() -> int:
         f"rungs buy={n_buys} sell={n_sells}"
     )
 
-    gl_doc = build_gridlimits_ticker_doc(doge_meta)
-    print(f"gridlimits template per_rung_qty={gl_doc.get('per_rung_qty')!r}")
-    for row in (gl_doc.get("limits") or [])[:3]:
-        print(f"  template {row.get('side')} @ {row.get('limit_price')} qty={row.get('qty')!r}")
+    print(f"meta per_rung_qty={doge_meta.get('grid_per_rung_qty')!r}")
+    for side, rungs in (("buy", doge_meta.get("grid_buy_rungs") or []), ("sell", doge_meta.get("grid_sell_rungs") or [])):
+        for px in rungs[:2]:
+            print(f"  meta {side} @ {px}")
 
     if not args.live:
         print("\nDry-run only. Re-run with --live to post limits and compare venue qty.")

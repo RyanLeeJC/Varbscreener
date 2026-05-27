@@ -15,7 +15,7 @@ from __future__ import annotations
 
 EPS_LEVEL: float = 1e-6  # same tolerance as grid_rearm_sim.html findOpen
 REARM_POLICY_DEFAULT: str = "paired"  # paired | none (mirror deferred)
-GRID_RESET_ON_BREACH_DEFAULT: bool = True  # matches sim ``gridReset: true`` (re-anchor ladder)
+GRID_RESET_ON_BREACH_DEFAULT: bool = False  # production default: no breach reset (remnant maintains window)
 
 
 import math
@@ -191,29 +191,36 @@ def _fill_open_order_and_rearm(
     trade_qty = q if ord_["side"] == "buy" else -q
     new_inventory = inventory + trade_qty
 
-    if ord_.get("paired_from") is not None:
-        realized_pnl += spacing * q
-        logs.append(f"tick {tick}: round-trip +{spacing * q:g} @ {ord_['level']}")
+    # Realize PnL whenever a fill reduces an existing position (avg-entry cost basis).
+    # This makes realized PnL accrue on *any* closing trade, not only paired_from round-trips.
+    fill_px = float(ord_["level"])
+    if abs(inventory) > 1e-12 and (trade_qty > 0) != (inventory > 0):
+        avg_entry = float(inventory_cost) / float(inventory)
+        close_qty = min(abs(trade_qty), abs(inventory))
+        pnl_delta = close_qty * (fill_px - avg_entry) * (1.0 if inventory > 0 else -1.0)
+        realized_pnl += pnl_delta
+        logs.append(
+            f"tick {tick}: realized {pnl_delta:+g} (close {close_qty:g} @ {fill_px:g} vs avg {avg_entry:g})"
+        )
 
     if inventory == 0:
-        inventory_cost = trade_qty * float(ord_["level"])
+        inventory_cost = trade_qty * fill_px
     elif (trade_qty > 0) == (inventory > 0):
-        inventory_cost += trade_qty * float(ord_["level"])
+        inventory_cost += trade_qty * fill_px
     else:
         if abs(trade_qty) <= abs(inventory):
             close_frac = abs(trade_qty) / abs(inventory)
             inventory_cost -= inventory_cost * close_frac
         else:
-            inventory_cost = new_inventory * float(ord_["level"])
+            inventory_cost = new_inventory * fill_px
 
     inventory = new_inventory
     if abs(inventory) < 1e-10:
         inventory = 0.0
         inventory_cost = 0.0
 
-    volume_usd += q * float(ord_["level"])
+    volume_usd += q * fill_px
     side_u = str(ord_["side"]).upper()
-    fill_px = float(ord_["level"])
     logs.append(f"tick {tick}: {side_u} filled @ {fill_px:g} (qty {q:g} BTC)")
 
     new_level = (
