@@ -5,11 +5,11 @@ This module defines *mark-centered* limit maintenance:
 
 1. Read the current mark.
 2. Check if there are at least N/2 sell limits above mark and N/2 buy limits below mark
-   within an expanded band (band + (band/(GRID_NUM+1))×2, e.g. 3% @ N=10 → ±3.545%). If yes,
-   do nothing for the ticker.
-3. If not, infer rung spacing from existing venue limits (median adjacent gap),
-   then post missing rungs from the mark outward: nearest to mark first, then further out.
-4. Optionally cancel venue limits outside that expanded band (keeps the venue book tidy).
+   within the configured ±band around mark.
+3. Post missing rungs from the mark outward (nearest first): count-fill when short on depth,
+   and gap-fill toward mark when the nearest limit is more than ~1 spacing away (even if
+   count is already sufficient).
+4. Optionally cancel venue limits outside that band (keeps the venue book tidy).
 
 No anchor concept is required for the reconcile decisions.
 
@@ -60,19 +60,6 @@ def half_band_fraction(*, grid_band_pct: Optional[float], lower: float, upper: f
         if pct > 0:
             return pct / 100.0
     return abs((float(upper) / max(1e-12, float(lower))) - 1.0) / 2.0
-
-
-def expanded_band_tolerance(band_pct: float, grid_num: int) -> float:
-    """
-    Half-band tolerance for in-band counting and orphan cancels.
-
-    ``band_pct`` is the configured half-band (e.g. 0.03 for ±3%).
-    Expanded to ``band_pct + (band_pct / (GRID_NUM + 1)) * 2`` —
-    e.g. 3% with N=10 → 3.545%.
-    """
-    n = max(1, int(grid_num))
-    b = float(band_pct)
-    return b + (b / (n + 1.0)) * 2.0
 
 
 def _tick_at(price: float) -> float:
@@ -302,6 +289,30 @@ def _hug_targets_from_nearest(
     return out[:n]
 
 
+def _needs_gap_toward_mark(
+    *,
+    side: str,
+    mark: float,
+    inband: List[float],
+    spacing: float,
+) -> bool:
+    """
+    True when the nearest in-band limit on this side is more than ~1 spacing from mark.
+
+    Used to run gap-fill even when in-band count already meets the minimum window depth.
+    """
+    if spacing <= 0 or not inband:
+        return False
+    mark_f = float(mark)
+    side_n = str(side).strip().lower()
+    sp = float(spacing)
+    if side_n == "sell":
+        dist = float(min(inband)) - mark_f
+    else:
+        dist = mark_f - float(max(inband))
+    return dist > sp * 1.05 + 1e-9
+
+
 def _gap_posts_toward_mark(
     *,
     side: str,
@@ -487,14 +498,14 @@ class RemnantInferenceResult:
 
     Attributes
     ----------
-    sufficient       : enough venue limits already exist within expanded band.
+    sufficient       : enough venue limits already exist within configured band.
     spacing          : inferred (or configured-fallback) rung spacing used to generate targets.
     lower            : expanded-band lower bound (mark * (1 - band_tol)).
     upper            : expanded-band upper bound (mark * (1 + band_tol)).
     protected_buys   : reference target buys (mark-centered window) for logging.
     protected_sells  : reference target sells (mark-centered window) for logging.
-    inband_buys      : current venue buy prices within expanded band (below mark).
-    inband_sells     : current venue sell prices within expanded band (above mark).
+    inband_buys      : current venue buy prices within band (below mark).
+    inband_sells     : current venue sell prices within band (above mark).
   window_n           : required rungs per side (GRID_NUM/2).
   buy_spacing / sell_spacing : spacing used when filling gaps on each side.
     """
@@ -565,9 +576,9 @@ def infer_ladder_from_remnants(
     mark_f = float(mark)
     n = nearest_n if nearest_n is not None else _env_nearest_n(grid_num)
 
-    # Expanded band around *today's mark* from configured grid_band_pct (+ N formula).
+    # Band around today's mark from configured grid_band_pct (or pinned bounds fallback).
     band_frac = half_band_fraction(grid_band_pct=grid_band_pct, lower=lower, upper=upper)
-    band_tol = expanded_band_tolerance(band_frac, grid_num)
+    band_tol = float(band_frac)
     win_lower = mark_f * (1.0 - band_tol)
     win_upper = mark_f * (1.0 + band_tol)
 
@@ -611,7 +622,7 @@ def infer_ladder_from_remnants(
         else:
             use_spacing = float(configured_spacing)
 
-    # If we already have enough limits within the expanded band, we are sufficient and do nothing.
+    # If we already have enough limits within the band, we are sufficient and do nothing.
     sufficient = (len(inband_buys) >= n) and (len(inband_sells) >= n)
 
     # Side-specific spacing (prefer in-band median gap when available).
@@ -788,8 +799,13 @@ def compute_venue_actions(
             post_rungs.append((side, px))
             tmp_pending.add((side, grid_limit_price_key(px)))
 
-    # Proximity gap fills (toward mark; may post multiple rungs).
-    if len(result.inband_buys) < n:
+    # Proximity gap fills (toward mark): when short on count OR nearest limit is > ~1 spacing away.
+    if _needs_gap_toward_mark(
+        side="buy",
+        mark=mark_f,
+        inband=list(result.inband_buys),
+        spacing=float(result.buy_spacing),
+    ) or len(result.inband_buys) < n:
         _append_posts(
             "buy",
             _gap_posts_toward_mark(
@@ -803,7 +819,12 @@ def compute_venue_actions(
                 max_steps=n + 2,
             ),
         )
-    if len(result.inband_sells) < n:
+    if _needs_gap_toward_mark(
+        side="sell",
+        mark=mark_f,
+        inband=list(result.inband_sells),
+        spacing=float(result.sell_spacing),
+    ) or len(result.inband_sells) < n:
         _append_posts(
             "sell",
             _gap_posts_toward_mark(

@@ -10,7 +10,6 @@ from grid_limits_reconcile import _drift_cancel_enabled
 from strategy.gridstrat import breach_reanchors_on_breach, gridstrat_flat_rebalance_enabled
 from strategy.gridstrat_remnant import (
     compute_venue_actions,
-    expanded_band_tolerance,
     half_band_fraction,
     infer_ladder_from_remnants,
 )
@@ -51,11 +50,7 @@ class TestDriftCancelDefaults(unittest.TestCase):
             self.assertFalse(_drift_cancel_enabled())
 
 
-class TestExpandedBandTolerance(unittest.TestCase):
-    def test_band_scales_with_grid_num(self) -> None:
-        self.assertAlmostEqual(expanded_band_tolerance(0.03, 10), 0.035454545454545456)
-        self.assertAlmostEqual(expanded_band_tolerance(0.03, 20), 0.032857142857142856)
-
+class TestHalfBandFraction(unittest.TestCase):
     def test_half_band_prefers_grid_band_pct(self) -> None:
         self.assertAlmostEqual(
             half_band_fraction(grid_band_pct=3.0, lower=1.846, upper=1.961),
@@ -68,7 +63,7 @@ class TestExpandedBandTolerance(unittest.TestCase):
 
 class TestRemnantUsesConfiguredBand(unittest.TestCase):
     def test_farthest_sell_out_when_mark_drifts(self) -> None:
-        """At mark 1.795, sell 1.859 is outside ±3.545% when grid_band_pct=3."""
+        """At mark 1.795, sell 1.859 is outside ±3% when grid_band_pct=3."""
         pending = {
             ("buy", grid_limit_price_key(1.783)),
             ("buy", grid_limit_price_key(1.773)),
@@ -160,8 +155,45 @@ class TestRemnantProximityHug(unittest.TestCase):
         # The reconciler should at least post one outward rung.
         self.assertTrue(any(abs(px - 105.0) < 1e-6 for px in sell_posts))
 
+    def test_sufficient_window_still_gap_fills_when_nearest_far(self) -> None:
+        """8 in-band sells (>=5) but nearest sell >1 spacing above mark → post toward mark."""
+        mark = 630.99
+        spacing = 1.29
+        pending = {
+            ("sell", grid_limit_price_key(634.06)),
+            ("sell", grid_limit_price_key(635.35)),
+            ("sell", grid_limit_price_key(636.64)),
+            ("sell", grid_limit_price_key(637.93)),
+            ("sell", grid_limit_price_key(639.22)),
+            ("sell", grid_limit_price_key(640.51)),
+            ("sell", grid_limit_price_key(641.80)),
+            ("sell", grid_limit_price_key(643.09)),
+            ("sell", grid_limit_price_key(644.38)),
+            ("buy", grid_limit_price_key(629.34)),
+            ("buy", grid_limit_price_key(628.05)),
+            ("buy", grid_limit_price_key(626.76)),
+            ("buy", grid_limit_price_key(625.47)),
+            ("buy", grid_limit_price_key(624.18)),
+        }
+        result = infer_ladder_from_remnants(
+            mark=mark,
+            venue_pending_keys=pending,
+            configured_spacing=spacing,
+            lower=500.0,
+            upper=800.0,
+            grid_num=10,
+            grid_band_pct=2.0,
+        )
+        self.assertTrue(result.sufficient)
+        self.assertGreaterEqual(len(result.inband_sells), 5)
+        _, post = compute_venue_actions(
+            asset="BNB", result=result, venue_pending_keys=pending, mark=mark
+        )
+        sell_posts = [px for side, px in post if side == "sell"]
+        self.assertTrue(any(abs(px - 632.77) < 0.02 for px in sell_posts))
+
     def test_sufficient_window_skips_proximity_hug(self) -> None:
-        # Rungs inside expanded ±20% band around mark=100 (avoid far 110+ sells outside win_upper).
+        # Nearest sell within ~1 spacing of mark — no gap-fill even when sufficient.
         pending = {
             ("sell", grid_limit_price_key(101.0)),
             ("sell", grid_limit_price_key(102.0)),

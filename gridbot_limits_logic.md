@@ -19,12 +19,11 @@ Every ~1 min (Varibot one_cycle)
 │
 └─ 3. grid_limits_reconcile (remnant re-arm, no gridlimits.json template)
        • Mark-centered: need N/2 buys below + N/2 sells above mark within
-         grid_band_pct + (grid_band_pct/(N+1))×2 around **current mark**
-         (e.g. ±3% with GRID_NUM=10 → ±3.545%; uses meta grid_band_pct, not pinned bounds width)
+         grid_band_pct around **current mark** (uses meta grid_band_pct, not pinned bounds width)
        • If sufficient → rest (optional cancel out-of-band only; cancels default OFF)
        • If not → infer spacing from remnants; POST missing rungs from mark outward
          (nearest to mark first, then further out)
-       • Cancel limits outside expanded band
+       • Cancel limits outside band
 
 
 
