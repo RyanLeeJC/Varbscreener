@@ -587,6 +587,7 @@ def _remnant_rearm_one_ticker(
 
     # Decide actions every cycle (proximity hug only when a side is short on in-band depth).
     cancel_keys, post_rungs = compute_venue_actions(
+        asset=asset,
         result=result,
         venue_pending_keys=pending_keys,
         mark=mark_f,
@@ -602,6 +603,7 @@ def _remnant_rearm_one_ticker(
         except Exception as e:
             log(f"gridlimits{tag} remnant: pending refresh failed ({type(e).__name__}: {e})")
         _, post_rungs = compute_venue_actions(
+            asset=asset,
             result=result,
             venue_pending_keys=pending_keys,
             mark=mark_f,

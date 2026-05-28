@@ -293,14 +293,14 @@ def _remnant_reconcile_log(
     pending = set(venue_pending)
 
     cancel_keys, post_rungs = compute_venue_actions(
-        result=result, venue_pending_keys=pending, mark=mark
+        asset=asset, result=result, venue_pending_keys=pending, mark=mark
     )
     if cancel_keys and drift_cancel:
         for k in cancel_keys:
             pending.discard(k)
         lines.append(f"gridlimits{tag} {label}: canceled {len(cancel_keys)} out-of-band orphan(s).")
         _, post_rungs = compute_venue_actions(
-            result=result, venue_pending_keys=pending, mark=mark
+            asset=asset, result=result, venue_pending_keys=pending, mark=mark
         )
     if post_rungs:
         n_b = sum(1 for s, _ in post_rungs if s == "buy")
