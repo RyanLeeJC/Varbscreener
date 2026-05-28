@@ -113,23 +113,23 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     # Enabled
     "ETH": 2.0,
     # RWAs (commodities)
-    "XAG": 2.0,
-    "XAU": 1.5,
-    "COPPER": 1.0,
-    "BNB": 1.0,
-    "XPD": 1.0,
-    "XPT": 1.0,
-    "CL": 2.0,
+    # "XAG": 2.0,
+    # "XAU": 1.5,
+    # "COPPER": 1.0,
+    "BNB": 2.0,
+    # "XPD": 1.0,
+    # "XPT": 1.0,
+    # "CL": 2.0,
     "AAVE": 2.0,
     "SOL": 2.0,
-    # "VIRTUAL": 3.0,
+    "VIRTUAL": 3.0,
 
     # Disabled (commented out)
-    # "AVAX": 2.0,
-    # "XRP": 2.0,
-    # "LINK": 2.0,
-    # "SUI": 3.0,
-    # "TAO": 3.0,
+    "AVAX": 2.0,
+    "XRP": 2.0,
+    "LINK": 2.0,
+    "SUI": 3.0,
+    "TAO": 3.0,
     # "TON": 3.0,
 }
 
