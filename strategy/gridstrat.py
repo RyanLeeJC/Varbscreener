@@ -99,14 +99,17 @@ DEFAULT_GRID_UPPER: float = float("nan")
 DEFAULT_GRID_TYPE: str = "arithmetic"  # "arithmetic" | "geometric" (paired uses arithmetic spacing)
 
 # -----------------------------------------------------------------------------
-# RWA commodity perps (Vari Beta): use ``perpetual_rwa_future`` + ``kind: commodity`` on the API
-# (no ``funding_interval_s``). Varibot ``Instrument.for_underlying`` reads ``GRID_RWA_TICKERS``.
+# RWA perps (Vari Beta): ``perpetual_rwa_future`` on the API — not crypto ``P-*-USDC-3600``.
+# Commodities use ``kind: commodity``; equity RWAs (e.g. SPCX ETF) use ``kind: equity``.
+# Varibot ``Instrument.for_underlying`` reads GRID_RWA_* env (synced on import below).
 # -----------------------------------------------------------------------------
 GRID_RWA_COMMODITY_TICKERS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COPPER", "XPT", "XPD"})
+GRID_RWA_EQUITY_TICKERS: frozenset[str] = frozenset({"SPCX"})
 
 # -----------------------------------------------------------------------------
 # Multi-ticker grid — edit here: each ticker is managed independently (own state + gridlimits).
 # Shared (full notional each): GRID_INVESTMENT_USD, GRID_NUM, GRID_LEVERAGE via env / defaults above.
+# Per-ticker leverage cap: GRID_TICKER_LEVERAGE (e.g. SPCX max 5x).
 # Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
 # -----------------------------------------------------------------------------
 GRID_TRADING_TICKERS: Dict[str, float] = {
@@ -133,15 +136,31 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     # "XPT": 1.0,
 }
 
+# Per-ticker leverage cap (defaults to GRID_LEVERAGE / DEFAULT_GRID_LEVERAGE when unset).
+GRID_TICKER_LEVERAGE: Dict[str, float] = {
+    "SPCX": 5.0,
+}
+
 
 def is_rwa_commodity_ticker(asset: str) -> bool:
     sym = str(asset).strip().upper()
     return sym in GRID_RWA_COMMODITY_TICKERS
 
 
+def is_rwa_equity_ticker(asset: str) -> bool:
+    sym = str(asset).strip().upper()
+    return sym in GRID_RWA_EQUITY_TICKERS
+
+
+def is_rwa_ticker(asset: str) -> bool:
+    return is_rwa_commodity_ticker(asset) or is_rwa_equity_ticker(asset)
+
+
 def _sync_grid_rwa_tickers_env() -> None:
     if not (os.environ.get("GRID_RWA_TICKERS") or "").strip():
         os.environ["GRID_RWA_TICKERS"] = ",".join(sorted(GRID_RWA_COMMODITY_TICKERS))
+    if not (os.environ.get("GRID_RWA_EQUITY_TICKERS") or "").strip():
+        os.environ["GRID_RWA_EQUITY_TICKERS"] = ",".join(sorted(GRID_RWA_EQUITY_TICKERS))
 
 
 _sync_grid_rwa_tickers_env()
@@ -229,6 +248,20 @@ def grid_band_pct_for_asset(asset: str) -> float:
     if sym in tickers:
         return float(tickers[sym])
     return float(DEFAULT_GRID_BAND_PCT)
+
+
+def grid_leverage_for_asset(asset: str) -> float:
+    """Per-ticker leverage override (e.g. SPCX max 5x); else GRID_LEVERAGE env / default."""
+    sym = str(asset).strip().upper()
+    if sym in GRID_TICKER_LEVERAGE:
+        return float(GRID_TICKER_LEVERAGE[sym])
+    raw = (os.environ.get("GRID_LEVERAGE") or "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    return float(DEFAULT_GRID_LEVERAGE)
 
 
 def iter_grid_asset_metas(meta: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
@@ -445,8 +478,7 @@ class GridConfig:
         grid_type: GridType = "geometric" if gt == "geometric" else "arithmetic"
         raw_inv = (os.environ.get("GRID_INVESTMENT_USD") or "").strip()
         inv = float(raw_inv) if raw_inv else float(DEFAULT_GRID_INVESTMENT_USD)
-        raw_lev = (os.environ.get("GRID_LEVERAGE") or "").strip()
-        lev = float(raw_lev) if raw_lev else float(DEFAULT_GRID_LEVERAGE)
+        lev = grid_leverage_for_asset(asset)
         mo = (os.environ.get("GRID_MARK") or "").strip()
         mark_override = float(mo) if mo else None
         return cls(

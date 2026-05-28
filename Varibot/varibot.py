@@ -151,6 +151,7 @@ from multimarketorder import (  # noqa: E402
 import strategy.gridstrat as strategies_mod  # noqa: E402
 from strategy.gridstrat import (  # noqa: E402
     DEFAULT_MAX_TICKER_ENTRIES as INVERT_EXTREME_MAX_TICKER_ENTRIES,
+    grid_leverage_for_asset,
     grid_trading_ticker_band_pcts,
     gridstrat_ignore_venue_positions,
 )
@@ -1554,12 +1555,11 @@ def _grid_limits_place_limit_fn(
         if sd not in ("buy", "sell"):
             return 1
         inst = Instrument.for_underlying(sym)
-        lev_raw = (os.environ.get("GRID_LEVERAGE") or "").strip()
-        if lev_raw:
-            try:
-                ep.set_leverage(asset=sym, leverage=int(float(lev_raw)))
-            except Exception as e:
-                _log(f"gridlimits reconcile: set_leverage failed ({type(e).__name__}: {e})")
+        lev = int(grid_leverage_for_asset(sym))
+        try:
+            ep.set_leverage(asset=sym, leverage=lev)
+        except Exception as e:
+            _log(f"gridlimits reconcile: set_leverage failed ({type(e).__name__}: {e})")
         try:
             if lq is not None and str(lq).strip():
                 raw_q = float(str(lq).strip())

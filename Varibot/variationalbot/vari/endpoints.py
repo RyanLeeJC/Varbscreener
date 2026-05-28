@@ -176,7 +176,7 @@ _DEFAULT_RWA_COMMODITY_UNDERLYINGS: frozenset[str] = frozenset({"XAU", "CL", "XA
 
 def rwa_commodity_underlyings() -> frozenset[str]:
     """
-    RWA commodity perps (``perpetual_rwa_future``).
+    RWA commodity perps (``perpetual_rwa_future``, ``kind: commodity``).
 
     Primary source: ``GRID_RWA_TICKERS`` env (set from ``strategy.gridstrat.GRID_RWA_COMMODITY_TICKERS``
     on import). Falls back to ``_DEFAULT_RWA_COMMODITY_UNDERLYINGS`` if unset.
@@ -185,6 +185,19 @@ def rwa_commodity_underlyings() -> frozenset[str]:
     if raw:
         return frozenset({p.strip().upper() for p in raw.replace(";", ",").split(",") if p.strip()})
     return _DEFAULT_RWA_COMMODITY_UNDERLYINGS
+
+
+def rwa_equity_underlyings() -> frozenset[str]:
+    """RWA equity perps (``perpetual_rwa_future``, ``kind: equity``), e.g. SPCX ETF."""
+    raw = (os.environ.get("GRID_RWA_EQUITY_TICKERS") or "").strip()
+    if raw:
+        return frozenset({p.strip().upper() for p in raw.replace(";", ",").split(",") if p.strip()})
+    return frozenset()
+
+
+def rwa_perp_underlyings() -> frozenset[str]:
+    """All RWA perps (commodity + equity) — omit crypto ``instrument`` query filter."""
+    return rwa_commodity_underlyings() | rwa_equity_underlyings()
 
 
 @dataclass(frozen=True)
@@ -219,6 +232,14 @@ class Instrument:
                 funding_interval_s=None,
                 kind="commodity",
             )
+        if sym in rwa_equity_underlyings():
+            return cls(
+                instrument_type="perpetual_rwa_future",
+                underlying=sym,
+                settlement_asset="USDC",
+                funding_interval_s=None,
+                kind="equity",
+            )
         return cls(
             instrument_type="perpetual_future",
             underlying=sym,
@@ -232,12 +253,11 @@ def instrument_query_param(asset: str) -> Optional[str]:
     GET /api/orders/v2 ``instrument`` filter (crypto perps only).
 
   Crypto (DevTools): ``P-BTC-USDC-3600`` — four segments after ``P-``.
-  RWA commodity (``perpetual_rwa_future``): ``P-XAU-USDC`` returns HTTP 400
-  ``Incorrect number of fields provided``. Omit the query param and filter by
+  RWA (``perpetual_rwa_future``): omit ``instrument`` query param; filter by
   ``instrument.underlying`` client-side (see ``grid_limits_reconcile``).
     """
     sym = str(asset).strip().upper()
-    if sym in rwa_commodity_underlyings():
+    if sym in rwa_perp_underlyings():
         return None
     return f"P-{sym}-USDC-3600"
 

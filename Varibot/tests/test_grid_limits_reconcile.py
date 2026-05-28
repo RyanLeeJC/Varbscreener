@@ -7,13 +7,13 @@ import unittest
 from unittest.mock import patch
 
 from grid_limits_reconcile import _drift_cancel_enabled
-from strategy.gridstrat import breach_reanchors_on_breach, gridstrat_flat_rebalance_enabled
+from strategy.gridstrat import breach_reanchors_on_breach, grid_leverage_for_asset, gridstrat_flat_rebalance_enabled
 from strategy.gridstrat_remnant import (
     compute_venue_actions,
     half_band_fraction,
     infer_ladder_from_remnants,
 )
-from variationalbot.vari.endpoints import grid_limit_price_key, instrument_query_param
+from variationalbot.vari.endpoints import grid_limit_price_key, instrument_query_param, Instrument
 
 
 class TestInstrumentQueryParam(unittest.TestCase):
@@ -23,6 +23,30 @@ class TestInstrumentQueryParam(unittest.TestCase):
     def test_rwa_omits_filter(self) -> None:
         self.assertIsNone(instrument_query_param("XAU"))
         self.assertIsNone(instrument_query_param("COPPER"))
+        self.assertIsNone(instrument_query_param("SPCX"))
+
+    def test_spcx_uses_rwa_equity_instrument(self) -> None:
+        import strategy.gridstrat  # noqa: F401 — sync GRID_RWA_* env
+
+        inst = Instrument.for_underlying("SPCX")
+        self.assertEqual("perpetual_rwa_future", inst.instrument_type)
+        self.assertEqual("equity", inst.kind)
+        self.assertIsNone(instrument_query_param("SPCX"))
+
+
+class TestGridLeverageForAsset(unittest.TestCase):
+    def test_spcx_capped_at_5x(self) -> None:
+        with patch.dict(os.environ, {"GRID_LEVERAGE": "50"}, clear=False):
+            self.assertEqual(5.0, grid_leverage_for_asset("SPCX"))
+
+    def test_other_assets_use_env_leverage(self) -> None:
+        with patch.dict(os.environ, {"GRID_LEVERAGE": "25"}, clear=False):
+            self.assertEqual(25.0, grid_leverage_for_asset("ETH"))
+
+    def test_other_assets_use_default_when_env_unset(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("GRID_LEVERAGE", None)
+            self.assertEqual(50.0, grid_leverage_for_asset("ETH"))
 
 
 class TestBreachDefault(unittest.TestCase):
