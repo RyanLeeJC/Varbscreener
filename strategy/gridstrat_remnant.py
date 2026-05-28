@@ -799,72 +799,38 @@ def compute_venue_actions(
             post_rungs.append((side, px))
             tmp_pending.add((side, grid_limit_price_key(px)))
 
-    # Proximity gap fills (toward mark): when short on count OR nearest limit is > ~1 spacing away.
-    if _needs_gap_toward_mark(
-        side="buy",
-        mark=mark_f,
-        inband=list(result.inband_buys),
-        spacing=float(result.buy_spacing),
-    ) or len(result.inband_buys) < n:
-        _append_posts(
-            "buy",
-            _gap_posts_toward_mark(
-                side="buy",
+    def _fill_side_posts(*, side: str, inband: List[float], spacing: float) -> List[float]:
+        """Count-fill when short; gap-fill only when count is already sufficient."""
+        if len(inband) < n:
+            return _missing_rungs_to_post(
+                side=side,
                 mark=mark_f,
-                spacing=float(result.buy_spacing),
-                inband=list(result.inband_buys),
+                spacing=float(spacing),
+                n=n,
+                inband=list(inband),
+                win_lower=float(result.lower),
+                win_upper=float(result.upper),
+                venue_pending_keys=tmp_pending,
+            )
+        if _needs_gap_toward_mark(
+            side=side,
+            mark=mark_f,
+            inband=list(inband),
+            spacing=float(spacing),
+        ):
+            return _gap_posts_toward_mark(
+                side=side,
+                mark=mark_f,
+                spacing=float(spacing),
+                inband=list(inband),
                 win_lower=float(result.lower),
                 win_upper=float(result.upper),
                 venue_pending_keys=tmp_pending,
                 max_steps=n + 2,
-            ),
-        )
-    if _needs_gap_toward_mark(
-        side="sell",
-        mark=mark_f,
-        inband=list(result.inband_sells),
-        spacing=float(result.sell_spacing),
-    ) or len(result.inband_sells) < n:
-        _append_posts(
-            "sell",
-            _gap_posts_toward_mark(
-                side="sell",
-                mark=mark_f,
-                spacing=float(result.sell_spacing),
-                inband=list(result.inband_sells),
-                win_lower=float(result.lower),
-                win_upper=float(result.upper),
-                venue_pending_keys=tmp_pending,
-                max_steps=n + 2,
-            ),
-        )
+            )
+        return []
 
-    # Count fill after updating tmp_pending so we don't double-post the same key.
-    _append_posts(
-        "buy",
-        _missing_rungs_to_post(
-            side="buy",
-            mark=mark_f,
-            spacing=float(result.buy_spacing),
-            n=n,
-            inband=list(result.inband_buys),
-            win_lower=float(result.lower),
-            win_upper=float(result.upper),
-            venue_pending_keys=tmp_pending,
-        ),
-    )
-    _append_posts(
-        "sell",
-        _missing_rungs_to_post(
-            side="sell",
-            mark=mark_f,
-            spacing=float(result.sell_spacing),
-            n=n,
-            inband=list(result.inband_sells),
-            win_lower=float(result.lower),
-            win_upper=float(result.upper),
-            venue_pending_keys=tmp_pending,
-        ),
-    )
+    _append_posts("buy", _fill_side_posts(side="buy", inband=list(result.inband_buys), spacing=result.buy_spacing))
+    _append_posts("sell", _fill_side_posts(side="sell", inband=list(result.inband_sells), spacing=result.sell_spacing))
 
     return cancel_keys, post_rungs

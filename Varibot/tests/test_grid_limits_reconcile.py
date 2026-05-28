@@ -155,6 +155,37 @@ class TestRemnantProximityHug(unittest.TestCase):
         # The reconciler should at least post one outward rung.
         self.assertTrue(any(abs(px - 105.0) < 1e-6 for px in sell_posts))
 
+    def test_insufficient_count_uses_count_fill_only_not_gap(self) -> None:
+        """Short on count: count-fill only — no duplicate gap+count posts on same side."""
+        mark = 260.554
+        spacing = 1.54183
+        pending = {
+            ("buy", grid_limit_price_key(257.858)),
+            ("buy", grid_limit_price_key(256.316)),
+            ("buy", grid_limit_price_key(254.774)),
+            ("buy", grid_limit_price_key(253.232)),
+            ("sell", grid_limit_price_key(mark + spacing)),
+            ("sell", grid_limit_price_key(mark + 2 * spacing)),
+            ("sell", grid_limit_price_key(mark + 3 * spacing)),
+            ("sell", grid_limit_price_key(mark + 4 * spacing)),
+            ("sell", grid_limit_price_key(mark + 5 * spacing)),
+        }
+        result = infer_ladder_from_remnants(
+            mark=mark,
+            venue_pending_keys=pending,
+            configured_spacing=spacing,
+            lower=249.262,
+            upper=264.68,
+            grid_num=10,
+            grid_band_pct=3.0,
+        )
+        self.assertLess(len(result.inband_buys), result.window_n)
+        _, post = compute_venue_actions(
+            asset="TAO", result=result, venue_pending_keys=pending, mark=mark
+        )
+        buy_posts = [px for side, px in post if side == "buy"]
+        self.assertEqual(1, len(buy_posts))
+
     def test_sufficient_window_still_gap_fills_when_nearest_far(self) -> None:
         """8 in-band sells (>=5) but nearest sell >1 spacing above mark → post toward mark."""
         mark = 630.99
