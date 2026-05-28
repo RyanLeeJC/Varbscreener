@@ -28,7 +28,7 @@ ENV_GRID_LIMITS_DRIFT_RECONCILE: str = "VARIBOT_GRID_LIMITS_DRIFT_RECONCILE"
 # Sub-gates: cancel defaults off (refill-only between cycles); set to 1 to cancel stray venue limits.
 ENV_GRID_LIMITS_DRIFT_CANCEL: str = "VARIBOT_GRID_LIMITS_DRIFT_CANCEL"
 ENV_GRID_LIMITS_RECONCILE_WITH_POSITIONS: str = "VARIBOT_GRID_LIMITS_RECONCILE_WITH_POSITIONS"
-ENV_GRID_LIMITS_CANCEL_SLEEP_S: str = "VARIBOT_GRID_LIMITS_CANCEL_SLEEP_S"
+ENV_GRID_LIMITS_CANCEL_SLEEP_S: str = "VARIBOT_GRID_LIMITS_CANCEL_SLEEP_S"  # legacy; see pending_limit_cancel
 # Set to 1 to re-fetch positions + pending every cycle (default: cycle 1 only).
 ENV_GRID_LIMITS_MAP_EACH_CYCLE: str = "VARIBOT_GRID_LIMITS_MAP_EACH_CYCLE"
 ENV_GRID_ORDERS_PAGE_LIMIT: str = "VARIBOT_GRID_ORDERS_PAGE_LIMIT"
@@ -57,9 +57,9 @@ def _env_bool_default(name: str, *, default_when_unset: bool) -> bool:
 
 
 def _drift_cancel_enabled(meta: Optional[Dict[str, Any]] = None) -> bool:
-    """Default off: avoid cancel rate limits; set env to enable orphan cancels."""
+    """Default on: cancel depth orphans via pending_limit_cancel (418-safe pacing). Set env 0 to disable."""
     _ = meta
-    return _env_bool_default(ENV_GRID_LIMITS_DRIFT_CANCEL, default_when_unset=False)
+    return _env_bool_default(ENV_GRID_LIMITS_DRIFT_CANCEL, default_when_unset=True)
 
 
 def _reconcile_with_positions_allowed(meta: Optional[Dict[str, Any]] = None) -> bool:
@@ -271,13 +271,6 @@ def _fetch_pending_limit_keys(ep: VariEndpoints, *, asset: str) -> Set[Tuple[str
     return out
 
 
-def _cancel_sleep_s() -> float:
-    try:
-        return max(0.0, float(os.environ.get(ENV_GRID_LIMITS_CANCEL_SLEEP_S, "0.2") or "0.2"))
-    except (TypeError, ValueError):
-        return 0.2
-
-
 def _cancel_pending_orphans(
     ep: VariEndpoints,
     *,
@@ -285,31 +278,30 @@ def _cancel_pending_orphans(
     orphan_keys: Set[Tuple[str, str]],
     log: Callable[[str], None],
 ) -> int:
-    """Cancel pending limits whose (side, price) keys are not in the current template."""
+    """Cancel pending limits whose (side, price) keys exceed keep-depth (418-safe pacing)."""
     if not orphan_keys:
         return 0
+    from pending_limit_cancel import cancel_limit_rows
+
     rows = _fetch_pending_limit_rows(ep, asset=asset)
-    targets: List[Tuple[Tuple[str, str], str]] = []
+    targets: List[Dict[str, Any]] = []
     for row in rows:
         k = _limit_price_key(row)
         if k is None or k not in orphan_keys:
             continue
-        rid = _row_rfq_id(row)
-        if not rid:
+        if not _row_rfq_id(row):
             log(f"gridlimits drift: skip cancel {k[0]} @ {k[1]} (no rfq_id)")
             continue
-        targets.append((k, rid))
-    sleep_s = _cancel_sleep_s()
-    ok = 0
-    for i, (k, rid) in enumerate(targets):
-        try:
-            ep.cancel_order_rfq(rfq_id=rid)
-            ok += 1
-            log(f"gridlimits drift: canceled orphan {k[0]} @ {k[1]}")
-        except Exception as e:
-            log(f"gridlimits drift: cancel {k[0]} @ {k[1]} failed ({type(e).__name__}: {e})")
-        if sleep_s > 0 and i < len(targets) - 1:
-            time.sleep(sleep_s)
+        targets.append(row)
+    if not targets:
+        return 0
+
+    def _drift_log(msg: str) -> None:
+        log(f"gridlimits drift: {msg}")
+
+    ok, err_n = cancel_limit_rows(ep, targets, log=_drift_log)
+    if err_n:
+        log(f"gridlimits drift: {err_n}/{len(targets)} cancel(s) failed for {asset}")
     return ok
 
 

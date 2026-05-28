@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import sys
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 _VARIBOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -15,26 +14,17 @@ if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
 from grid_limits_reconcile import fetch_pending_order_rows_paginated  # noqa: E402
+from pending_limit_cancel import (  # noqa: E402
+    cancel_ban_buffer_s,
+    cancel_limit_rows,
+    cancel_max_retries,
+    cancel_passes,
+    cancel_sleep_between_s,
+    order_row_underlying,
+    row_rfq_id,
+)
 from variationalbot.config import load_config
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
-from variationalbot.vari.endpoints import parse_cancel_ban_wait_seconds
-from variationalbot.vari.errors import VariUnexpectedResponse
-
-
-def _default_sleep_between_s() -> float:
-    raw = (os.environ.get("CANCEL_ALL_SLEEP_BETWEEN_S") or "1.5").strip()
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        return 1.5
-
-
-def _default_max_cancel_retries() -> int:
-    raw = (os.environ.get("CANCEL_ALL_MAX_RETRIES") or "12").strip()
-    try:
-        return max(1, int(raw))
-    except ValueError:
-        return 12
 
 
 def _default_page_limit() -> int:
@@ -53,36 +43,12 @@ def _default_max_pages() -> int:
         return 25
 
 
-def _order_row_underlying(row: Dict[str, Any]) -> str:
-    inst = row.get("instrument")
-    if isinstance(inst, dict):
-        u = inst.get("underlying")
-        if isinstance(u, str) and u.strip():
-            return u.strip().upper()
-    for k in ("underlying", "asset", "symbol"):
-        v = row.get(k)
-        if isinstance(v, str) and v.strip():
-            s = v.strip().upper()
-            if s.endswith("-PERP"):
-                s = s[: -len("-PERP")]
-            return s
-    return ""
-
-
 def _row_status(row: Dict[str, Any]) -> str:
     return str(row.get("status") or row.get("order_status") or row.get("state") or "").strip().lower()
 
 
 def _row_order_type(row: Dict[str, Any]) -> str:
     return str(row.get("order_type") or row.get("type") or row.get("kind") or "").strip().lower()
-
-
-def _row_rfq_id(row: Dict[str, Any]) -> Optional[str]:
-    for k in ("rfq_id", "rfqId"):
-        v = row.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return None
 
 
 def _is_terminal_status(st: str) -> bool:
@@ -116,39 +82,10 @@ def _pending_limit_rows_with_rfq(rows: List[Dict[str, Any]]) -> List[Dict[str, A
             continue
         if _is_terminal_status(_row_status(row)):
             continue
-        if _row_rfq_id(row) is None:
+        if row_rfq_id(row) is None:
             continue
         out.append(row)
     return out
-
-
-def _cancel_one(
-    ep: VariEndpoints,
-    *,
-    row: Dict[str, Any],
-    max_attempts: int,
-    buffer_s: float,
-    verbose: bool,
-) -> None:
-    rid = _row_rfq_id(row)
-    if not rid:
-        raise ValueError("missing rfq_id")
-    sym = _order_row_underlying(row) or "?"
-
-    def on_wait(sleep_s: float, attempt: int, rfq: str) -> None:
-        if verbose:
-            print(
-                f"cancel ban: wait {sleep_s:.1f}s before retry "
-                f"({attempt}/{max_attempts}) {sym} rfq_id={rfq[:8]}…",
-                file=sys.stderr,
-            )
-
-    ep.cancel_order_rfq_resilient(
-        rfq_id=rid,
-        max_attempts=max_attempts,
-        buffer_s=buffer_s,
-        on_wait=on_wait,
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -187,13 +124,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--ban-buffer-s",
         type=float,
-        default=0.75,
+        default=None,
         help="Extra seconds added to API wait_until_seconds on 418 (default 0.75).",
     )
     p.add_argument(
         "--passes",
         type=int,
-        default=2,
+        default=None,
         help="How many full passes over remaining failures (default 2).",
     )
     p.add_argument(
@@ -219,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--quiet",
         action="store_true",
-        help="Suppress cancel-ban wait messages on stderr.",
+        help="Suppress cancel progress log lines.",
     )
     return p
 
@@ -228,18 +165,12 @@ def main() -> int:
     args = build_parser().parse_args()
     cfg = load_config()
     sleep_between = (
-        float(args.sleep_between_s)
-        if args.sleep_between_s is not None
-        else _default_sleep_between_s()
+        float(args.sleep_between_s) if args.sleep_between_s is not None else cancel_sleep_between_s()
     )
-    max_retries = (
-        int(args.max_retries) if args.max_retries is not None else _default_max_cancel_retries()
-    )
-    passes = max(1, int(args.passes))
-    verbose = not bool(args.quiet)
-    page_limit = (
-        int(args.page_limit) if args.page_limit is not None else _default_page_limit()
-    )
+    max_retries = int(args.max_retries) if args.max_retries is not None else cancel_max_retries()
+    passes = max(1, int(args.passes)) if args.passes is not None else cancel_passes()
+    ban_buffer = float(args.ban_buffer_s) if args.ban_buffer_s is not None else cancel_ban_buffer_s()
+    page_limit = int(args.page_limit) if args.page_limit is not None else _default_page_limit()
     max_pages = int(args.max_pages) if args.max_pages is not None else _default_max_pages()
 
     ep = VariEndpoints(
@@ -291,8 +222,8 @@ def main() -> int:
         for row in targets:
             data.append(
                 [
-                    _order_row_underlying(row) or "-",
-                    _row_rfq_id(row) or "-",
+                    order_row_underlying(row) or "-",
+                    row_rfq_id(row) or "-",
                     _row_status(row) or "-",
                     _row_order_type(row) or "-",
                     str(row.get("side") or row.get("order_side") or "-"),
@@ -312,59 +243,20 @@ def main() -> int:
         print("Dry-run only. Re-run with --live to POST /api/orders/cancel for each row.")
         return 0
 
-    pending: List[Dict[str, Any]] = list(targets)
-    errors: List[Tuple[str, str]] = []
-
-    for pass_n in range(1, passes + 1):
-        if pass_n > 1:
-            if not errors:
-                break
-            if verbose:
-                print(
-                    f"Pass {pass_n}/{passes}: retrying {len(errors)} failed cancel(s)…",
-                    file=sys.stderr,
-                )
-            err_ids = {rid for rid, _ in errors}
-            errors = []
-            pending = [r for r in pending if (_row_rfq_id(r) or "") in err_ids]
-            if not pending:
-                break
-            time.sleep(max(sleep_between, 2.0))
-
-        for i, row in enumerate(pending):
-            rid = _row_rfq_id(row)
-            if not rid:
-                continue
-            sym = _order_row_underlying(row) or "?"
-            try:
-                _cancel_one(
-                    ep,
-                    row=row,
-                    max_attempts=max_retries,
-                    buffer_s=float(args.ban_buffer_s),
-                    verbose=verbose,
-                )
-                if args.print_json:
-                    print(json.dumps({"rfq_id": rid, "canceled": True}, indent=2))
-            except VariUnexpectedResponse as e:
-                wait_s = parse_cancel_ban_wait_seconds(e)
-                msg = f"{type(e).__name__}: {e}"
-                errors.append((rid, msg))
-                print(f"ERROR cancel {sym} rfq_id={rid}: {msg}", file=sys.stderr)
-                if wait_s is not None and i < len(pending) - 1:
-                    time.sleep(float(wait_s) + float(args.ban_buffer_s))
-            except Exception as e:
-                msg = f"{type(e).__name__}: {e}"
-                errors.append((rid, msg))
-                print(f"ERROR cancel {sym} rfq_id={rid}: {msg}", file=sys.stderr)
-            if i < len(pending) - 1 and sleep_between > 0:
-                time.sleep(sleep_between)
-
+    log_fn = None if args.quiet else lambda m: print(m, file=sys.stderr)
+    ok, err_n = cancel_limit_rows(
+        ep,
+        targets,
+        log=log_fn,
+        passes=passes,
+        sleep_between=sleep_between,
+        ban_buffer=ban_buffer,
+        max_retries=max_retries,
+    )
     if not args.print_json:
-        n_ok = len(targets) - len(errors)
-        print(f"Canceled {n_ok} pending limit order(s).")
-    if errors:
-        print(f"Finished with {len(errors)}/{len(targets)} error(s).", file=sys.stderr)
+        print(f"Canceled {ok} pending limit order(s).")
+    if err_n:
+        print(f"Finished with {err_n}/{len(targets)} error(s).", file=sys.stderr)
         return 2
     return 0
 

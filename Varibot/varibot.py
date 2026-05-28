@@ -60,7 +60,7 @@ PM_REFILL_DEFAULT_ON: bool = True
 # re-arm (``VARIBOT_GRID_LIMITS_RECONCILE=0`` to disable live limit POST/cancel).
 # Live limit reconcile defaults ON (``grid_limits_reconcile.GRID_LIMITS_RECONCILE_DEFAULT``); no Railway env
 # required. Set ``VARIBOT_GRID_LIMITS_RECONCILE=0`` to disable. Drift refill auto-on with paired_limit;
-# drift cancel defaults off (refill missing rungs after fills; see grid_limits_reconcile).
+# drift cancel defaults on (keep-depth orphans; 418-safe pacing via pending_limit_cancel).
 
 # Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
 # then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).

@@ -41,9 +41,13 @@ class TestFlatRebalanceDefault(unittest.TestCase):
 
 
 class TestDriftCancelDefaults(unittest.TestCase):
-    def test_drift_cancel_default_off(self) -> None:
+    def test_drift_cancel_default_on(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("VARIBOT_GRID_LIMITS_DRIFT_CANCEL", None)
+            self.assertTrue(_drift_cancel_enabled())
+
+    def test_drift_cancel_explicit_off(self) -> None:
+        with patch.dict(os.environ, {"VARIBOT_GRID_LIMITS_DRIFT_CANCEL": "0"}, clear=False):
             self.assertFalse(_drift_cancel_enabled())
 
 
