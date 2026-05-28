@@ -190,41 +190,7 @@ class TestRemnantProximityHug(unittest.TestCase):
             asset="BNB", result=result, venue_pending_keys=pending, mark=mark
         )
         sell_posts = [px for side, px in post if side == "sell"]
-        # Mark-centered nearest sell: mark + spacing = 632.28 (not remnant-step 632.77).
-        self.assertTrue(any(abs(px - 632.28) < 0.02 for px in sell_posts))
-
-    def test_misaligned_remnants_post_mark_centered_buy_not_remnant_step(self) -> None:
-        """TAO-style pinned ladder: gap-fill uses mark - spacing, not nearest remnant + spacing."""
-        mark = 260.554
-        spacing = 1.54183
-        pending = {
-            ("buy", grid_limit_price_key(257.858)),
-            ("buy", grid_limit_price_key(256.316)),
-            ("buy", grid_limit_price_key(254.774)),
-            ("buy", grid_limit_price_key(253.232)),
-            ("sell", grid_limit_price_key(mark + spacing)),
-            ("sell", grid_limit_price_key(mark + 2 * spacing)),
-            ("sell", grid_limit_price_key(mark + 3 * spacing)),
-            ("sell", grid_limit_price_key(mark + 4 * spacing)),
-            ("sell", grid_limit_price_key(mark + 5 * spacing)),
-        }
-        result = infer_ladder_from_remnants(
-            mark=mark,
-            venue_pending_keys=pending,
-            configured_spacing=spacing,
-            lower=249.262,
-            upper=264.68,
-            grid_num=10,
-            grid_band_pct=3.0,
-        )
-        _, post = compute_venue_actions(
-            asset="TAO", result=result, venue_pending_keys=pending, mark=mark
-        )
-        buy_posts = [px for side, px in post if side == "buy"]
-        self.assertEqual(1, len(buy_posts))
-        expected = mark - spacing  # 259.012, not remnant-step 259.4
-        self.assertAlmostEqual(expected, buy_posts[0], places=2)
-        self.assertNotAlmostEqual(259.4, buy_posts[0], places=2)
+        self.assertTrue(any(abs(px - 632.77) < 0.02 for px in sell_posts))
 
     def test_sufficient_window_skips_proximity_hug(self) -> None:
         # Nearest sell within ~1 spacing of mark — no gap-fill even when sufficient.

@@ -7,8 +7,8 @@ This module defines *mark-centered* limit maintenance:
 2. Check if there are at least N/2 sell limits above mark and N/2 buy limits below mark
    within the configured ±band around mark.
 3. Post missing rungs from the mark outward (nearest first): count-fill when short on depth,
-   and gap-fill missing mark-centered window rungs when the nearest limit is more than
-   ~1 spacing away (even if count is already sufficient).
+   and gap-fill toward mark when the nearest limit is more than ~1 spacing away (even if
+   count is already sufficient).
 4. Optionally cancel venue limits outside that band (keeps the venue book tidy).
 
 No anchor concept is required for the reconcile decisions.
@@ -313,55 +313,6 @@ def _needs_gap_toward_mark(
     return dist > sp * 1.05 + 1e-9
 
 
-def _missing_mark_window_rungs(
-    *,
-    side: str,
-    mark: float,
-    spacing: float,
-    n: int,
-    win_lower: float,
-    win_upper: float,
-    venue_pending_keys: Set[Tuple[str, str]],
-    limit: Optional[int] = None,
-    inband: Optional[List[float]] = None,
-) -> List[float]:
-    """
-    Mark-centered window targets not on venue, nearest-to-mark first.
-
-    Buys: mark - spacing, mark - 2×spacing, …
-    Sells: mark + spacing, mark + 2×spacing, …
-
-    When ``inband`` is set, only return targets strictly closer to mark than the
-    nearest existing in-band limit (gap-fill toward mark).
-    """
-    if spacing <= 0 or n <= 0:
-        return []
-    mark_f = float(mark)
-    side_n = str(side).strip().lower()
-    if side_n == "buy":
-        targets, _ = _mark_window_rungs(
-            mark=mark_f, spacing=spacing, n=n, win_lower=win_lower, win_upper=win_upper
-        )
-    else:
-        _, targets = _mark_window_rungs(
-            mark=mark_f, spacing=spacing, n=n, win_lower=win_lower, win_upper=win_upper
-        )
-    missing: List[float] = []
-    for px in targets:
-        if inband:
-            if side_n == "buy":
-                if px <= float(max(inband)) + 1e-9:
-                    continue
-            else:
-                if px >= float(min(inband)) - 1e-9:
-                    continue
-        if not _on_venue(venue_pending_keys, side, px):
-            missing.append(px)
-        if limit is not None and len(missing) >= limit:
-            break
-    return missing
-
-
 def _gap_posts_toward_mark(
     *,
     side: str,
@@ -372,26 +323,49 @@ def _gap_posts_toward_mark(
     win_upper: float,
     venue_pending_keys: Set[Tuple[str, str]],
     max_steps: int,
-    window_n: int,
 ) -> List[float]:
     """
-    Proximity rule: when the nearest in-band limit is more than ~1 spacing from mark,
-    post missing mark-centered window rungs in the gap toward mark (nearest first).
+    Proximity rule (minimal churn): if the nearest in-band limit is more than ~1 spacing
+    away from the mark, post intermediate rungs by stepping from that nearest limit
+    *toward the mark*.
     """
     if spacing <= 0 or not inband:
         return []
+    side_n = str(side).strip().lower()
+    mark_f = float(mark)
+    posts: List[float] = []
     steps = max(1, int(max_steps))
-    return _missing_mark_window_rungs(
-        side=side,
-        mark=mark,
-        spacing=spacing,
-        n=max(1, int(window_n)),
-        win_lower=win_lower,
-        win_upper=win_upper,
-        venue_pending_keys=venue_pending_keys,
-        limit=steps,
-        inband=inband,
-    )
+
+    if side_n == "sell":
+        base = min(inband)
+        for _ in range(steps):
+            cand = _price_key_float(base - spacing)
+            if cand <= mark_f + 1e-9:
+                break
+            if cand < win_lower - 1e-9 or cand > win_upper + 1e-9:
+                break
+            if not _on_venue(venue_pending_keys, "sell", cand):
+                posts.append(cand)
+            base = cand
+            # stop when nearest is within ~1 spacing
+            if base - mark_f <= spacing * 1.05:
+                break
+        return posts
+
+    # buy
+    base = max(inband)
+    for _ in range(steps):
+        cand = _price_key_float(base + spacing)
+        if cand >= mark_f - 1e-9:
+            break
+        if cand < win_lower - 1e-9 or cand > win_upper + 1e-9:
+            break
+        if not _on_venue(venue_pending_keys, "buy", cand):
+            posts.append(cand)
+        base = cand
+        if mark_f - base <= spacing * 1.05:
+            break
+    return posts
 
 
 def _missing_rungs_to_post(
@@ -408,53 +382,82 @@ def _missing_rungs_to_post(
     """
     Post only the *count* needed to reach ``n`` in-band limits on this side.
 
-    Fill missing mark-centered window rungs nearest-to-mark first, then step outward
-    from the furthest existing remnant when the window alone does not cover the shortfall.
+    Fill toward the mark first, then outward from existing remnants (no full re-lattice).
+    If there are no remnants on this side, seed from the mark-centered window.
     """
     initial_need = n - len(inband)
     if initial_need <= 0:
         return []
 
+    need = initial_need
     mark_f = float(mark)
-    side_n = str(side).strip().lower()
-    posts = _missing_mark_window_rungs(
-        side=side,
-        mark=mark_f,
-        spacing=spacing,
-        n=n,
-        win_lower=win_lower,
-        win_upper=win_upper,
-        venue_pending_keys=venue_pending_keys,
-        limit=initial_need,
-    )
-    if len(posts) >= initial_need:
+    posts: List[float] = []
+
+    if not inband:
+        if side == "buy":
+            seed, _ = _mark_window_rungs(
+                mark=mark_f, spacing=spacing, n=n, win_lower=win_lower, win_upper=win_upper
+            )
+        else:
+            _, seed = _mark_window_rungs(
+                mark=mark_f, spacing=spacing, n=n, win_lower=win_lower, win_upper=win_upper
+            )
+        for px in seed:
+            if not _on_venue(venue_pending_keys, side, px):
+                posts.append(px)
         return posts[:initial_need]
 
-    need = initial_need - len(posts)
-    if side_n == "sell":
-        base = max(inband) if inband else mark_f + n * spacing
-        for _ in range(n + 2):
-            if need <= 0:
-                break
-            cand = _price_key_float(base + spacing)
-            if cand > win_upper + 1e-9:
-                break
-            if cand > mark_f + 1e-9 and not _on_venue(venue_pending_keys, side, cand):
-                posts.append(cand)
-                need -= 1
-            base = cand
-    else:
-        base = min(inband) if inband else mark_f - n * spacing
+    if side == "sell":
+        # Toward mark first: step down from nearest sell above mark.
+        base = min(inband)
         for _ in range(n + 2):
             if need <= 0:
                 break
             cand = _price_key_float(base - spacing)
-            if cand < win_lower - 1e-9:
+            if cand <= mark_f + 1e-9:
                 break
-            if cand < mark_f - 1e-9 and not _on_venue(venue_pending_keys, side, cand):
+            if cand >= win_lower - 1e-9 and not _on_venue(venue_pending_keys, side, cand):
                 posts.append(cand)
                 need -= 1
             base = cand
+        # Outward: step up from furthest sell.
+        if need > 0:
+            base = max(inband)
+            for _ in range(n + 2):
+                if need <= 0:
+                    break
+                cand = _price_key_float(base + spacing)
+                if cand > win_upper + 1e-9:
+                    break
+                if cand > mark_f + 1e-9 and not _on_venue(venue_pending_keys, side, cand):
+                    posts.append(cand)
+                    need -= 1
+                base = cand
+    else:
+        # buy: toward mark = step up from highest buy; outward = step down from lowest buy.
+        base = max(inband)
+        for _ in range(n + 2):
+            if need <= 0:
+                break
+            cand = _price_key_float(base + spacing)
+            if cand >= mark_f - 1e-9:
+                break
+            if cand <= win_upper + 1e-9 and not _on_venue(venue_pending_keys, side, cand):
+                posts.append(cand)
+                need -= 1
+            base = cand
+        if need > 0:
+            base = min(inband)
+            for _ in range(n + 2):
+                if need <= 0:
+                    break
+                cand = _price_key_float(base - spacing)
+                if cand < win_lower - 1e-9:
+                    break
+                if cand < mark_f - 1e-9 and not _on_venue(venue_pending_keys, side, cand):
+                    posts.append(cand)
+                    need -= 1
+                base = cand
 
     return posts[:initial_need]
 
@@ -796,39 +799,72 @@ def compute_venue_actions(
             post_rungs.append((side, px))
             tmp_pending.add((side, grid_limit_price_key(px)))
 
-    def _fill_side_posts(*, side: str, inband: List[float], spacing: float) -> List[float]:
-        """Count-fill when short; else gap-fill toward mark when nearest remnant is far."""
-        if len(inband) < n:
-            return _missing_rungs_to_post(
-                side=side,
+    # Proximity gap fills (toward mark): when short on count OR nearest limit is > ~1 spacing away.
+    if _needs_gap_toward_mark(
+        side="buy",
+        mark=mark_f,
+        inband=list(result.inband_buys),
+        spacing=float(result.buy_spacing),
+    ) or len(result.inband_buys) < n:
+        _append_posts(
+            "buy",
+            _gap_posts_toward_mark(
+                side="buy",
                 mark=mark_f,
-                spacing=float(spacing),
-                n=n,
-                inband=list(inband),
-                win_lower=float(result.lower),
-                win_upper=float(result.upper),
-                venue_pending_keys=tmp_pending,
-            )
-        if _needs_gap_toward_mark(
-            side=side,
-            mark=mark_f,
-            inband=list(inband),
-            spacing=float(spacing),
-        ):
-            return _gap_posts_toward_mark(
-                side=side,
-                mark=mark_f,
-                spacing=float(spacing),
-                inband=list(inband),
+                spacing=float(result.buy_spacing),
+                inband=list(result.inband_buys),
                 win_lower=float(result.lower),
                 win_upper=float(result.upper),
                 venue_pending_keys=tmp_pending,
                 max_steps=n + 2,
-                window_n=n,
-            )
-        return []
+            ),
+        )
+    if _needs_gap_toward_mark(
+        side="sell",
+        mark=mark_f,
+        inband=list(result.inband_sells),
+        spacing=float(result.sell_spacing),
+    ) or len(result.inband_sells) < n:
+        _append_posts(
+            "sell",
+            _gap_posts_toward_mark(
+                side="sell",
+                mark=mark_f,
+                spacing=float(result.sell_spacing),
+                inband=list(result.inband_sells),
+                win_lower=float(result.lower),
+                win_upper=float(result.upper),
+                venue_pending_keys=tmp_pending,
+                max_steps=n + 2,
+            ),
+        )
 
-    _append_posts("buy", _fill_side_posts(side="buy", inband=list(result.inband_buys), spacing=result.buy_spacing))
-    _append_posts("sell", _fill_side_posts(side="sell", inband=list(result.inband_sells), spacing=result.sell_spacing))
+    # Count fill after updating tmp_pending so we don't double-post the same key.
+    _append_posts(
+        "buy",
+        _missing_rungs_to_post(
+            side="buy",
+            mark=mark_f,
+            spacing=float(result.buy_spacing),
+            n=n,
+            inband=list(result.inband_buys),
+            win_lower=float(result.lower),
+            win_upper=float(result.upper),
+            venue_pending_keys=tmp_pending,
+        ),
+    )
+    _append_posts(
+        "sell",
+        _missing_rungs_to_post(
+            side="sell",
+            mark=mark_f,
+            spacing=float(result.sell_spacing),
+            n=n,
+            inband=list(result.inband_sells),
+            win_lower=float(result.lower),
+            win_upper=float(result.upper),
+            venue_pending_keys=tmp_pending,
+        ),
+    )
 
     return cancel_keys, post_rungs
