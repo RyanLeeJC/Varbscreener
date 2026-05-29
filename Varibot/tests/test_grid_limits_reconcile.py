@@ -48,6 +48,10 @@ class TestGridLeverageForAsset(unittest.TestCase):
             os.environ.pop("GRID_LEVERAGE", None)
             self.assertEqual(50.0, grid_leverage_for_asset("ETH"))
 
+    def test_leverage_capped_at_api_max(self) -> None:
+        with patch.dict(os.environ, {"GRID_LEVERAGE": "100"}, clear=False):
+            self.assertEqual(50.0, grid_leverage_for_asset("ETH"))
+
 
 class TestBreachDefault(unittest.TestCase):
     def test_breach_reset_default_off(self) -> None:

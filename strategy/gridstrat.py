@@ -90,7 +90,9 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "halt"
 # -----------------------------------------------------------------------------
 DEFAULT_GRID_ASSET: str = "BTC"
 DEFAULT_GRID_INVESTMENT_USD: float = 40.0
-DEFAULT_GRID_LEVERAGE: float = 100.0
+DEFAULT_GRID_LEVERAGE: float = 50.0
+# Omni POST /api/settlement_pools/set_leverage rejects leverage > this (422).
+GRID_API_MAX_LEVERAGE: float = 50.0
 DEFAULT_GRID_NUM: int = 10  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
 DEFAULT_GRID_MARKET_SIZING: str = "qty"  # legacy market mode only: "qty" | "usd"
 DEFAULT_GRID_BAND_PCT: float = 0.2  # fallback band % when a ticker is not listed below
@@ -251,17 +253,26 @@ def grid_band_pct_for_asset(asset: str) -> float:
 
 
 def grid_leverage_for_asset(asset: str) -> float:
-    """Per-ticker leverage override (e.g. SPCX max 5x); else GRID_LEVERAGE env / default."""
+    """Per-ticker leverage override (e.g. SPCX max 5x); else GRID_LEVERAGE env / default.
+
+    Capped at GRID_API_MAX_LEVERAGE (Omni set_leverage validation).
+    """
     sym = str(asset).strip().upper()
     if sym in GRID_TICKER_LEVERAGE:
-        return float(GRID_TICKER_LEVERAGE[sym])
-    raw = (os.environ.get("GRID_LEVERAGE") or "").strip()
-    if raw:
-        try:
-            return float(raw)
-        except (TypeError, ValueError):
-            pass
-    return float(DEFAULT_GRID_LEVERAGE)
+        lev = float(GRID_TICKER_LEVERAGE[sym])
+    else:
+        raw = (os.environ.get("GRID_LEVERAGE") or "").strip()
+        if raw:
+            try:
+                lev = float(raw)
+            except (TypeError, ValueError):
+                lev = float(DEFAULT_GRID_LEVERAGE)
+        else:
+            lev = float(DEFAULT_GRID_LEVERAGE)
+    cap = float(GRID_API_MAX_LEVERAGE)
+    if cap > 0:
+        lev = min(lev, cap)
+    return lev
 
 
 def iter_grid_asset_metas(meta: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
