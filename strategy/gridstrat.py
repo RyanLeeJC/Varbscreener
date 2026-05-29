@@ -117,7 +117,7 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     "ETH": 2.0,
     "AAVE": 2.0,
     "AVAX": 2.0,
-    # "BNB": 2.0,
+    "BNB": 2.0,
     "LINK": 2.0,
     "SOL": 2.0,
     "SUI": 3.0,
@@ -128,11 +128,11 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
 
     # RWA
     # "CL": 2.0,
-    # "COPPER": 1.0,
-    "SPCX": 1.5,
+    # "COPPER": 1.5,
+    # "SPCX": 1.5,
     # "XAG": 2.0,
     # "XAU": 1.5,
-    "XPD": 1.5,
+    # "XPD": 1.5,
     # "XPT": 1.0,
 }
 
