@@ -14,13 +14,17 @@ import varibot as vb  # noqa: E402
 
 
 class TestSupportedAssetsMarks(unittest.TestCase):
-    def test_index_price_preferred(self) -> None:
+    def test_price_preferred_over_index(self) -> None:
         entry = [{"asset": "ETH", "index_price": "2100.5", "price": "2101.0"}]
-        self.assertEqual(vb.mark_price_from_supported_asset_entry(entry), 2100.5)
+        self.assertEqual(vb.mark_price_from_supported_asset_entry(entry), 2101.0)
 
-    def test_price_fallback(self) -> None:
+    def test_price_only(self) -> None:
         entry = [{"asset": "CL", "price": "99.5"}]
         self.assertEqual(vb.mark_price_from_supported_asset_entry(entry), 99.5)
+
+    def test_index_price_fallback(self) -> None:
+        entry = [{"asset": "XPD", "index_price": "1376.0"}]
+        self.assertEqual(vb.mark_price_from_supported_asset_entry(entry), 1376.0)
 
     def test_use_bulk_default(self) -> None:
         old = os.environ.pop("VARIBOT_MARKS_SOURCE", None)

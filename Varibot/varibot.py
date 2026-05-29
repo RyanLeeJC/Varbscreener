@@ -1031,7 +1031,7 @@ def _ensure_strategy_marketstate_json(path: Optional[str] = None) -> str:
 
 
 def _fetch_venue_mark_for_asset(ep: VariEndpoints, *, asset: str) -> float:
-    """Live mark from POST /api/quotes/indicative (not cached listing files)."""
+    """Indicative mark for order execution (POST /api/quotes/indicative; ``mark_price`` first)."""
     sym = str(asset).strip().upper()
     inst = Instrument.for_underlying(sym)
     q = ep.quote_indicative_simple(instrument=inst, qty=1.0)
@@ -1058,11 +1058,16 @@ def _use_bulk_supported_assets_marks() -> bool:
 
 
 def mark_price_from_supported_asset_entry(entry: Any) -> float:
-    """Parse ``index_price`` (preferred) or ``price`` from one supported_assets row."""
+    """
+    Grid/strategy mark from one ``supported_assets`` row.
+
+    Prefer ``price`` (tracks UI / indicative mark). ``index_price`` is fallback only.
+    Order placement uses indicative quotes separately (``_fetch_venue_mark_for_asset``).
+    """
     row = entry[0] if isinstance(entry, list) and entry else entry
     if not isinstance(row, dict):
         raise TypeError(f"supported_assets entry is not a dict: {type(row).__name__}")
-    for k in ("index_price", "price", "mark_price"):
+    for k in ("price", "mark_price", "index_price"):
         v = row.get(k)
         if v is None:
             continue
@@ -1099,7 +1104,7 @@ def _grid_mark_for_asset(
     asset: str,
     bulk_map: Optional[Dict[str, float]] = None,
 ) -> float:
-    """Mark for one ticker: bulk map when enabled, else indicative."""
+    """Grid anchor: ``supported_assets`` bulk map when enabled, else indicative fallback."""
     sym = str(asset).strip().upper()
     if _use_bulk_supported_assets_marks():
         m = bulk_map if bulk_map is not None else _fetch_supported_assets_mark_map(ep)

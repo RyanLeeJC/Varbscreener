@@ -129,10 +129,10 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     # RWA
     # "CL": 2.0,
     # "COPPER": 1.0,
-    "SPCX": 1.0,
+    "SPCX": 1.5,
     # "XAG": 2.0,
     # "XAU": 1.5,
-    "XPD": 1.0,
+    "XPD": 1.5,
     # "XPT": 1.0,
 }
 
@@ -938,6 +938,7 @@ def _pick_tickers_one_asset(
         "grid_per_rung_usd": per_usd,
         "grid_per_rung_qty": format_qty_for_grid_limit(qty_pg),
         "grid_limit_sizing": "qty",
+        "grid_limit_use_mark_price": True,
         "grid_state_path": os.path.abspath(state_path),
         "grid_market_sizing": grid_market_sizing_mode(),
         "grid_inventory": float(state.get("inventory") or 0.0),

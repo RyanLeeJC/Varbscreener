@@ -27,6 +27,9 @@ from variationalbot.config import load_config
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints
 
 
+_DEFAULT_RWA_UNDERLYINGS = ("XAG", "XAU", "COPPER", "XPD", "XPT", "CL")
+
+
 def _default_page_limit() -> int:
     raw = (os.environ.get("CANCEL_ALL_PAGE_LIMIT") or "100").strip()
     try:
@@ -88,6 +91,30 @@ def _pending_limit_rows_with_rfq(rows: List[Dict[str, Any]]) -> List[Dict[str, A
     return out
 
 
+def _parse_underlyings_csv(raw: Optional[str]) -> Optional[List[str]]:
+    if raw is None:
+        return None
+    parts = [p.strip().upper() for p in raw.split(",")]
+    parts = [p for p in parts if p]
+    return parts or None
+
+
+def _filter_rows_by_underlyings(
+    rows: List[Dict[str, Any]],
+    *,
+    allowed_underlyings: Optional[List[str]],
+) -> List[Dict[str, Any]]:
+    if not allowed_underlyings:
+        return rows
+    allow = {u.upper() for u in allowed_underlyings}
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        u = (order_row_underlying(row) or "").strip().upper()
+        if u and u in allow:
+            out.append(row)
+    return out
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=(
@@ -100,6 +127,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--instrument",
         default=None,
         help="Optional instrument query param, e.g. P-BTC-USDC-3600 (passed to orders/v2).",
+    )
+    p.add_argument(
+        "--rwa",
+        action="store_true",
+        help=f"Only target RWA underlyings: {', '.join(_DEFAULT_RWA_UNDERLYINGS)}.",
+    )
+    p.add_argument(
+        "--underlyings",
+        default=None,
+        help=(
+            "Comma-separated underlying tickers to target, e.g. XAU,XAG,CL. "
+            "Matches order_row_underlying(row). Use --rwa for the default RWA set."
+        ),
     )
     p.add_argument(
         "--live",
@@ -199,6 +239,10 @@ def main() -> int:
         )
 
     targets = _pending_limit_rows_with_rfq(rows)
+    allowed_underlyings = _parse_underlyings_csv(args.underlyings)
+    if args.rwa:
+        allowed_underlyings = list(_DEFAULT_RWA_UNDERLYINGS)
+    targets = _filter_rows_by_underlyings(targets, allowed_underlyings=allowed_underlyings)
     if args.print_json:
         print(json.dumps({"pending_limit_with_rfq": targets}, indent=2, default=str))
     else:
