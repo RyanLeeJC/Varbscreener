@@ -89,8 +89,8 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "halt"
 # (Same idea as ``DEFAULT_GRID_BAND_PCT`` — leave bounds NaN to use ±band around mark.)
 # -----------------------------------------------------------------------------
 DEFAULT_GRID_ASSET: str = "BTC"
-DEFAULT_GRID_INVESTMENT_USD: float = 20.0
-DEFAULT_GRID_LEVERAGE: float = 50.0
+DEFAULT_GRID_INVESTMENT_USD: float = 40.0
+DEFAULT_GRID_LEVERAGE: float = 100.0
 DEFAULT_GRID_NUM: int = 10  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
 DEFAULT_GRID_MARKET_SIZING: str = "qty"  # legacy market mode only: "qty" | "usd"
 DEFAULT_GRID_BAND_PCT: float = 0.2  # fallback band % when a ticker is not listed below
