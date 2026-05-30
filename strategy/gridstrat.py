@@ -125,7 +125,7 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     "NEAR": 2.5,
     "PENGU": 1.5,
     "PUMPFUN": 2.0,
-    "SEI": 1.5,
+    "SEI": 2.5,
     "SOL": 2.0,
     "SUI": 3.0,
     "TAO": 3.0,
