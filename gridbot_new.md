@@ -305,10 +305,10 @@ python3 rebalance_run.py
 | `VARIBOT_REBALANCE_ORDER_INTERVAL_S` | *(auto)* | Seconds between each ticker’s market order; default ≈3.2s at Vari 10 req/10s (3 HTTP calls per leg) |
 | `VARI_RATE_LIMIT_MAX` / `VARI_RATE_LIMIT_WINDOW_S` | `10` / `10` | Per-IP cap used to compute default pacing (also enforced on every HTTP call) |
 | `MAX_SLIPPAGE` | `0.002` | Market order slippage cap |
-| `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD` | `4500` | Per-ticker reduce-only market trim when position value exceeds this (`0` = off) |
+| `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE` | `20` | Per-ticker reduce-only trim when notional exceeds multiple × grid rung (`investment×lev/grid_num`; `0` = off) |
 | `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION` | `0.5` | Fraction of position qty to cut per trim (default 50%) |
 
-**Notional cap trim** runs every cycle when you have open positions (before IM rebalance): if any ticker’s position value is **over $4,500**, the bot places a **reduce-only market** order for **50%** of that position’s qty. Grid limits are not canceled.
+**Notional cap trim** runs every cycle when you have open positions (before IM rebalance): if any ticker’s position notional is **over 20× grid rung USD** (default 20× $400 = **$8,000** with 80×50/10), the bot places a **reduce-only market** order for **50%** of that position’s qty. Grid limits are not canceled.
 
 `varibot.py --live` calls the same logic at the **start of each cycle** when positions exist (no latch).
 

@@ -32,10 +32,10 @@ DEFAULT_TRIM_MULTIPLE: float = 0.0  # <= 0 disables per-ticker position trim
 DEFAULT_TRIM_FRACTION: float = 0.5
 ENV_OVERSIZED_FLATTEN_MULTIPLE = "VARIBOT_OVERSIZED_FLATTEN_MULTIPLE"
 DEFAULT_OVERSIZED_FLATTEN_MULTIPLE: float = 10.0  # <= 0 disables oversized profit flatten
-# Per-ticker reduce-only trim when position value exceeds cap (e.g. venue $5K @ 50x limit).
-ENV_NOTIONAL_CAP_TRIM_USD = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD"
+# Per-ticker reduce-only trim when position notional exceeds multiple × grid rung USD.
+ENV_NOTIONAL_CAP_TRIM_MULTIPLE = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE"
 ENV_NOTIONAL_CAP_TRIM_FRACTION = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION"
-DEFAULT_NOTIONAL_CAP_TRIM_USD: float = 4500.0
+DEFAULT_NOTIONAL_CAP_TRIM_MULTIPLE: float = 20.0  # 20 × (investment × lev / grid_num); <= 0 disables
 DEFAULT_NOTIONAL_CAP_TRIM_FRACTION: float = 0.5
 # Each market leg: 2× indicative quote + 1× POST market (see VariEndpoints.quote_id_for_order_qty).
 MARKET_LEG_HTTP_CALLS: int = 3
@@ -220,9 +220,9 @@ def oversized_flatten_multiple() -> float:
 
 
 def notional_cap_trim_constants() -> Tuple[float, float]:
-    """(cap_usd, trim_fraction). cap_usd <= 0 disables notional-cap trimming."""
+    """(cap_multiple, trim_fraction). multiple <= 0 disables notional-cap trimming."""
     return (
-        _env_float(ENV_NOTIONAL_CAP_TRIM_USD, DEFAULT_NOTIONAL_CAP_TRIM_USD),
+        _env_float(ENV_NOTIONAL_CAP_TRIM_MULTIPLE, DEFAULT_NOTIONAL_CAP_TRIM_MULTIPLE),
         _env_float(ENV_NOTIONAL_CAP_TRIM_FRACTION, DEFAULT_NOTIONAL_CAP_TRIM_FRACTION),
     )
 
@@ -261,32 +261,37 @@ def _planned_trim_order(
 def plan_notional_cap_trims(
     positions: Sequence[LivePosition],
     *,
-    cap_usd: Optional[float] = None,
+    cap_multiple: Optional[float] = None,
     trim_fraction: Optional[float] = None,
     min_order_usd: Optional[float] = None,
 ) -> List[PlannedTrimOrder]:
     """
-    Reduce-only trim when position value exceeds ``cap_usd`` (default $4,500).
+    Reduce-only trim when position notional exceeds ``cap_multiple × grid_rung_usd``.
 
+    Rung USD is ``GRID_INVESTMENT_USD × leverage / GRID_NUM`` per ticker (default 20× $400 = $8,000).
     Trims ``trim_fraction`` of position qty (default 50%) via market order.
-    Set ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD=0`` to disable.
+    Set ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE=0`` to disable.
     """
-    thr, frac = notional_cap_trim_constants()
-    if cap_usd is not None:
-        thr = float(cap_usd)
+    mult, frac = notional_cap_trim_constants()
+    if cap_multiple is not None:
+        mult = float(cap_multiple)
     if trim_fraction is not None:
         frac = float(trim_fraction)
     _, _, _, min_usd = rebalance_constants()
     if min_order_usd is not None:
         min_usd = float(min_order_usd)
 
-    if thr <= 0 or frac <= 0 or frac > 1.0:
+    if mult <= 0 or frac <= 0 or frac > 1.0:
         return []
 
     out: List[PlannedTrimOrder] = []
     for pos in positions:
+        rung = grid_rung_usd_for_ticker(pos.ticker)
+        if rung <= 0:
+            continue
+        threshold = float(mult) * float(rung)
         planned = _planned_trim_order(
-            pos, threshold=thr, frac=frac, rung_usd=0.0, min_usd=min_usd
+            pos, threshold=threshold, frac=frac, rung_usd=float(rung), min_usd=min_usd
         )
         if planned is not None:
             out.append(planned)
@@ -776,8 +781,8 @@ def rebalance_portfolio(
 
     0. **Oversized profit flatten** — 100%% reduce-only when abs notional exceeds
        ``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE × grid_rung_usd`` (default 10×) and uPNL > 0.
-    1. **Notional cap trim** — reduce-only market when position value exceeds
-       ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD`` (default $4,500) by
+    1. **Notional cap trim** — reduce-only market when position notional exceeds
+       ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE × grid_rung_usd`` (default 20×) by
        ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION`` (default 50%).
     2. **Rung multiple trim** — when abs notional exceeds
        ``VARIBOT_REBALANCE_TRIM_MULTIPLE × grid_rung_usd`` (default off).
@@ -837,7 +842,7 @@ def rebalance_portfolio(
         ),
     )
 
-    cap_thr, cap_frac = notional_cap_trim_constants()
+    cap_mult, cap_frac = notional_cap_trim_constants()
     cap_trims = plan_notional_cap_trims(positions, min_order_usd=min_usd)
     cap_ran = _execute_trim_orders(
         ep=ep,
@@ -848,7 +853,8 @@ def rebalance_portfolio(
         max_slippage=max_slippage,
         log_tag="notional cap trim",
         summary_line=(
-            f"notional cap trim: {len(cap_trims)} ticker(s) over ${cap_thr:g}; "
+            f"notional cap trim: {len(cap_trims)} ticker(s) over "
+            f"{cap_mult:g}× grid_rung_usd; "
             f"trim {cap_frac * 100:g}% each (reduce-only market); "
             f"projected_volume=${sum(t.order_notional for t in cap_trims):.2f}"
             if cap_trims
