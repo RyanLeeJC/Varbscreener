@@ -366,7 +366,26 @@ On the first cycle, `grid_limits_reconcile.run_grid_limits_bootstrap` runs a **h
 
 - **Skip order history on fresh flat** — When the account has **no open positions** and a ticker has **no pending limits**, cycle-1 map is **pending-only** (no history pagination). Logs: `gridlimits[ETH] map: skip order history (flat account, no pending limits)`. Code: `_skip_order_history_on_flat_map` in `Varibot/grid_limits_reconcile.py`.
 
-- **Bulk marks via `GET /api/metadata/supported_assets`** — Default `VARIBOT_MARKS_SOURCE=supported_assets`: one request for all Omni marks (~0.1s) instead of 20×2 `POST /api/quotes/indicative`. Marks are prefetched once per cycle (`cycle_bulk_marks`) and reused for listing snapshot, `pick_tickers`, and rebalance. Set `VARIBOT_MARKS_SOURCE=indicative` to restore per-ticker quotes. `index_price` is used for grid ladders (typically within ~0.1–0.7% of indicative).
+- **Bulk marks via `GET /api/metadata/supported_assets`** — Default `VARIBOT_MARKS_SOURCE=supported_assets`: one request for all Omni marks (~0.1s) instead of 20×2 `POST /api/quotes/indicative`. Marks are prefetched once per cycle (`cycle_bulk_marks`) and reused for listing snapshot, `pick_tickers`, and rebalance. Set `VARIBOT_MARKS_SOURCE=indicative` to restore per-ticker quotes. Parsed from each row’s `price` (then `mark_price`, then `index_price`); see **supported_assets mark lag** below when using the bulk default.
+
+### supported_assets mark lag (~3 minutes behind wall clock)
+
+**Investigated May 2026 (VIRTUAL spike, `Remnant delay_case.txt`).** The venue mark logged as `step: venue mark … (supported_assets)` is **not** the same as the live mark on the Omni 1m chart at fetch time. In a fast move, `GET /api/metadata/supported_assets` can trail wall clock by about **three minutes** — not merely the ~1–2s between the minute boundary and when Varibot finishes the GET.
+
+**Anchor example:** a fetch at **13:08:01** aligned with the chart’s **13:05** 1m bar **close** (not 13:08). During the incident, 13:06’s fetch looked like **13:04** pricing (~0.7077 vs chart ~0.714+), and 13:07’s fetch aligned with **13:05 open** (~0.7090 vs 13:05 O 0.7092).
+
+| Cycle minute | Log time (SGT) | Bot VIRTUAL mark (`supported_assets`) |
+|--------------|----------------|---------------------------------------|
+| 13:05 | 13:05:02.304 | 0.710336 |
+| 13:06 | 13:06:01.709 | 0.707738 |
+| 13:07 | 13:07:02.147 | 0.709037 |
+| 13:08 | 13:08:01.691 | 0.713925 |
+
+**Operational impact:** gridstrat + remnant anchor on this stale mark for the whole cycle. With existing sell limits still near the live tape (~0.714) and a low bulk mark (~0.708), remnant can post sell rungs **below** the floating mark → immediate fills (see `Remnant delay_case.txt`, cycle 990).
+
+**Mitigation (implemented):** live remnant reconcile fetches a fresh `POST /api/quotes/indicative` mark **per ticker** immediately before posting missing limits (after the bulk pending sweep). Gridstrat / listing still use one bulk `supported_assets` GET by default (`VARIBOT_MARKS_SOURCE=supported_assets`). Set `VARIBOT_GRID_LIMITS_MARK_INDICATIVE=0` to revert reconcile to the stale `grid_mark` from gridstrat.
+
+- **Per-ticker indicative marks in remnant reconcile (May 2026)** — Cycle order: bulk pending → gridstrat (bulk marks for sim/listing) → for each ticker: indicative `mark_price` → remnant post. Logs: `gridlimits[ETH] indicative mark=… (POST /api/quotes/indicative)` then `gridlimits[ETH] remnant: … (mark=…)`.
 
 - **Bulk pending via paginated `GET /api/orders/v2?status=pending`** — Default `VARIBOT_PENDING_BULK=1`: one sweep (up to `VARIBOT_PENDING_BULK_MAX_PAGES` pages) per cycle, bucketed by `instrument.underlying`, reused in `_grid_venue_inputs_for_cycle` (pass 1) and `run_grid_limits_bootstrap` (pass 2). Per-ticker refresh still runs after drift cancel. Set `VARIBOT_PENDING_BULK=0` for legacy per-ticker GETs.
 

@@ -35,6 +35,8 @@ ENV_GRID_ORDERS_PAGE_LIMIT: str = "VARIBOT_GRID_ORDERS_PAGE_LIMIT"
 # One paginated GET /api/orders/v2?status=pending for all tickers (default on). Set 0 for per-ticker fetch.
 ENV_PENDING_BULK: str = "VARIBOT_PENDING_BULK"
 ENV_PENDING_BULK_MAX_PAGES: str = "VARIBOT_PENDING_BULK_MAX_PAGES"
+# Live remnant reconcile: per-ticker POST /api/quotes/indicative before posting (default on).
+ENV_GRID_LIMITS_MARK_INDICATIVE: str = "VARIBOT_GRID_LIMITS_MARK_INDICATIVE"
 
 
 def _truthy_env(name: str) -> bool:
@@ -78,6 +80,11 @@ def fetch_pending_limit_keys_for_asset(ep: VariEndpoints, *, asset: str) -> Set[
 def bulk_pending_fetch_enabled() -> bool:
     """Default on: one paginated pending sweep per cycle instead of per-ticker GETs."""
     return _env_bool_default(ENV_PENDING_BULK, default_when_unset=True)
+
+
+def grid_limits_mark_indicative_enabled() -> bool:
+    """Default on: fetch fresh indicative mark per ticker in remnant reconcile."""
+    return _env_bool_default(ENV_GRID_LIMITS_MARK_INDICATIVE, default_when_unset=True)
 
 
 def pending_limit_keys_by_asset_from_rows(
@@ -728,10 +735,15 @@ def run_grid_limits_bootstrap(
     live: bool,
     multi_script: str,
     pending_by_asset_preloaded: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
+    mark_fetcher: Optional[Callable[[str], float]] = None,
 ) -> None:
     """
-    Fetch venue pending limits (bulk when enabled), then per ticker run remnant-based re-arm
-    (``strategy/gridstrat_remnant``) when ``VARIBOT_GRID_LIMITS_RECONCILE`` is on and live limit mode.
+    Fetch venue pending limits (bulk when enabled), then per ticker:
+
+    1. Fresh ``POST /api/quotes/indicative`` mark when ``mark_fetcher`` is set (live default).
+    2. Remnant-based re-arm (``strategy/gridstrat_remnant``) when reconcile is on.
+
+    Gridstrat may still use bulk ``supported_assets`` marks; reconcile does not reuse those.
     """
     _ = multi_script
     _ = varibot_dir
@@ -804,15 +816,32 @@ def run_grid_limits_bootstrap(
     if not live or not is_limit:
         return
 
+    use_indicative = bool(live and mark_fetcher is not None and grid_limits_mark_indicative_enabled())
+
     for asset, ameta in asset_metas:
-        mark = ameta.get("grid_mark")
-        try:
-            mark_f = float(mark) if mark is not None else None
-        except (TypeError, ValueError):
-            mark_f = None
-        if mark_f is None:
-            log(f"gridlimits[{asset}] reconcile: skip (no grid_mark).")
-            continue
+        mark_f: Optional[float] = None
+        if use_indicative:
+            try:
+                mark_f = float(mark_fetcher(asset))  # type: ignore[misc]
+                log(
+                    f"gridlimits[{asset}] indicative mark={mark_f:g} "
+                    "(POST /api/quotes/indicative)"
+                )
+            except Exception as e:
+                log(
+                    f"gridlimits[{asset}] indicative mark failed "
+                    f"({type(e).__name__}: {e}); skip reconcile."
+                )
+                continue
+        else:
+            mark = ameta.get("grid_mark")
+            try:
+                mark_f = float(mark) if mark is not None else None
+            except (TypeError, ValueError):
+                mark_f = None
+            if mark_f is None:
+                log(f"gridlimits[{asset}] reconcile: skip (no grid_mark).")
+                continue
 
         pos_s = _position_qty_summary(pos_raw or {}, asset=asset) if pos_raw is not None else None
         if not has_positions:

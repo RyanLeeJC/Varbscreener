@@ -1609,6 +1609,9 @@ def _run_grid_limits_bootstrap_if_grid(
         return
     if not grid_limits_reconcile_enabled():
         return
+    mark_fetcher: Optional[Callable[[str], float]] = None
+    if bool(args.live):
+        mark_fetcher = lambda sym, _ep=ep: float(_fetch_venue_mark_for_asset(_ep, asset=sym))
     run_grid_limits_bootstrap(
         ep=ep,
         meta=meta,
@@ -1620,6 +1623,7 @@ def _run_grid_limits_bootstrap_if_grid(
         live=bool(args.live),
         multi_script=str(args.multi_script),
         pending_by_asset_preloaded=pending_by_asset,
+        mark_fetcher=mark_fetcher,
     )
 
 
@@ -2523,6 +2527,11 @@ def one_cycle(
         else:
             _log("No open positions -> venue listing snapshot -> strategy -> multimarket")
         marks_src = _grid_marks_source()
+        cycle_pending_by: Optional[Dict[str, Set[Tuple[str, str]]]] = None
+        if _is_grid_like_strategy(strat_key):
+            cycle_pending_by = _fetch_cycle_pending_by_asset(
+                ep, assets=grid_trading_ticker_band_pcts().keys()
+            )
         _log(f"step: refreshing strategy feed ({marks_src} mark → Varibot JSON)...")
         grid_marks_once: Dict[str, float] = {}
         if _is_grid_like_strategy(strat_key) and bool(args.live):
@@ -2536,11 +2545,6 @@ def one_cycle(
         marks_by: Dict[str, float] = {}
         pending_by: Dict[str, Set[Tuple[str, str]]] = {}
         flat_by: Dict[str, bool] = {}
-        cycle_pending_by: Optional[Dict[str, Set[Tuple[str, str]]]] = None
-        if _is_grid_like_strategy(strat_key):
-            cycle_pending_by = _fetch_cycle_pending_by_asset(
-                ep, assets=grid_trading_ticker_band_pcts().keys()
-            )
         if _is_grid_like_strategy(strat_key):
             marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
                 ep,
@@ -2658,6 +2662,9 @@ def one_cycle(
 
     if _is_grid_like_strategy(strat_key) and not grid_ignore_pos:
         try:
+            cycle_pending_pos = _fetch_cycle_pending_by_asset(
+                ep, assets=grid_trading_ticker_band_pcts().keys()
+            )
             grid_marks_pos = (
                 _fetch_grid_marks_for_assets(
                     ep, grid_trading_ticker_band_pcts().keys(), bulk_map=cycle_bulk_marks
@@ -2669,9 +2676,6 @@ def one_cycle(
                 ep, args=args, grid_marks=grid_marks_pos or None, bulk_map=cycle_bulk_marks
             )
             top_n_g = _top_n_for_strategy(strat_key)
-            cycle_pending_pos = _fetch_cycle_pending_by_asset(
-                ep, assets=grid_trading_ticker_band_pcts().keys()
-            )
             marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
                 ep,
                 args=args,

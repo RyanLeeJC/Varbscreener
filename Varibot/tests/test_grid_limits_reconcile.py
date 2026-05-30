@@ -6,7 +6,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from grid_limits_reconcile import _drift_cancel_enabled
+from grid_limits_reconcile import _drift_cancel_enabled, grid_limits_mark_indicative_enabled
 from strategy.gridstrat import breach_reanchors_on_breach, grid_leverage_for_asset, gridstrat_flat_rebalance_enabled
 from strategy.gridstrat_remnant import (
     compute_venue_actions,
@@ -65,6 +65,17 @@ class TestFlatRebalanceDefault(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("GRIDSTRAT_FLAT_REBALANCE", None)
             self.assertFalse(gridstrat_flat_rebalance_enabled())
+
+
+class TestGridLimitsMarkIndicativeDefault(unittest.TestCase):
+    def test_indicative_mark_default_on(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VARIBOT_GRID_LIMITS_MARK_INDICATIVE", None)
+            self.assertTrue(grid_limits_mark_indicative_enabled())
+
+    def test_indicative_mark_explicit_off(self) -> None:
+        with patch.dict(os.environ, {"VARIBOT_GRID_LIMITS_MARK_INDICATIVE": "0"}, clear=False):
+            self.assertFalse(grid_limits_mark_indicative_enabled())
 
 
 class TestDriftCancelDefaults(unittest.TestCase):
