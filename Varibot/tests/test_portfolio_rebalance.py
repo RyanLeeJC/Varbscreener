@@ -282,8 +282,8 @@ class TestPlanNotionalCapTrims(unittest.TestCase):
 
 class TestPlanPositionTrims(unittest.TestCase):
     def test_rung_usd_default_matches_gridstrat(self) -> None:
-        # DEFAULT_GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM (40 × 50 / 10 = 200)
-        self.assertEqual(grid_rung_usd_notional(), 200.0)
+        # DEFAULT_GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM (80 × 50 / 10 = 400)
+        self.assertEqual(grid_rung_usd_notional(), 400.0)
 
     def test_trims_when_over_threshold(self) -> None:
         # 15 × $200 = $3000; $3500 long → sell 50% of qty

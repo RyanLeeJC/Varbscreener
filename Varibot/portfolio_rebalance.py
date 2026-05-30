@@ -178,7 +178,7 @@ def grid_rung_usd_notional(*, ticker: Optional[str] = None) -> float:
             per_rung_usd_notional,
         )
     except ImportError:
-        DEFAULT_GRID_INVESTMENT_USD = 40.0
+        DEFAULT_GRID_INVESTMENT_USD = 80.0
         DEFAULT_GRID_LEVERAGE = 50.0
         DEFAULT_GRID_NUM = 10
 
