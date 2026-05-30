@@ -3,20 +3,35 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from portfolio_rebalance import (
     IM_TARGET,
     LivePosition,
     grid_rung_usd_notional,
     plan_notional_cap_trims,
+    plan_oversized_profit_flattens,
     plan_portfolio_rebalance,
     plan_position_trims,
     round_to_nearest,
 )
 
 
-def _pos(ticker: str, side: str, qty: float, mark: float) -> LivePosition:
-    return LivePosition(ticker=ticker, side=side, quantity=qty, mark_price=mark)
+def _pos(
+    ticker: str,
+    side: str,
+    qty: float,
+    mark: float,
+    *,
+    upnl_usd: float | None = None,
+) -> LivePosition:
+    return LivePosition(
+        ticker=ticker,
+        side=side,
+        quantity=qty,
+        mark_price=mark,
+        upnl_usd=upnl_usd,
+    )
 
 
 class TestPlanPortfolioRebalance(unittest.TestCase):
@@ -267,8 +282,8 @@ class TestPlanNotionalCapTrims(unittest.TestCase):
 
 class TestPlanPositionTrims(unittest.TestCase):
     def test_rung_usd_default_matches_gridstrat(self) -> None:
-        # DEFAULT_GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM (20 × 50 / 10 = 100)
-        self.assertEqual(grid_rung_usd_notional(), 100.0)
+        # DEFAULT_GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM (40 × 50 / 10 = 200)
+        self.assertEqual(grid_rung_usd_notional(), 200.0)
 
     def test_trims_when_over_threshold(self) -> None:
         # 15 × $200 = $3000; $3500 long → sell 50% of qty
@@ -314,6 +329,46 @@ class TestPlanPositionTrims(unittest.TestCase):
             trim_multiple=0.0,
             trim_fraction=0.5,
             rung_usd=200.0,
+        )
+        self.assertEqual(trims, [])
+
+
+class TestPlanOversizedProfitFlattens(unittest.TestCase):
+    @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
+    def test_flattens_oversized_profitable_positions(self, _mock: object) -> None:
+        trims = plan_oversized_profit_flattens(
+            [
+                _pos("AAVE", "short", 39.293, 82.71, upnl_usd=2.19),
+                _pos("XRP", "short", 1531.0, 1.34, upnl_usd=7.92),
+                _pos("BNB", "short", 5.6813, 674.9, upnl_usd=-84.05),
+            ],
+            flatten_multiple=10.0,
+            min_order_usd=5.0,
+        )
+        tickers = {t.ticker for t in trims}
+        self.assertEqual(tickers, {"AAVE", "XRP"})
+        for t in trims:
+            self.assertAlmostEqual(t.trim_fraction, 1.0)
+            self.assertAlmostEqual(t.threshold_notional, 2000.0)
+        aave = next(t for t in trims if t.ticker == "AAVE")
+        self.assertEqual(aave.order_side, "buy")
+        self.assertAlmostEqual(aave.order_quantity, 39.293)
+
+    @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
+    def test_skips_when_upnl_not_positive(self, _mock: object) -> None:
+        trims = plan_oversized_profit_flattens(
+            [_pos("BNB", "short", 5.6813, 674.9, upnl_usd=-84.05)],
+            flatten_multiple=10.0,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(trims, [])
+
+    @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
+    def test_skips_when_below_rung_multiple(self, _mock: object) -> None:
+        trims = plan_oversized_profit_flattens(
+            [_pos("ETH", "long", 0.5, 2000.0, upnl_usd=10.0)],
+            flatten_multiple=10.0,
+            min_order_usd=5.0,
         )
         self.assertEqual(trims, [])
 

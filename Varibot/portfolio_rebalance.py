@@ -30,6 +30,8 @@ ENV_TRIM_MULTIPLE = "VARIBOT_REBALANCE_TRIM_MULTIPLE"
 ENV_TRIM_FRACTION = "VARIBOT_REBALANCE_TRIM_FRACTION"
 DEFAULT_TRIM_MULTIPLE: float = 0.0  # <= 0 disables per-ticker position trim
 DEFAULT_TRIM_FRACTION: float = 0.5
+ENV_OVERSIZED_FLATTEN_MULTIPLE = "VARIBOT_OVERSIZED_FLATTEN_MULTIPLE"
+DEFAULT_OVERSIZED_FLATTEN_MULTIPLE: float = 10.0  # <= 0 disables oversized profit flatten
 # Per-ticker reduce-only trim when position value exceeds cap (e.g. venue $5K @ 50x limit).
 ENV_NOTIONAL_CAP_TRIM_USD = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD"
 ENV_NOTIONAL_CAP_TRIM_FRACTION = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION"
@@ -45,6 +47,7 @@ class LivePosition:
     side: str  # "long" | "short"
     quantity: float  # always positive
     mark_price: float
+    upnl_usd: Optional[float] = None
 
     @property
     def notional(self) -> float:
@@ -160,15 +163,18 @@ def rebalance_constants() -> Tuple[float, float, float, float]:
     )
 
 
-def grid_rung_usd_notional() -> float:
+def grid_rung_usd_notional(*, ticker: Optional[str] = None) -> float:
     """
-    Per-rung USD notional: GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM (strategy/gridstrat defaults).
+    Per-rung USD notional: GRID_INVESTMENT_USD × leverage / GRID_NUM (strategy/gridstrat defaults).
+
+    When ``ticker`` is set, uses per-ticker leverage (``grid_leverage_for_asset``).
     """
     try:
         from strategy.gridstrat import (  # noqa: WPS433
             DEFAULT_GRID_INVESTMENT_USD,
             DEFAULT_GRID_LEVERAGE,
             DEFAULT_GRID_NUM,
+            grid_leverage_for_asset,
             per_rung_usd_notional,
         )
     except ImportError:
@@ -176,16 +182,27 @@ def grid_rung_usd_notional() -> float:
         DEFAULT_GRID_LEVERAGE = 50.0
         DEFAULT_GRID_NUM = 10
 
+        def grid_leverage_for_asset(_asset: str) -> float:  # type: ignore[misc]
+            return float(DEFAULT_GRID_LEVERAGE)
+
         def per_rung_usd_notional(*, investment_usd: float, leverage: float, n_rungs: int) -> float:
             return float(investment_usd) * float(leverage) / float(max(1, int(n_rungs)))
 
     raw_inv = (os.environ.get("GRID_INVESTMENT_USD") or "").strip()
     inv = float(raw_inv) if raw_inv else float(DEFAULT_GRID_INVESTMENT_USD)
-    raw_lev = (os.environ.get("GRID_LEVERAGE") or "").strip()
-    lev = float(raw_lev) if raw_lev else float(DEFAULT_GRID_LEVERAGE)
     raw_n = (os.environ.get("GRID_NUM") or "").strip()
     n_grids = int(raw_n) if raw_n else int(DEFAULT_GRID_NUM)
+    if ticker:
+        lev = float(grid_leverage_for_asset(str(ticker).strip().upper()))
+    else:
+        raw_lev = (os.environ.get("GRID_LEVERAGE") or "").strip()
+        lev = float(raw_lev) if raw_lev else float(DEFAULT_GRID_LEVERAGE)
     return per_rung_usd_notional(investment_usd=inv, leverage=lev, n_rungs=n_grids)
+
+
+def grid_rung_usd_for_ticker(ticker: str) -> float:
+    """Per-rung USD for one grid ticker (respects per-ticker leverage caps)."""
+    return grid_rung_usd_notional(ticker=str(ticker).strip().upper())
 
 
 def trim_constants() -> Tuple[float, float, float]:
@@ -195,6 +212,11 @@ def trim_constants() -> Tuple[float, float, float]:
         _env_float(ENV_TRIM_FRACTION, DEFAULT_TRIM_FRACTION),
         grid_rung_usd_notional(),
     )
+
+
+def oversized_flatten_multiple() -> float:
+    """Rung multiple above which a profitable position is flattened (100%% reduce-only). <= 0 disables."""
+    return _env_float(ENV_OVERSIZED_FLATTEN_MULTIPLE, DEFAULT_OVERSIZED_FLATTEN_MULTIPLE)
 
 
 def notional_cap_trim_constants() -> Tuple[float, float]:
@@ -307,6 +329,45 @@ def plan_position_trims(
     return out
 
 
+def plan_oversized_profit_flattens(
+    positions: Sequence[LivePosition],
+    *,
+    flatten_multiple: Optional[float] = None,
+    min_order_usd: Optional[float] = None,
+) -> List[PlannedTrimOrder]:
+    """
+    Flatten (100%% reduce-only) when abs notional exceeds ``flatten_multiple × rung_usd`` and uPNL > 0.
+
+    Default multiple is 10 (``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE``). Set <= 0 to disable.
+    """
+    mult = oversized_flatten_multiple() if flatten_multiple is None else float(flatten_multiple)
+    _, _, _, min_usd = rebalance_constants()
+    if min_order_usd is not None:
+        min_usd = float(min_order_usd)
+
+    if mult <= 0:
+        return []
+
+    out: List[PlannedTrimOrder] = []
+    for pos in positions:
+        if pos.upnl_usd is None or float(pos.upnl_usd) <= 0:
+            continue
+        rung = grid_rung_usd_for_ticker(pos.ticker)
+        if rung <= 0:
+            continue
+        threshold = float(mult) * float(rung)
+        planned = _planned_trim_order(
+            pos,
+            threshold=threshold,
+            frac=1.0,
+            rung_usd=float(rung),
+            min_usd=min_usd,
+        )
+        if planned is not None:
+            out.append(planned)
+    return out
+
+
 def round_to_nearest(value: float, step: float) -> float:
     if step <= 0:
         return float(value)
@@ -366,6 +427,30 @@ def _position_mark(p: Dict[str, Any]) -> Optional[float]:
     return None
 
 
+def _first_float(d: Dict[str, Any], keys: Sequence[str]) -> Optional[float]:
+    for k in keys:
+        if k not in d or d[k] is None:
+            continue
+        try:
+            return float(d[k])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _position_upnl(p: Dict[str, Any]) -> Optional[float]:
+    upnl = _first_float(
+        p,
+        ("unrealized_pnl", "unrealizedPnl", "u_pnl", "upnl"),
+    )
+    if upnl is None and isinstance(p.get("position_info"), dict):
+        upnl = _first_float(
+            p["position_info"],
+            ("unrealized_pnl", "unrealizedPnl", "u_pnl", "upnl"),
+        )
+    return upnl
+
+
 def parse_live_positions_from_raw(positions_raw: Any) -> List[LivePosition]:
     """Build live positions from ``GET /api/positions`` payload."""
     out: List[LivePosition] = []
@@ -394,6 +479,7 @@ def parse_live_positions_from_raw(positions_raw: Any) -> List[LivePosition]:
                 side=side,
                 quantity=abs(float(q_signed)),
                 mark_price=float(mark),
+                upnl_usd=_position_upnl(p),
             )
         )
     return out
@@ -688,6 +774,8 @@ def rebalance_portfolio(
     """
     Portfolio maintenance on each call when positions exist:
 
+    0. **Oversized profit flatten** — 100%% reduce-only when abs notional exceeds
+       ``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE × grid_rung_usd`` (default 10×) and uPNL > 0.
     1. **Notional cap trim** — reduce-only market when position value exceeds
        ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_USD`` (default $4,500) by
        ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION`` (default 50%).
@@ -718,11 +806,36 @@ def rebalance_portfolio(
                 log(f"rebalance: skip {p.ticker} — stale/zero mark")
                 continue
             enriched.append(
-                LivePosition(ticker=p.ticker, side=p.side, quantity=p.quantity, mark_price=mk)
+                LivePosition(
+                    ticker=p.ticker,
+                    side=p.side,
+                    quantity=p.quantity,
+                    mark_price=mk,
+                    upnl_usd=p.upnl_usd,
+                )
             )
         positions = enriched
     elif len(positions) < len(parse_live_positions_from_raw(positions_raw)):
         log("rebalance: some positions skipped — mark_price missing in API payload")
+
+    flatten_mult = oversized_flatten_multiple()
+    flatten_trims = plan_oversized_profit_flattens(positions, min_order_usd=min_usd)
+    flatten_ran = _execute_trim_orders(
+        ep=ep,
+        trims=flatten_trims,
+        live=live,
+        dry_run=dry_run,
+        log=log,
+        max_slippage=max_slippage,
+        log_tag="oversized profit flatten",
+        summary_line=(
+            f"oversized profit flatten: {len(flatten_trims)} ticker(s) over "
+            f"{flatten_mult:g}× rung with uPNL>0; flatten 100% each (reduce-only market); "
+            f"projected_volume=${sum(t.order_notional for t in flatten_trims):.2f}"
+            if flatten_trims
+            else None
+        ),
+    )
 
     cap_thr, cap_frac = notional_cap_trim_constants()
     cap_trims = plan_notional_cap_trims(positions, min_order_usd=min_usd)
@@ -751,7 +864,7 @@ def rebalance_portfolio(
         log=log,
         max_slippage=max_slippage,
     )
-    trim_ran = cap_ran or trim_ran
+    trim_ran = cap_ran or trim_ran or flatten_ran
 
     if im_usage is None:
         log("interval risk: skip — im_usage missing from portfolio snapshot")
