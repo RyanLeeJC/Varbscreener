@@ -116,22 +116,22 @@ GRID_RWA_EQUITY_TICKERS: frozenset[str] = frozenset({"SPCX"})
 # -----------------------------------------------------------------------------
 GRID_TRADING_TICKERS: Dict[str, float] = {
     # Crypto
-    "ETH": 2.0,
-    "AAVE": 2.0,
     "AVAX": 2.0,
     "BNB": 2.0,
+    "FET": 1.5,
     "ICP": 2.0,
+    "JTO": 2.5,
+    "LIGHTER": 2.5,
     "LINK": 2.0,
     "NEAR": 2.5,
+    "ONDO": 1.5,
     "PENGU": 1.5,
     "PUMPFUN": 2.0,
     "SEI": 2.5,
-    "SOL": 2.0,
     "SUI": 3.0,
     "TAO": 3.0,
-    # "TON": 3.0,
     "VIRTUAL": 3.0,
-    "XRP": 2.0,
+
 
     # RWA
     # "CL": 2.0,
