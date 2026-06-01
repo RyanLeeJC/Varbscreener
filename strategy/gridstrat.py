@@ -89,7 +89,7 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "halt"
 # (Same idea as ``DEFAULT_GRID_BAND_PCT`` — leave bounds NaN to use ±band around mark.)
 # -----------------------------------------------------------------------------
 DEFAULT_GRID_ASSET: str = "BTC"
-DEFAULT_GRID_INVESTMENT_USD: float = 120.0
+DEFAULT_GRID_INVESTMENT_USD: float = 70.0
 DEFAULT_GRID_LEVERAGE: float = 33.0
 # Omni POST /api/settlement_pools/set_leverage rejects leverage > this (422).
 GRID_API_MAX_LEVERAGE: float = 50.0
