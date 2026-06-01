@@ -5,7 +5,12 @@ import os
 import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
-from strategy.gridstrat import ROOT_STATE_SCHEMA_VERSION, _default_state_path, iter_grid_asset_metas
+from strategy.gridstrat import (
+    DEFAULT_GRID_NUM,
+    ROOT_STATE_SCHEMA_VERSION,
+    _default_state_path,
+    iter_grid_asset_metas,
+)
 from strategy.gridstrat_rearm import (
     _pending_keys_from_state,
     apply_venue_cleared_limits_as_fills,
@@ -562,7 +567,7 @@ def _remnant_rearm_one_ticker(
     configured_spacing = float(ameta.get("grid_spacing") or 0.0)
     lower = float(ameta.get("grid_lower") or 0.0)
     upper = float(ameta.get("grid_upper") or 0.0)
-    grid_num = int(ameta.get("grid_num") or 10)
+    grid_num = int(ameta.get("grid_num") or DEFAULT_GRID_NUM)
 
     if configured_spacing <= 0 or upper <= lower:
         log(f"gridlimits{tag} remnant: skip — no valid spacing/bounds in meta.")

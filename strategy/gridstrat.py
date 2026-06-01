@@ -93,7 +93,7 @@ DEFAULT_GRID_INVESTMENT_USD: float = 120.0
 DEFAULT_GRID_LEVERAGE: float = 33.0
 # Omni POST /api/settlement_pools/set_leverage rejects leverage > this (422).
 GRID_API_MAX_LEVERAGE: float = 50.0
-DEFAULT_GRID_NUM: int = 10  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells
+DEFAULT_GRID_NUM: int = 8  # paired mode → GRID_NUM/2 buys + GRID_NUM/2 sells (4+4)
 DEFAULT_GRID_MARKET_SIZING: str = "qty"  # legacy market mode only: "qty" | "usd"
 DEFAULT_GRID_BAND_PCT: float = 0.2  # fallback band % when a ticker is not listed below
 DEFAULT_GRID_LOWER: float = float("nan")  # set both bounds finite to pin explicit bracket
@@ -868,6 +868,7 @@ def _pick_tickers_one_asset(
         upper=float(eff_hi),
         cfg=pcfg,
     )
+    params["asset"] = str(cfg_eff.asset).strip().upper()
     reinit = (
         reset_flag
         or fresh_flat_start
@@ -917,6 +918,7 @@ def _pick_tickers_one_asset(
         state["last_mark"] = float(mark)
         state["cfg_fingerprint"] = fp
         state["grid_reset"] = bool(breach_re)
+        state["asset"] = str(cfg_eff.asset).strip().upper()
 
     paired_step_logs.extend(ensure_bracket_rungs_around_mark(state, mark=float(mark)))
 

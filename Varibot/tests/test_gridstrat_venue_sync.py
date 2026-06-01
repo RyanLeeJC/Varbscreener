@@ -5,8 +5,10 @@ from __future__ import annotations
 import unittest
 
 from strategy.gridstrat_rearm import (
+    _fill_open_order_and_rearm,
     _new_order,
     apply_venue_cleared_limits_as_fills,
+    format_fill_qty,
     record_venue_pending_snapshot,
 )
 
@@ -95,6 +97,22 @@ class TestVenueClearedFillSync(unittest.TestCase):
         logs = apply_venue_cleared_limits_as_fills(state, pending_keys=set())
         self.assertTrue(any("venue sync BUY filled" in ln for ln in logs))
         self.assertEqual(buy["status"], "filled")
+
+    def test_format_fill_qty_uses_asset_not_btc(self) -> None:
+        state = self._minimal_state()
+        state["asset"] = "JTO"
+        state["qty_per_grid"] = 740.585
+        self.assertEqual(format_fill_qty(state, 740.585), "qty 740.585 JTO")
+        self.assertNotIn("BTC", format_fill_qty(state, 740.585))
+
+    def test_fill_log_includes_ticker(self) -> None:
+        state = self._minimal_state()
+        state["asset"] = "JTO"
+        sell = next(o for o in state["orders"] if o["side"] == "sell")
+        logs: list[str] = []
+        _fill_open_order_and_rearm(state, sell, tick=1, logs=logs)
+        self.assertTrue(any("qty 1 JTO" in ln and "SELL filled" in ln for ln in logs))
+        self.assertFalse(any("BTC" in ln for ln in logs))
 
 
 if __name__ == "__main__":

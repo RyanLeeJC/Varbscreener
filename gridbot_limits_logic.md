@@ -52,6 +52,6 @@ So a typical grid cycle is about 6 API calls and ~0.5–1 s for venue reads befo
 Key env:
 - VARIBOT_GRID_LIMITS_RECONCILE=0 — disable live limit POST/cancel
 - VARIBOT_GRID_LIMITS_DRIFT_CANCEL=0 — disable keep-depth orphan cancels (default ON; uses CANCEL_ALL_SLEEP_BETWEEN_S pacing)
-- VARIBOT_GRID_LIMITS_KEEP_DEPTH=10 — when cancels are enabled, keep nearest K limits per side to mark; cancel deeper ones
-- GRID_REARM_ON_BREACH=halt — default; no sim GRID RESET on band breach (remnant maintains 5+5)
+- VARIBOT_GRID_LIMITS_KEEP_DEPTH=8 — when cancels are enabled, keep nearest K limits per side to mark; cancel deeper ones (default tracks GRID_NUM)
+- GRID_REARM_ON_BREACH=halt — default; no sim GRID RESET on band breach (remnant maintains 4+4 at GRID_NUM=8)
 - GRID_NEAREST_N — protected window depth per side (default GRID_NUM/2)

@@ -139,12 +139,26 @@ def init_paired_state(
         "current_grid_upper": float(params["grid_upper"]),
         "spacing": float(params["spacing"]),
         "qty_per_grid": float(params["qty_per_grid"]),
+        "asset": str(params.get("asset") or "").strip().upper(),
         "inventory": 0.0,
         "inventory_cost": 0.0,
         "realized_pnl": 0.0,
         "volume_usd": 0.0,
         "reset_count": 0,
     }
+
+
+def _asset_label(state: Dict[str, Any]) -> str:
+    """Ticker for qty in fill logs (e.g. JTO); empty when state has no ``asset``."""
+    return str(state.get("asset") or "").strip().upper()
+
+
+def format_fill_qty(state: Dict[str, Any], qty: float) -> str:
+    """Human-readable per-rung size for logs (never hardcodes BTC)."""
+    unit = _asset_label(state)
+    if unit:
+        return f"qty {float(qty):g} {unit}"
+    return f"qty {float(qty):g}"
 
 
 def _find_open(orders: List[Dict[str, Any]], level: float, side: str) -> Optional[Dict[str, Any]]:
@@ -221,7 +235,9 @@ def _fill_open_order_and_rearm(
 
     volume_usd += q * fill_px
     side_u = str(ord_["side"]).upper()
-    logs.append(f"tick {tick}: {side_u} filled @ {fill_px:g} (qty {q:g} BTC)")
+    logs.append(
+        f"tick {tick}: {side_u} filled @ {fill_px:g} ({format_fill_qty(state, q)})"
+    )
 
     new_level = (
         float(ord_["level"]) - spacing

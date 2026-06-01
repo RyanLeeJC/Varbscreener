@@ -492,6 +492,21 @@ def _env_nearest_n(grid_num: int) -> int:
     return max(1, int(math.ceil(grid_num / 2.0)))
 
 
+def _default_grid_limits_keep_depth() -> int:
+    """Per-side depth cap when ``VARIBOT_GRID_LIMITS_KEEP_DEPTH`` unset; tracks ``GRID_NUM``."""
+    import os
+
+    raw_n = (os.environ.get("GRID_NUM") or "").strip()
+    if raw_n:
+        try:
+            return max(0, int(raw_n))
+        except ValueError:
+            pass
+    from strategy.gridstrat import DEFAULT_GRID_NUM
+
+    return int(DEFAULT_GRID_NUM)
+
+
 class RemnantInferenceResult:
     """
     Output of ``infer_ladder_from_remnants`` (mark-centered window).
@@ -738,9 +753,9 @@ def compute_venue_actions(
     # This is intentionally independent of the expanded-band window.
     raw_keep = (os.environ.get("VARIBOT_GRID_LIMITS_KEEP_DEPTH") or "").strip()
     try:
-        keep_depth = int(raw_keep) if raw_keep else 10
+        keep_depth = int(raw_keep) if raw_keep else _default_grid_limits_keep_depth()
     except ValueError:
-        keep_depth = 10
+        keep_depth = _default_grid_limits_keep_depth()
     keep_depth = max(0, keep_depth)
 
     cancel_keys: Set[Tuple[str, str]] = set()

@@ -73,6 +73,7 @@ def _fresh_asset_state(*, asset: str, mark: float, band_pct: float) -> Dict[str,
         upper=float(eff_hi),
         cfg=pcfg,
     )
+    params["asset"] = str(asset).strip().upper()
     st = init_paired_state(params=params, tick=0)
     st["last_mark"] = float(mark)
     for pk in ("pinned_lower", "pinned_upper", "pinned_band_pct"):
