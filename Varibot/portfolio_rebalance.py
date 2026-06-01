@@ -35,7 +35,7 @@ DEFAULT_OVERSIZED_FLATTEN_MULTIPLE: float = 10.0  # <= 0 disables oversized prof
 # Per-ticker reduce-only trim when position notional exceeds multiple × grid rung USD.
 ENV_NOTIONAL_CAP_TRIM_MULTIPLE = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE"
 ENV_NOTIONAL_CAP_TRIM_FRACTION = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION"
-DEFAULT_NOTIONAL_CAP_TRIM_MULTIPLE: float = 20.0  # 20 × (investment × lev / grid_num); <= 0 disables
+DEFAULT_NOTIONAL_CAP_TRIM_MULTIPLE: float = 30.0  # 30 × (investment × lev / grid_num); <= 0 disables
 DEFAULT_NOTIONAL_CAP_TRIM_FRACTION: float = 0.5
 # Each market leg: 2× indicative quote + 1× POST market (see VariEndpoints.quote_id_for_order_qty).
 MARKET_LEG_HTTP_CALLS: int = 3
@@ -268,7 +268,7 @@ def plan_notional_cap_trims(
     """
     Reduce-only trim when position notional exceeds ``cap_multiple × grid_rung_usd``.
 
-    Rung USD is ``GRID_INVESTMENT_USD × leverage / GRID_NUM`` per ticker (default 20× $400 = $8,000).
+    Rung USD is ``GRID_INVESTMENT_USD × leverage / GRID_NUM`` per ticker (default 30× $400 = $12,000).
     Trims ``trim_fraction`` of position qty (default 50%) via market order.
     Set ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE=0`` to disable.
     """
@@ -782,7 +782,7 @@ def rebalance_portfolio(
     0. **Oversized profit flatten** — 100%% reduce-only when abs notional exceeds
        ``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE × grid_rung_usd`` (default 10×) and uPNL > 0.
     1. **Notional cap trim** — reduce-only market when position notional exceeds
-       ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE × grid_rung_usd`` (default 20×) by
+       ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE × grid_rung_usd`` (default 30×) by
        ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION`` (default 50%).
     2. **Rung multiple trim** — when abs notional exceeds
        ``VARIBOT_REBALANCE_TRIM_MULTIPLE × grid_rung_usd`` (default off).
