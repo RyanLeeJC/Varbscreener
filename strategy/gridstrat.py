@@ -118,7 +118,7 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     # Crypto
     "AVAX": 2.0,
     "BNB": 2.0,
-    "FET": 1.5,
+    "FET": 2.0,
     "ICP": 2.0,
     "JTO": 2.5,
     "LIGHTER": 2.5,
