@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from strategy.gridstrat import (
@@ -42,6 +43,8 @@ ENV_PENDING_BULK: str = "VARIBOT_PENDING_BULK"
 ENV_PENDING_BULK_MAX_PAGES: str = "VARIBOT_PENDING_BULK_MAX_PAGES"
 # Live remnant reconcile: per-ticker POST /api/quotes/indicative before posting (default on).
 ENV_GRID_LIMITS_MARK_INDICATIVE: str = "VARIBOT_GRID_LIMITS_MARK_INDICATIVE"
+# Post missing limits for all tickers before any orphan cancels (default on).
+ENV_GRID_LIMITS_POST_BEFORE_CANCEL: str = "VARIBOT_GRID_LIMITS_POST_BEFORE_CANCEL"
 
 
 def _truthy_env(name: str) -> bool:
@@ -90,6 +93,23 @@ def bulk_pending_fetch_enabled() -> bool:
 def grid_limits_mark_indicative_enabled() -> bool:
     """Default on: fetch fresh indicative mark per ticker in remnant reconcile."""
     return _env_bool_default(ENV_GRID_LIMITS_MARK_INDICATIVE, default_when_unset=True)
+
+
+def grid_limits_post_before_cancel_enabled() -> bool:
+    """Default on: post missing rungs for every ticker, then cancel orphans (one cancel pass)."""
+    return _env_bool_default(ENV_GRID_LIMITS_POST_BEFORE_CANCEL, default_when_unset=True)
+
+
+@dataclass(frozen=True)
+class _RemnantRearmPlan:
+    asset: str
+    ameta: Dict[str, Any]
+    mark_f: float
+    pending_keys: Set[Tuple[str, str]]
+    result: RemnantInferenceResult
+    cancel_keys: Set[Tuple[str, str]]
+    post_rungs: List[Tuple[str, float]]
+    is_init: bool
 
 
 def pending_limit_keys_by_asset_from_rows(
@@ -559,29 +579,18 @@ def _load_gridstrat_asset_state(asset: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _remnant_rearm_one_ticker(
+def _plan_remnant_rearm_one_ticker(
     *,
-    ep: VariEndpoints,
     asset: str,
     ameta: Dict[str, Any],
-    combined_meta: Dict[str, Any],
     pending_keys: Set[Tuple[str, str]],
     mark_f: float,
     log: Callable[[str], None],
-    place_limit: Callable[..., int],
-) -> None:
-    """
-    Remnant-based re-arm (New Limits Logic, May 2026).
-
-    1. Infer spacing/anchor from venue remnants + configured band.
-    2. If insufficient → trigger hard reset in sim state (cancel all, re-seed from current mark).
-    3. Otherwise compute protected window (N nearest per side), cancel outside-window orphans,
-       post missing window rungs nearest-first.
-    """
+) -> Optional[_RemnantRearmPlan]:
+    """Infer remnant window and compute post/cancel actions (no venue I/O)."""
     tag = f"[{asset}]"
     is_init = not pending_keys
 
-    # Pull configured geometry from per-asset meta
     configured_spacing = float(ameta.get("grid_spacing") or 0.0)
     lower = float(ameta.get("grid_lower") or 0.0)
     upper = float(ameta.get("grid_upper") or 0.0)
@@ -589,7 +598,7 @@ def _remnant_rearm_one_ticker(
 
     if configured_spacing <= 0 or upper <= lower:
         log(f"gridlimits{tag} remnant: skip — no valid spacing/bounds in meta.")
-        return
+        return None
 
     band_pct_meta = ameta.get("grid_band_pct")
     try:
@@ -615,17 +624,114 @@ def _remnant_rearm_one_ticker(
             f"(venue pending={len(pending_keys)}, mark={mark_f:g})"
         )
 
-    # Decide actions every cycle (proximity hug only when a side is short on in-band depth).
     cancel_keys, post_rungs = compute_venue_actions(
         asset=asset,
         result=result,
         venue_pending_keys=pending_keys,
         mark=mark_f,
     )
-    if cancel_keys and _drift_cancel_enabled(combined_meta):
-        n_canceled = _cancel_pending_orphans(ep, asset=asset, orphan_keys=cancel_keys, log=log)
+    return _RemnantRearmPlan(
+        asset=str(asset).strip().upper(),
+        ameta=ameta,
+        mark_f=float(mark_f),
+        pending_keys=set(pending_keys),
+        result=result,
+        cancel_keys=set(cancel_keys),
+        post_rungs=list(post_rungs),
+        is_init=bool(is_init),
+    )
+
+
+def _execute_remnant_posts(
+    *,
+    ep: VariEndpoints,
+    plan: _RemnantRearmPlan,
+    log: Callable[[str], None],
+    place_limit: Callable[..., int],
+) -> None:
+    """POST missing window rungs from a plan."""
+    asset = plan.asset
+    tag = f"[{asset}]"
+    post_rungs = plan.post_rungs
+    if post_rungs:
+        n_b = sum(1 for s, _ in post_rungs if s == "buy")
+        n_s = len(post_rungs) - n_b
+        if plan.is_init:
+            log(
+                f"gridlimits{tag} init: posting {len(post_rungs)} limits "
+                f"({n_b} buy, {n_s} sell)"
+            )
+        else:
+            log(
+                f"gridlimits{tag} remnant: posting {len(post_rungs)} missing window rung(s) "
+                f"(nearest-first: buys={n_b} sells={sum(1 for s, _ in post_rungs if s == 'sell')})"
+            )
+        _post_remnant_rungs(
+            ep=ep,
+            asset=asset,
+            ameta=plan.ameta,
+            post_rungs=post_rungs,
+            place_limit=place_limit,
+            log=log,
+            tag=tag,
+            log_prefix=f"gridlimits{tag} {'init' if plan.is_init else 'remnant'}",
+        )
+    else:
+        log(f"gridlimits{tag} remnant: window complete — no rungs to post.")
+
+
+def _execute_remnant_cancels(
+    *,
+    ep: VariEndpoints,
+    plan: _RemnantRearmPlan,
+    log: Callable[[str], None],
+) -> None:
+    """Cancel depth orphans planned at the start of the cycle."""
+    if not plan.cancel_keys:
+        return
+    asset = plan.asset
+    tag = f"[{asset}]"
+    n_canceled = _cancel_pending_orphans(ep, asset=asset, orphan_keys=plan.cancel_keys, log=log)
+    log(
+        f"gridlimits{tag} remnant: canceled {n_canceled}/{len(plan.cancel_keys)} "
+        "out-of-band orphan(s)."
+    )
+
+
+def _remnant_rearm_one_ticker(
+    *,
+    ep: VariEndpoints,
+    asset: str,
+    ameta: Dict[str, Any],
+    combined_meta: Dict[str, Any],
+    pending_keys: Set[Tuple[str, str]],
+    mark_f: float,
+    log: Callable[[str], None],
+    place_limit: Callable[..., int],
+) -> None:
+    """
+    Remnant-based re-arm (New Limits Logic, May 2026).
+
+    Per-ticker path: cancel orphans (if enabled), refresh pending, recompute posts, then post.
+    Used when ``VARIBOT_GRID_LIMITS_POST_BEFORE_CANCEL=0`` or from legacy call sites.
+    """
+    plan = _plan_remnant_rearm_one_ticker(
+        asset=asset,
+        ameta=ameta,
+        pending_keys=pending_keys,
+        mark_f=mark_f,
+        log=log,
+    )
+    if plan is None:
+        return
+    tag = f"[{asset}]"
+    post_rungs = list(plan.post_rungs)
+    if plan.cancel_keys and _drift_cancel_enabled(combined_meta):
+        n_canceled = _cancel_pending_orphans(
+            ep, asset=asset, orphan_keys=plan.cancel_keys, log=log
+        )
         log(
-            f"gridlimits{tag} remnant: canceled {n_canceled}/{len(cancel_keys)} "
+            f"gridlimits{tag} remnant: canceled {n_canceled}/{len(plan.cancel_keys)} "
             "out-of-band orphan(s)."
         )
         try:
@@ -634,39 +740,25 @@ def _remnant_rearm_one_ticker(
             log(f"gridlimits{tag} remnant: pending refresh failed ({type(e).__name__}: {e})")
         _, post_rungs = compute_venue_actions(
             asset=asset,
-            result=result,
+            result=plan.result,
             venue_pending_keys=pending_keys,
-            mark=mark_f,
+            mark=plan.mark_f,
         )
-
-    if post_rungs:
-        n_b = sum(1 for s, _ in post_rungs if s == "buy")
-        n_s = len(post_rungs) - n_b
-        if is_init:
-            log(
-                f"gridlimits{tag} init: posting {len(post_rungs)} limits "
-                f"({n_b} buy, {n_s} sell)"
-            )
-        else:
-            log(
-                f"gridlimits{tag} remnant: posting {len(post_rungs)} missing window rung(s) "
-                f"(nearest-first: buys={n_b} sells={sum(1 for s,_ in post_rungs if s=='sell')})"
-            )
-        _post_remnant_rungs(
-            ep=ep,
-            asset=asset,
-            ameta=ameta,
+    _execute_remnant_posts(
+        ep=ep,
+        plan=_RemnantRearmPlan(
+            asset=plan.asset,
+            ameta=plan.ameta,
+            mark_f=plan.mark_f,
+            pending_keys=plan.pending_keys,
+            result=plan.result,
+            cancel_keys=plan.cancel_keys,
             post_rungs=post_rungs,
-            place_limit=place_limit,
-            log=log,
-            tag=tag,
-            log_prefix=f"gridlimits{tag} {'init' if is_init else 'remnant'}",
-        )
-    else:
-        log(f"gridlimits{tag} remnant: window complete — no rungs to post.")
-    return
-
-    # (result.sufficient returns above)
+            is_init=plan.is_init,
+        ),
+        log=log,
+        place_limit=place_limit,
+    )
 
 
 def _post_remnant_rungs(
@@ -702,6 +794,50 @@ def _post_remnant_rungs(
         log_prefix=prefix,
     )
     _sync_sim_fills_after_drift_post(ep, asset=asset, posted_keys=placed, log=log, tag=tag)
+
+
+def _resolve_reconcile_mark(
+    *,
+    asset: str,
+    ameta: Dict[str, Any],
+    use_indicative: bool,
+    mark_fetcher: Optional[Callable[[str], float]],
+    log: Callable[[str], None],
+) -> Optional[float]:
+    """Indicative mark when enabled; fallback to gridstrat ``grid_mark`` on failure."""
+    if use_indicative and mark_fetcher is not None:
+        try:
+            mark_f = float(mark_fetcher(asset))
+            log(
+                f"gridlimits[{asset}] indicative mark={mark_f:g} "
+                "(POST /api/quotes/indicative)"
+            )
+            return mark_f
+        except Exception as e:
+            mark = ameta.get("grid_mark")
+            try:
+                mark_f = float(mark) if mark is not None else None
+            except (TypeError, ValueError):
+                mark_f = None
+            if mark_f is None:
+                log(
+                    f"gridlimits[{asset}] indicative mark failed "
+                    f"({type(e).__name__}: {e}); fallback mark missing — skip reconcile."
+                )
+                return None
+            log(
+                f"gridlimits[{asset}] indicative mark failed "
+                f"({type(e).__name__}: {e}); fallback mark={mark_f:g} (supported_assets)"
+            )
+            return mark_f
+    mark = ameta.get("grid_mark")
+    try:
+        mark_f = float(mark) if mark is not None else None
+    except (TypeError, ValueError):
+        mark_f = None
+    if mark_f is None:
+        log(f"gridlimits[{asset}] reconcile: skip (no grid_mark).")
+    return mark_f
 
 
 def _reconcile_one_ticker(
@@ -744,6 +880,81 @@ def _reconcile_one_ticker(
         log=log,
         place_limit=place_limit,
     )
+
+
+def _run_remnant_reconcile_two_phase(
+    *,
+    ep: VariEndpoints,
+    meta: Dict[str, Any],
+    asset_metas: List[Tuple[str, Dict[str, Any]]],
+    pending_by_asset: Dict[str, Set[Tuple[str, str]]],
+    pos_raw: Any,
+    has_positions: bool,
+    use_indicative: bool,
+    mark_fetcher: Optional[Callable[[str], float]],
+    log: Callable[[str], None],
+    place_limit: Callable[..., int],
+) -> None:
+    """
+    Phase 1: plan + post missing limits for every ticker (alphabetical).
+    Phase 2: cancel planned orphans (no per-ticker cancel before post).
+    """
+    plans: List[_RemnantRearmPlan] = []
+    for asset, ameta in sorted(asset_metas, key=lambda x: str(x[0]).upper()):
+        tag = f"[{asset}]"
+        pos_s = _position_qty_summary(pos_raw or {}, asset=asset) if pos_raw is not None else None
+        if not has_positions:
+            has_pos_asset = False
+        elif pos_s is not None:
+            has_pos_asset = bool(pos_s.get("has_position"))
+        else:
+            has_pos_asset = True
+        if has_pos_asset and not _reconcile_with_positions_allowed(meta):
+            log(
+                f"gridlimits{tag} reconcile: skip (open positions); set "
+                "VARIBOT_GRID_LIMITS_RECONCILE_WITH_POSITIONS=1 to sync limits while positioned."
+            )
+            continue
+        if not ameta.get("grid_paired_limit_mode"):
+            log(f"gridlimits{tag} reconcile: skip — not paired_limit mode.")
+            continue
+        mark_f = _resolve_reconcile_mark(
+            asset=asset,
+            ameta=ameta,
+            use_indicative=use_indicative,
+            mark_fetcher=mark_fetcher,
+            log=log,
+        )
+        if mark_f is None:
+            continue
+        pending_keys = pending_by_asset.get(asset, set())
+        plan = _plan_remnant_rearm_one_ticker(
+            asset=asset,
+            ameta=ameta,
+            pending_keys=pending_keys,
+            mark_f=mark_f,
+            log=log,
+        )
+        if plan is not None:
+            plans.append(plan)
+
+    if not plans:
+        return
+
+    n_post = sum(1 for p in plans if p.post_rungs)
+    n_cancel = sum(1 for p in plans if p.cancel_keys)
+    if n_cancel and _drift_cancel_enabled(meta):
+        log(
+            f"gridlimits reconcile: post-before-cancel — "
+            f"post pass ({n_post} ticker(s) with rungs), then cancel pass ({n_cancel} ticker(s))"
+        )
+    for plan in plans:
+        _execute_remnant_posts(
+            ep=ep, plan=plan, log=log, place_limit=place_limit
+        )
+    if _drift_cancel_enabled(meta):
+        for plan in plans:
+            _execute_remnant_cancels(ep=ep, plan=plan, log=log)
 
 
 def run_grid_limits_bootstrap(
@@ -841,42 +1052,31 @@ def run_grid_limits_bootstrap(
 
     use_indicative = bool(live and mark_fetcher is not None and grid_limits_mark_indicative_enabled())
 
-    for asset, ameta in asset_metas:
-        mark_f: Optional[float] = None
-        if use_indicative:
-            try:
-                mark_f = float(mark_fetcher(asset))  # type: ignore[misc]
-                log(
-                    f"gridlimits[{asset}] indicative mark={mark_f:g} "
-                    "(POST /api/quotes/indicative)"
-                )
-            except Exception as e:
-                # Fallback to the already-available gridstrat mark (supported_assets) so posting
-                # doesn't stall for minutes when indicative times out.
-                mark = ameta.get("grid_mark")
-                try:
-                    mark_f = float(mark) if mark is not None else None
-                except (TypeError, ValueError):
-                    mark_f = None
-                if mark_f is None:
-                    log(
-                        f"gridlimits[{asset}] indicative mark failed "
-                        f"({type(e).__name__}: {e}); fallback mark missing — skip reconcile."
-                    )
-                    continue
-                log(
-                    f"gridlimits[{asset}] indicative mark failed "
-                    f"({type(e).__name__}: {e}); fallback mark={mark_f:g} (supported_assets)"
-                )
-        else:
-            mark = ameta.get("grid_mark")
-            try:
-                mark_f = float(mark) if mark is not None else None
-            except (TypeError, ValueError):
-                mark_f = None
-            if mark_f is None:
-                log(f"gridlimits[{asset}] reconcile: skip (no grid_mark).")
-                continue
+    if grid_limits_post_before_cancel_enabled():
+        _run_remnant_reconcile_two_phase(
+            ep=ep,
+            meta=meta,
+            asset_metas=asset_metas,
+            pending_by_asset=pending_by_asset,
+            pos_raw=pos_raw,
+            has_positions=has_positions,
+            use_indicative=use_indicative,
+            mark_fetcher=mark_fetcher,
+            log=log,
+            place_limit=place_limit,
+        )
+        return
+
+    for asset, ameta in sorted(asset_metas, key=lambda x: str(x[0]).upper()):
+        mark_f = _resolve_reconcile_mark(
+            asset=asset,
+            ameta=ameta,
+            use_indicative=use_indicative,
+            mark_fetcher=mark_fetcher,
+            log=log,
+        )
+        if mark_f is None:
+            continue
 
         pos_s = _position_qty_summary(pos_raw or {}, asset=asset) if pos_raw is not None else None
         if not has_positions:
