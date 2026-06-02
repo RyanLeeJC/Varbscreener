@@ -98,6 +98,47 @@ USD_NOTIONAL_ROUND_STEP: float = 10.0
 # Default max slippage when --max-slippage and MAX_SLIPPAGE env are unset (fraction of notional).
 _DEFAULT_MAX_SLIPPAGE: float = 0.001
 
+
+def _try_parse_float_env(key: str) -> Optional[float]:
+    v = (os.environ.get(key, "") or "").strip()
+    if not v:
+        return None
+    try:
+        out = float(v)
+    except Exception:
+        return None
+    return out if math.isfinite(out) else None
+
+
+def _max_slippage_cap_for_asset(asset: str, *, default_cap: float) -> float:
+    """
+    Per-asset slippage cap override.
+
+    - Default: use *default_cap* (from --max-slippage or MAX_SLIPPAGE).
+    - Override: MAX_SLIPPAGE_<ASSET>, e.g. MAX_SLIPPAGE_LIGHTER=0.0015 (0.15%).
+    """
+    sym = str(asset).strip().upper()
+    if not sym:
+        return float(default_cap)
+    v = _try_parse_float_env(f"MAX_SLIPPAGE_{sym}")
+    if v is None:
+        return float(default_cap)
+    return float(v)
+
+
+def _slippage_schedule(*, base: float, cap: float, inc: float, attempts: int) -> List[float]:
+    """
+    Increasing slippage steps (deduped) capped at *cap*.
+    This prevents "blowing past" the intended cap via retry increments.
+    """
+    out: List[float] = []
+    for i in range(int(attempts)):
+        s = float(base) + float(i) * float(inc)
+        s = min(float(s), float(cap))
+        if not out or abs(out[-1] - s) > 1e-12:
+            out.append(float(s))
+    return out
+
 # Post-entry verification: /api/positions can lag shortly after fills.
 _POST_ENTRY_POSITIONS_MAX_WAIT_S: float = 2.0
 _POST_ENTRY_POSITIONS_POLL_S: float = 0.5
@@ -912,9 +953,16 @@ def main() -> int:
                     qty_disp = "-"
             else:
                 ok = False
-                base_slip = float(max_slippage)
-                for attempt in range(1, int(_MAX_LIVE_ATTEMPTS) + 1):
-                    slip = base_slip + float(attempt - 1) * float(_SLIPPAGE_RETRY_INCREMENT)
+                cap_slip = _max_slippage_cap_for_asset(asset, default_cap=float(max_slippage))
+                base_slip = min(float(max_slippage), float(cap_slip))
+                item["steps"]["slippage_cap"] = float(cap_slip)
+                slips = _slippage_schedule(
+                    base=float(base_slip),
+                    cap=float(cap_slip),
+                    inc=float(_SLIPPAGE_RETRY_INCREMENT),
+                    attempts=int(_MAX_LIVE_ATTEMPTS),
+                )
+                for attempt, slip in enumerate(slips, start=1):
                     try:
                         if use_fixed_qty:
                             quote_id, quote = ep.quote_id_for_order_qty(
@@ -974,7 +1022,7 @@ def main() -> int:
                             break
                         if _order_response_rejected(resp):
                             blob = _flatten_resp_text(resp)
-                            if attempt >= int(_MAX_LIVE_ATTEMPTS):
+                            if attempt >= len(slips):
                                 item["steps"]["order_response"] = resp
                                 attempts.append(
                                     {
@@ -1032,7 +1080,7 @@ def main() -> int:
                                 "message": snippet or "Venue risk: risk checks failed (e.g. total OI cap)",
                             }
                             break
-                        if attempt >= int(_MAX_LIVE_ATTEMPTS):
+                        if attempt >= len(slips):
                             if _looks_like_slippage_reject(em):
                                 item["error"] = {
                                     "type": "SlippageExhausted",
@@ -1051,8 +1099,9 @@ def main() -> int:
                 item["steps"]["quote"] = last_quote
                 item["steps"]["slippage_retry"] = {
                     "base_max_slippage": float(base_slip),
+                    "cap_max_slippage": float(cap_slip),
                     "slippage_retry_increment": float(_SLIPPAGE_RETRY_INCREMENT),
-                    "max_attempts": int(_MAX_LIVE_ATTEMPTS),
+                    "max_attempts": int(len(slips)),
                     "attempts": attempts,
                 }
         except Exception as e:
@@ -1134,10 +1183,18 @@ def main() -> int:
             to_retry = missing2 - risk_skip_syms
             if not to_retry:
                 break
-            slip_round = float(max_slippage) + float(round_i) * float(_SLIPPAGE_RETRY_INCREMENT)
-            print(f"Reattempting failed tickers with higher slippage {_fmt_slippage_pct(float(slip_round))}...")
+            # Note: per-asset caps apply; each ticker computes its own slip_round.
+            print("Reattempting failed tickers with higher slippage (per-asset caps apply)...")
 
             for sym in sorted(to_retry):
+                cap_sym = _max_slippage_cap_for_asset(sym, default_cap=float(max_slippage))
+                slip_round = min(
+                    float(max_slippage) + float(round_i) * float(_SLIPPAGE_RETRY_INCREMENT),
+                    float(cap_sym),
+                )
+                if round_i == 1:
+                    print(f"  - {sym}: cap={_fmt_slippage_pct(float(cap_sym))}")
+                print(f"  - {sym}: trying {_fmt_slippage_pct(float(slip_round))}")
                 # Find original side from jobs (fall back to buy).
                 side = "buy"
                 for j in jobs:
