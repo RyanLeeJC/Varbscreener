@@ -720,13 +720,17 @@ def compute_venue_actions(
     grid_num = max(1, int(getattr(result, "grid_num", n * 2)))
     band_frac = float(getattr(result, "band_frac", 0.0))
 
-    # Slippage caps: default 0.10%, RWAs 0.05%. Used to avoid posting a limit too close to mark
-    # where it is likely to fill immediately (especially on RWAs).
+    # Slippage caps: default 0.10%, RWAs 0.05%.
     #
-    # Rule: skip the single nearest-to-mark candidate per side when:
-    #   abs(px - mark)/mark <= 2 * slippage_cap
+    # Too-close rule (per-side, nearest-to-mark only):
+    #   abs(px - mark)/mark <= 0.5*slippage_cap + rung_gap_frac
+    #
+    # where rung_gap_frac ≈ (2*band_frac) / grid_num (percent width per rung across the ±band).
+    # This intentionally forces price to clear roughly one rung before we repost the opposing side
+    # near mark, reducing "ping-pong" reposts right at the mid.
     slippage_cap = 0.0005 if is_rwa_commodity_ticker(asset) else 0.001
-    too_close_frac = 2.0 * float(slippage_cap)
+    rung_gap_frac = (2.0 * band_frac) / float(grid_num) if band_frac > 0 and grid_num > 0 else 0.0
+    too_close_frac = 0.5 * float(slippage_cap) + float(rung_gap_frac)
 
     # Never post within 1/4 rung of mark.
     # rung_pct ≈ (2 * band_frac) / grid_num  => buffer = rung_pct / 4 = band_frac / (2*grid_num)
@@ -790,7 +794,7 @@ def compute_venue_actions(
     tmp_pending = set(venue_pending_keys)
 
     def _filter_nearest_too_close(side: str, prices: List[float]) -> List[float]:
-        """Skip the nearest-to-mark rung if it's within 2× slippage cap."""
+        """Skip the nearest-to-mark rung if it's within the too-close threshold."""
         if not prices or too_close_frac <= 0 or mark_f <= 0:
             return prices
         # Compute distances in fractional terms; prices are all on the given side already.
