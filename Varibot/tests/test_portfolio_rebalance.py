@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import patch
 
 from portfolio_rebalance import (
     IM_TARGET,
     LivePosition,
+    _reduce_only_market_slippage,
     grid_rung_usd_notional,
+    plan_im_high_usage_trims,
     plan_notional_cap_trims,
     plan_oversized_profit_flattens,
     plan_portfolio_rebalance,
@@ -332,6 +335,44 @@ class TestPlanPositionTrims(unittest.TestCase):
             trim_multiple=0.0,
             trim_fraction=0.5,
             rung_usd=200.0,
+        )
+        self.assertEqual(trims, [])
+
+
+class TestReduceOnlyMarketSlippage(unittest.TestCase):
+    def test_lighter_uses_triple_cap(self) -> None:
+        with patch.dict(os.environ, {"MAX_SLIPPAGE_LIGHTER": "0.0015"}, clear=False):
+            slip = _reduce_only_market_slippage("LIGHTER", base_max_slippage=0.001)
+        self.assertAlmostEqual(slip, 0.0045)
+
+    def test_other_ticker_uses_base(self) -> None:
+        with patch.dict(os.environ, {"MAX_SLIPPAGE_ETH": "0.002"}, clear=False):
+            slip = _reduce_only_market_slippage("ETH", base_max_slippage=0.001)
+        self.assertAlmostEqual(slip, 0.001)
+
+
+class TestPlanImHighUsageTrims(unittest.TestCase):
+    def test_trims_every_position_by_fraction(self) -> None:
+        trims = plan_im_high_usage_trims(
+            [
+                _pos("ETH", "long", 2.0, 3000.0),
+                _pos("TON", "short", 1000.0, 2.0),
+            ],
+            trim_fraction=0.5,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(len(trims), 2)
+        by_ticker = {t.ticker: t for t in trims}
+        self.assertAlmostEqual(by_ticker["ETH"].order_quantity, 1.0)
+        self.assertEqual(by_ticker["ETH"].order_side, "sell")
+        self.assertAlmostEqual(by_ticker["TON"].order_quantity, 500.0)
+        self.assertEqual(by_ticker["TON"].order_side, "buy")
+        self.assertAlmostEqual(by_ticker["ETH"].trim_fraction, 0.5)
+
+    def test_zero_fraction_disables(self) -> None:
+        trims = plan_im_high_usage_trims(
+            [_pos("ETH", "long", 1.0, 2000.0)],
+            trim_fraction=0.0,
         )
         self.assertEqual(trims, [])
 

@@ -37,6 +37,9 @@ ENV_NOTIONAL_CAP_TRIM_MULTIPLE = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE"
 ENV_NOTIONAL_CAP_TRIM_FRACTION = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION"
 DEFAULT_NOTIONAL_CAP_TRIM_MULTIPLE: float = 30.0  # 30 × (investment × lev / grid_num); <= 0 disables
 DEFAULT_NOTIONAL_CAP_TRIM_FRACTION: float = 0.5
+# When IM usage ≥ rebalance trigger: reduce-only trim every open position by this fraction (default 50%).
+ENV_IM_HIGH_USAGE_TRIM_FRACTION = "VARIBOT_IM_HIGH_USAGE_TRIM_FRACTION"
+DEFAULT_IM_HIGH_USAGE_TRIM_FRACTION: float = 0.5
 # Each market leg: 2× indicative quote + 1× POST market (see VariEndpoints.quote_id_for_order_qty).
 MARKET_LEG_HTTP_CALLS: int = 3
 
@@ -116,6 +119,33 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _max_slippage_cap_for_asset(asset: str, *, default_cap: float) -> float:
+    """Per-ticker cap from ``MAX_SLIPPAGE_<ASSET>`` or *default_cap* (matches varibot / multimarketorder)."""
+    sym = str(asset).strip().upper()
+    if not sym:
+        return float(default_cap)
+    raw = (os.environ.get(f"MAX_SLIPPAGE_{sym}") or "").strip()
+    if not raw:
+        return float(default_cap)
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return float(default_cap)
+    return v if v > 0 else float(default_cap)
+
+
+def _reduce_only_market_slippage(ticker: str, *, base_max_slippage: float) -> float:
+    """
+    Slippage for reduce-only trims/flattens.
+
+    LIGHTER: 3× per-ticker cap (``MAX_SLIPPAGE_LIGHTER`` or base). Other tickers: base only.
+    """
+    cap = _max_slippage_cap_for_asset(ticker, default_cap=float(base_max_slippage))
+    if str(ticker).strip().upper() == "LIGHTER":
+        return 3.0 * float(cap)
+    return float(base_max_slippage)
 
 
 def _vari_rate_limit_settings() -> Tuple[int, float]:
@@ -225,6 +255,11 @@ def notional_cap_trim_constants() -> Tuple[float, float]:
         _env_float(ENV_NOTIONAL_CAP_TRIM_MULTIPLE, DEFAULT_NOTIONAL_CAP_TRIM_MULTIPLE),
         _env_float(ENV_NOTIONAL_CAP_TRIM_FRACTION, DEFAULT_NOTIONAL_CAP_TRIM_FRACTION),
     )
+
+
+def im_high_usage_trim_fraction() -> float:
+    """Fraction of each position qty to cut when IM% ≥ rebalance trigger. <= 0 disables."""
+    return _env_float(ENV_IM_HIGH_USAGE_TRIM_FRACTION, DEFAULT_IM_HIGH_USAGE_TRIM_FRACTION)
 
 
 def _planned_trim_order(
@@ -366,6 +401,40 @@ def plan_oversized_profit_flattens(
             threshold=threshold,
             frac=1.0,
             rung_usd=float(rung),
+            min_usd=min_usd,
+        )
+        if planned is not None:
+            out.append(planned)
+    return out
+
+
+def plan_im_high_usage_trims(
+    positions: Sequence[LivePosition],
+    *,
+    trim_fraction: Optional[float] = None,
+    min_order_usd: Optional[float] = None,
+) -> List[PlannedTrimOrder]:
+    """
+    Reduce-only trim of ``trim_fraction`` of qty on every open position (default 50%).
+
+    Intended when portfolio IM usage is at or above ``VARIBOT_REBALANCE_IM_TRIGGER`` (default 80%).
+    """
+    frac = im_high_usage_trim_fraction() if trim_fraction is None else float(trim_fraction)
+    _, _, _, min_usd = rebalance_constants()
+    if min_order_usd is not None:
+        min_usd = float(min_order_usd)
+
+    if frac <= 0 or frac > 1.0:
+        return []
+
+    out: List[PlannedTrimOrder] = []
+    for pos in positions:
+        rung = grid_rung_usd_for_ticker(pos.ticker)
+        planned = _planned_trim_order(
+            pos,
+            threshold=-1.0,
+            frac=frac,
+            rung_usd=float(rung) if rung > 0 else 0.0,
             min_usd=min_usd,
         )
         if planned is not None:
@@ -670,12 +739,15 @@ def _place_market_leg(
         return 0, None, None
     # Must match grid / indicative path: RWAs use perpetual_rwa_future, not P-*-USDC-3600.
     inst = Instrument.for_underlying(sym)
+    slip = float(max_slippage)
+    if is_reduce_only:
+        slip = _reduce_only_market_slippage(sym, base_max_slippage=slip)
     try:
         quote_id, _ = ep.quote_id_for_order_qty(instrument=inst, side=sd, order_qty=qty)
         resp = ep.place_order_market(
             quote_id=str(quote_id),
             side=sd,
-            max_slippage=float(max_slippage),
+            max_slippage=float(slip),
             is_reduce_only=bool(is_reduce_only),
         )
     except Exception as e:
@@ -786,7 +858,10 @@ def rebalance_portfolio(
        ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION`` (default 50%).
     2. **Rung multiple trim** — when abs notional exceeds
        ``VARIBOT_REBALANCE_TRIM_MULTIPLE × grid_rung_usd`` (default off).
-    3. **IM interval risk** — equal-notional rebalance when IM% ≥ trigger.
+    3. **IM high-usage trim** — when IM% ≥ ``VARIBOT_REBALANCE_IM_TRIGGER`` (default 80%),
+       reduce-only market trim of ``VARIBOT_IM_HIGH_USAGE_TRIM_FRACTION`` (default 50%) on
+       every open position; skips equal-notional interval risk for that cycle.
+    4. **IM interval risk** — equal-notional rebalance when IM% ≥ trigger (only if step 3 off).
 
     ``varibot_dir`` is kept for API compatibility but no longer used for persistence.
     """
@@ -875,6 +950,31 @@ def rebalance_portfolio(
     if im_usage is None:
         log("interval risk: skip — im_usage missing from portfolio snapshot")
         return trim_ran
+
+    im_frac = im_high_usage_trim_fraction()
+    if float(im_usage) >= float(trig) and im_frac > 0:
+        im_trims = plan_im_high_usage_trims(positions, trim_fraction=im_frac, min_order_usd=min_usd)
+        im_ran = _execute_trim_orders(
+            ep=ep,
+            trims=im_trims,
+            live=live,
+            dry_run=dry_run,
+            log=log,
+            max_slippage=max_slippage,
+            log_tag="IM high usage trim",
+            summary_line=(
+                f"IM high usage trim: IM%={float(im_usage) * 100:.2f}% >= {trig * 100:g}% — "
+                f"trim {im_frac * 100:g}% of each position ({len(im_trims)} ticker(s)); "
+                f"projected_volume=${sum(t.order_notional for t in im_trims):.2f}"
+                if im_trims
+                else (
+                    f"IM high usage trim: IM%={float(im_usage) * 100:.2f}% >= {trig * 100:g}% "
+                    f"but no trim orders (no positions or below min order USD)"
+                )
+            ),
+        )
+        return im_ran or trim_ran
+
     if float(im_usage) < float(trig):
         return trim_ran
     if pv is None or float(pv) <= 0:

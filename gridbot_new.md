@@ -279,9 +279,13 @@ Write `gridstrat_rearm.py` first and test it standalone before touching the exch
 
 ---
 
-## Interval risk rebalance (IM ≥ 80%)
+## IM high usage trim (IM ≥ 80%)
 
-When **initial margin (IM) usage** is **≥ 80%** (default trigger), Varibot runs this rebalance **every interval** while you have positions and IM stays above the threshold: equal **target notional** per leg (7 long / 7 short on 14 tickers when N=15, smallest dropped). One **market order per ticker** (net delta, not reduce-only). Pending grid limits are **not** canceled. There is **no latch file** — each cycle decides independently from the latest portfolio snapshot.
+When **initial margin (IM) usage** is **≥ 80%** (same trigger as interval risk), Varibot first runs a **reduce-only market trim of 50% of each open position** (`VARIBOT_IM_HIGH_USAGE_TRIM_FRACTION`, default `0.5`; set `0` to disable and fall through to interval risk). Pending grid limits are **not** canceled. The equal-notional interval risk rebalance below does **not** run on the same cycle when this trim fires.
+
+## Interval risk rebalance (IM ≥ 80%, trim disabled)
+
+When IM is high but **`VARIBOT_IM_HIGH_USAGE_TRIM_FRACTION=0`**, Varibot runs equal **target notional** rebalance **every interval** while positions exist and IM stays above the threshold: 7 long / 7 short on 14 tickers when N=15, smallest dropped. One **market order per ticker** (net delta, not reduce-only). Pending grid limits are **not** canceled. There is **no latch file** — each cycle decides independently from the latest portfolio snapshot.
 
 ### Run live from terminal
 
@@ -307,7 +311,8 @@ python3 rebalance_run.py
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `VARIBOT_REBALANCE_IM_TRIGGER` | `0.80` | Fire when IM usage ≥ this |
+| `VARIBOT_REBALANCE_IM_TRIGGER` | `0.80` | Fire IM high-usage trim and/or interval risk when IM usage ≥ this |
+| `VARIBOT_IM_HIGH_USAGE_TRIM_FRACTION` | `0.5` | Reduce-only trim fraction on **every** position when IM ≥ trigger (`0` = skip; use interval risk only) |
 | `VARIBOT_REBALANCE_MM_TRIGGER` | *(deprecated)* | Alias for IM trigger if `IM_TRIGGER` unset |
 | `VARIBOT_REBALANCE_IM_TARGET` | `0.20` | Target notional sizing fraction in planner formula |
 | `VARIBOT_REBALANCE_ROUND_TO` | `10` | Round target notional to nearest $10 |
