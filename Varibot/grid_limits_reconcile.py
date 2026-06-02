@@ -329,23 +329,41 @@ def _post_missing_limits(
     """POST missing limits; return (side, price_key) tuples successfully placed."""
     if not want_post:
         return []
+    import time
+
+    def _looks_like_timeout(exc: BaseException) -> bool:
+        msg = str(exc)
+        m = msg.lower()
+        # Common curl timeout: "(28) Operation timed out after 20002 milliseconds ..."
+        return ("curl: (28)" in m) or ("operation timed out" in m) or ("timeout" in m)
+
     lim_mark = bool(meta.get("grid_limit_use_mark_price"))
     log(f"{log_prefix}: posting {len(want_post)} missing limit(s) …")
     placed: List[Tuple[str, str]] = []
     for side, px, usd, lq in want_post:
-        try:
-            rc = place_limit(
-                str(meta.get("grid_asset") or asset).strip().upper(),
-                side,
-                float(usd),
-                float(px),
-                lim_mark,
-                lq,
-            )
-            if int(rc) == 0:
-                placed.append(limit_price_key(side, float(px)))
-        except Exception as e:
-            log(f"{log_prefix}: place {side} @ {px:g} failed ({type(e).__name__}: {e})")
+        last_err: Optional[BaseException] = None
+        for attempt in range(1, 3):  # 2 attempts for transient timeouts
+            try:
+                rc = place_limit(
+                    str(meta.get("grid_asset") or asset).strip().upper(),
+                    side,
+                    float(usd),
+                    float(px),
+                    lim_mark,
+                    lq,
+                )
+                if int(rc) == 0:
+                    placed.append(limit_price_key(side, float(px)))
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < 2 and _looks_like_timeout(e):
+                    # brief backoff; avoid stalling the full cycle
+                    time.sleep(0.4)
+                    continue
+                log(f"{log_prefix}: place {side} @ {px:g} failed ({type(e).__name__}: {e})")
+                break
     log(f"{log_prefix}: finished ({len(placed)}/{len(want_post)} placed).")
     return placed
 
@@ -833,11 +851,23 @@ def run_grid_limits_bootstrap(
                     "(POST /api/quotes/indicative)"
                 )
             except Exception as e:
+                # Fallback to the already-available gridstrat mark (supported_assets) so posting
+                # doesn't stall for minutes when indicative times out.
+                mark = ameta.get("grid_mark")
+                try:
+                    mark_f = float(mark) if mark is not None else None
+                except (TypeError, ValueError):
+                    mark_f = None
+                if mark_f is None:
+                    log(
+                        f"gridlimits[{asset}] indicative mark failed "
+                        f"({type(e).__name__}: {e}); fallback mark missing — skip reconcile."
+                    )
+                    continue
                 log(
                     f"gridlimits[{asset}] indicative mark failed "
-                    f"({type(e).__name__}: {e}); skip reconcile."
+                    f"({type(e).__name__}: {e}); fallback mark={mark_f:g} (supported_assets)"
                 )
-                continue
         else:
             mark = ameta.get("grid_mark")
             try:
