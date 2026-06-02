@@ -1945,8 +1945,10 @@ def _close_reduce_only_with_slippage_steps(
     instrument = Instrument(instrument_type="perpetual_future", underlying=sym_u)
 
     cap_slip = _max_slippage_cap_for_asset(sym_u, default_cap=float(max_slip))
-    # Flatten market orders: allow 2× the configured cap to actually get flat under venue slippage limits.
-    cap_slip = 2.0 * float(cap_slip)
+    # Flatten market orders: allow a higher slippage cap to actually get flat under venue limits.
+    # LIGHTER tends to require a wider cap; use 2.5× there, 2× elsewhere.
+    flatten_mult = 2.5 if sym_u == "LIGHTER" else 2.0
+    cap_slip = float(flatten_mult) * float(cap_slip)
     base_slip = min(float(max_slip), float(cap_slip))
 
     last_err: Optional[Exception] = None
