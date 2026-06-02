@@ -1874,6 +1874,33 @@ def _resolve_max_slippage() -> float:
     return float(_DEFAULT_MAX_SLIPPAGE)
 
 
+def _try_parse_float_env(key: str) -> Optional[float]:
+    v = (os.environ.get(key, "") or "").strip()
+    if not v:
+        return None
+    try:
+        out = float(v)
+    except Exception:
+        return None
+    return out if math.isfinite(out) else None
+
+
+def _max_slippage_cap_for_asset(asset: str, *, default_cap: float) -> float:
+    """
+    Per-asset slippage cap override for market orders.
+
+    - Default: use *default_cap* (from MAX_SLIPPAGE / _DEFAULT_MAX_SLIPPAGE).
+    - Override: MAX_SLIPPAGE_<ASSET>, e.g. MAX_SLIPPAGE_LIGHTER=0.0015 (0.15%).
+    """
+    sym = str(asset).strip().upper()
+    if not sym:
+        return float(default_cap)
+    v = _try_parse_float_env(f"MAX_SLIPPAGE_{sym}")
+    if v is None:
+        return float(default_cap)
+    return float(v)
+
+
 def _looks_like_slippage_reject(msg: str) -> bool:
     m = (msg or "").lower()
     return ("max slippage" in m and ("exceed" in m or "exceeded" in m)) or ("slippage" in m and "exceed" in m)
@@ -1917,9 +1944,15 @@ def _close_reduce_only_with_slippage_steps(
     sym_u = str(sym).strip().upper()
     instrument = Instrument(instrument_type="perpetual_future", underlying=sym_u)
 
+    cap_slip = _max_slippage_cap_for_asset(sym_u, default_cap=float(max_slip))
+    # Flatten market orders: allow 2× the configured cap to actually get flat under venue slippage limits.
+    cap_slip = 2.0 * float(cap_slip)
+    base_slip = min(float(max_slip), float(cap_slip))
+
     last_err: Optional[Exception] = None
     for attempt in range(1, int(max_attempts) + 1):
-        slip = float(max_slip) + float(attempt - 1) * float(_SLIPPAGE_RETRY_INCREMENT)
+        slip = float(base_slip) + float(attempt - 1) * float(_SLIPPAGE_RETRY_INCREMENT)
+        slip = min(float(slip), float(cap_slip))
         try:
             qresp = ep.quote_indicative_simple(instrument=instrument, qty=float(qty_abs))
             if isinstance(qresp, dict):
