@@ -28,13 +28,15 @@ HEDGE_TICKERS: Tuple[str, ...] = ("BTC", "ETH", "SOL")
 
 ENV_ENABLED = "VARIBOT_BOOK_HEDGE_ENABLED"
 ENV_PORT_MULT = "VARIBOT_BOOK_HEDGE_PORT_MULT"
+ENV_EXIT_PORT_MULT = "VARIBOT_BOOK_HEDGE_EXIT_PORT_MULT"
 ENV_ADJUST_USD = "VARIBOT_BOOK_HEDGE_ADJUST_USD"
 ENV_SLIPPAGE = "VARIBOT_BOOK_HEDGE_SLIPPAGE"
 ENV_SLIPPAGE_SOL = "VARIBOT_BOOK_HEDGE_SLIPPAGE_SOL"
 ENV_MIN_ORDER_USD = "VARIBOT_BOOK_HEDGE_MIN_ORDER_USD"
 
 DEFAULT_ENABLED: bool = True
-DEFAULT_PORT_MULT: float = 3.0
+DEFAULT_PORT_MULT: float = 3.0  # enter: open/adjust hedge when |book_net| exceeds this × port
+DEFAULT_EXIT_PORT_MULT: float = 2.5  # exit: close hedge only below this × port (hysteresis)
 DEFAULT_ADJUST_USD: float = 1000.0
 DEFAULT_SLIPPAGE: float = 0.0003  # 0.03% (BTC, ETH)
 DEFAULT_SLIPPAGE_SOL: float = 0.0005  # 0.05% — SOL hedge needs wider cap vs rejects
@@ -67,14 +69,20 @@ def book_hedge_slippage_for_ticker(ticker: str, *, default_slip: Optional[float]
     return base
 
 
-def book_hedge_constants() -> Tuple[bool, float, float, float, float]:
+def book_hedge_constants() -> Tuple[bool, float, float, float, float, float]:
     return (
         _env_bool(ENV_ENABLED, DEFAULT_ENABLED),
         _env_float(ENV_PORT_MULT, DEFAULT_PORT_MULT),
+        _env_float(ENV_EXIT_PORT_MULT, DEFAULT_EXIT_PORT_MULT),
         _env_float(ENV_ADJUST_USD, DEFAULT_ADJUST_USD),
         _env_float(ENV_SLIPPAGE, DEFAULT_SLIPPAGE),
         _env_float(ENV_MIN_ORDER_USD, DEFAULT_MIN_ORDER_USD),
     )
+
+
+def hedge_is_active(hedge_net_usd: float, *, min_order_usd: float = DEFAULT_MIN_ORDER_USD) -> bool:
+    """True when BTC/ETH/SOL hedge legs are materially open."""
+    return abs(float(hedge_net_usd)) >= float(min_order_usd)
 
 
 def _signed_notional_map(positions: Sequence[LivePosition]) -> dict[str, float]:
@@ -113,7 +121,10 @@ class BookHedgePlan:
     book_net_usd: float
     hedge_net_usd: float
     port_mult: float
-    trigger_usd: float
+    exit_port_mult: float
+    enter_trigger_usd: float
+    exit_trigger_usd: float
+    hedge_active: bool
     hedge_target_usd: float
     action: str  # skip | hold | open_adjust | close_all
     legs: Tuple[PlannedHedgeLeg, ...]
@@ -124,6 +135,7 @@ def plan_book_hedge(
     portfolio_value_usd: float,
     positions: Sequence[LivePosition],
     port_mult: float = DEFAULT_PORT_MULT,
+    exit_port_mult: float = DEFAULT_EXIT_PORT_MULT,
     adjust_usd: float = DEFAULT_ADJUST_USD,
     min_order_usd: float = DEFAULT_MIN_ORDER_USD,
     mark_by_ticker: Optional[dict[str, float]] = None,
@@ -132,10 +144,11 @@ def plan_book_hedge(
     Plan BTC/ETH/SOL hedge legs.
 
     - Book net = sum signed notional on all tickers except BTC, ETH, SOL.
-    - When |book_net| > port_mult × portfolio_value: target hedge = −book_net,
+    - **Enter** when |book_net| > port_mult × portfolio_value (default 3×): target hedge = −book_net,
       split equally across BTC, ETH, SOL (1× book net total).
+    - **Exit** (close hedge) only when |book_net| ≤ exit_port_mult × port (default 2.5×) while
+      hedge is active — hysteresis vs enter so book flirting with 3× does not flip on/off.
     - Adjust only if |hedge_target − hedge_net| > adjust_usd.
-    - When |book_net| ≤ trigger: close all hedge-ticker positions (flatten).
     """
     pv = float(portfolio_value_usd)
     if pv <= 0 or not (pv == pv):
@@ -143,7 +156,9 @@ def plan_book_hedge(
 
     book_net = compute_book_net(positions)
     hedge_net = compute_hedge_net(positions)
-    trigger = float(port_mult) * pv
+    enter_trigger = float(port_mult) * pv
+    exit_trigger = float(exit_port_mult) * pv
+    active = hedge_is_active(hedge_net, min_order_usd=min_order_usd)
     notionals = _signed_notional_map(positions)
     marks: dict[str, float] = {}
     if mark_by_ticker:
@@ -177,7 +192,22 @@ def plan_book_hedge(
             is_reduce_only=bool(reduce_only),
         )
 
-    if abs(book_net) <= trigger:
+    if not active and abs(book_net) <= enter_trigger:
+        return BookHedgePlan(
+            portfolio_value_usd=pv,
+            book_net_usd=book_net,
+            hedge_net_usd=hedge_net,
+            port_mult=float(port_mult),
+            exit_port_mult=float(exit_port_mult),
+            enter_trigger_usd=enter_trigger,
+            exit_trigger_usd=exit_trigger,
+            hedge_active=active,
+            hedge_target_usd=0.0,
+            action="skip",
+            legs=(),
+        )
+
+    if active and abs(book_net) <= exit_trigger:
         legs: List[PlannedHedgeLeg] = []
         for sym in HEDGE_TICKERS:
             cur = float(notionals.get(sym, 0.0))
@@ -191,10 +221,29 @@ def plan_book_hedge(
             book_net_usd=book_net,
             hedge_net_usd=hedge_net,
             port_mult=float(port_mult),
-            trigger_usd=trigger,
+            exit_port_mult=float(exit_port_mult),
+            enter_trigger_usd=enter_trigger,
+            exit_trigger_usd=exit_trigger,
+            hedge_active=active,
             hedge_target_usd=0.0,
             action="close_all" if legs else "skip",
             legs=tuple(legs),
+        )
+
+    if active and abs(book_net) <= enter_trigger:
+        # Hysteresis band: hedge stays on until |book_net| drops below exit_trigger.
+        return BookHedgePlan(
+            portfolio_value_usd=pv,
+            book_net_usd=book_net,
+            hedge_net_usd=hedge_net,
+            port_mult=float(port_mult),
+            exit_port_mult=float(exit_port_mult),
+            enter_trigger_usd=enter_trigger,
+            exit_trigger_usd=exit_trigger,
+            hedge_active=active,
+            hedge_target_usd=float(hedge_net),
+            action="hold",
+            legs=(),
         )
 
     hedge_target = -float(book_net)
@@ -204,7 +253,10 @@ def plan_book_hedge(
             book_net_usd=book_net,
             hedge_net_usd=hedge_net,
             port_mult=float(port_mult),
-            trigger_usd=trigger,
+            exit_port_mult=float(exit_port_mult),
+            enter_trigger_usd=enter_trigger,
+            exit_trigger_usd=exit_trigger,
+            hedge_active=active,
             hedge_target_usd=hedge_target,
             action="hold",
             legs=(),
@@ -222,7 +274,10 @@ def plan_book_hedge(
         book_net_usd=book_net,
         hedge_net_usd=hedge_net,
         port_mult=float(port_mult),
-        trigger_usd=trigger,
+        exit_port_mult=float(exit_port_mult),
+        enter_trigger_usd=enter_trigger,
+        exit_trigger_usd=exit_trigger,
+        hedge_active=active,
         hedge_target_usd=hedge_target,
         action="open_adjust",
         legs=tuple(legs2),
@@ -240,7 +295,7 @@ def maybe_book_hedge(
     mark_fetcher: Optional[Callable[[str], float]] = None,
 ) -> bool:
     """Evaluate book net vs portfolio and place BTC/ETH/SOL hedge market orders if needed."""
-    enabled, port_mult, adjust_usd, slip, min_usd = book_hedge_constants()
+    enabled, port_mult, exit_port_mult, adjust_usd, slip, min_usd = book_hedge_constants()
     if not enabled:
         return False
 
@@ -291,6 +346,7 @@ def maybe_book_hedge(
         portfolio_value_usd=float(pv),
         positions=positions,
         port_mult=port_mult,
+        exit_port_mult=exit_port_mult,
         adjust_usd=adjust_usd,
         min_order_usd=min_usd,
         mark_by_ticker=marks_extra,
@@ -301,17 +357,26 @@ def maybe_book_hedge(
     log(
         f"book_hedge: port=${plan.portfolio_value_usd:.2f} "
         f"book_net=${plan.book_net_usd:+.2f} hedge_net=${plan.hedge_net_usd:+.2f} "
-        f"trigger=${plan.trigger_usd:.2f} ({plan.port_mult:g}×) "
+        f"enter=${plan.enter_trigger_usd:.2f} ({plan.port_mult:g}×) "
+        f"exit=${plan.exit_trigger_usd:.2f} ({plan.exit_port_mult:g}×) "
+        f"hedge_active={plan.hedge_active} "
         f"target_hedge=${plan.hedge_target_usd:+.2f} action={plan.action}"
     )
 
     if plan.action in ("skip", "hold") or not plan.legs:
         if plan.action == "hold":
-            log(
-                f"book_hedge: hold — |target−hedge|="
-                f"${abs(plan.hedge_target_usd - plan.hedge_net_usd):.2f} "
-                f"≤ ${adjust_usd:g}"
-            )
+            if plan.hedge_active and abs(plan.book_net_usd) <= plan.enter_trigger_usd:
+                log(
+                    f"book_hedge: hold — hysteresis band "
+                    f"(|book|=${abs(plan.book_net_usd):.2f} between "
+                    f"exit ${plan.exit_trigger_usd:.2f} and enter ${plan.enter_trigger_usd:.2f})"
+                )
+            else:
+                log(
+                    f"book_hedge: hold — |target−hedge|="
+                    f"${abs(plan.hedge_target_usd - plan.hedge_net_usd):.2f} "
+                    f"≤ ${adjust_usd:g}"
+                )
         return plan.action != "skip"
 
     total_vol = sum(l.order_notional for l in plan.legs)

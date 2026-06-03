@@ -267,6 +267,12 @@ def main() -> int:
         return 0
 
     base = _resolve_base_slippage_percent(args.slippage_percent)
+    try:
+        from portfolio_rebalance import flatten_slippage_extra  # noqa: WPS433
+
+        base = float(base) + flatten_slippage_extra()
+    except ImportError:
+        base = float(base) + 0.001
     attempts_out: List[Dict[str, Any]] = []
     close_all_responses: List[Any] = []
     print("Attempting to close all positions...")

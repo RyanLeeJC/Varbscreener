@@ -28,6 +28,8 @@ ENV_MIN_ORDER_USD = "VARIBOT_REBALANCE_MIN_ORDER_USD"
 ENV_REBALANCE_ORDER_INTERVAL_S = "VARIBOT_REBALANCE_ORDER_INTERVAL_S"
 ENV_TRIM_MULTIPLE = "VARIBOT_REBALANCE_TRIM_MULTIPLE"
 ENV_TRIM_FRACTION = "VARIBOT_REBALANCE_TRIM_FRACTION"
+ENV_FLATTEN_SLIPPAGE_EXTRA = "VARIBOT_FLATTEN_SLIPPAGE_EXTRA"
+DEFAULT_FLATTEN_SLIPPAGE_EXTRA: float = 0.001  # +0.10% on reduce-only trims / flattens (large size)
 DEFAULT_TRIM_MULTIPLE: float = 0.0  # <= 0 disables per-ticker position trim
 DEFAULT_TRIM_FRACTION: float = 0.5
 ENV_OVERSIZED_FLATTEN_MULTIPLE = "VARIBOT_OVERSIZED_FLATTEN_MULTIPLE"
@@ -136,16 +138,23 @@ def _max_slippage_cap_for_asset(asset: str, *, default_cap: float) -> float:
     return v if v > 0 else float(default_cap)
 
 
+def flatten_slippage_extra() -> float:
+    """Extra max-slippage fraction added to reduce-only flatten/trim market orders (default +0.10%)."""
+    return _env_float(ENV_FLATTEN_SLIPPAGE_EXTRA, DEFAULT_FLATTEN_SLIPPAGE_EXTRA)
+
+
 def _reduce_only_market_slippage(ticker: str, *, base_max_slippage: float) -> float:
     """
     Slippage for reduce-only trims/flattens.
 
-    LIGHTER: 3× per-ticker cap (``MAX_SLIPPAGE_LIGHTER`` or base). Other tickers: base only.
+    LIGHTER: 3× per-ticker cap (``MAX_SLIPPAGE_LIGHTER`` or base). Other tickers: base cap.
+    All flatten legs add ``flatten_slippage_extra()`` (+0.10% default) for large-size closes.
     """
     cap = _max_slippage_cap_for_asset(ticker, default_cap=float(base_max_slippage))
+    extra = flatten_slippage_extra()
     if str(ticker).strip().upper() == "LIGHTER":
-        return 3.0 * float(cap)
-    return float(base_max_slippage)
+        return 3.0 * float(cap) + extra
+    return float(base_max_slippage) + extra
 
 
 def _vari_rate_limit_settings() -> Tuple[int, float]:

@@ -570,6 +570,7 @@ python3 rebalance_run.py
 | `VARIBOT_REBALANCE_ORDER_INTERVAL_S` | *(auto)* | Seconds between each ticker’s market order; default ≈3.2s at Vari 10 req/10s (3 HTTP calls per leg) |
 | `VARI_RATE_LIMIT_MAX` / `VARI_RATE_LIMIT_WINDOW_S` | `10` / `10` | Per-IP cap used to compute default pacing (also enforced on every HTTP call) |
 | `MAX_SLIPPAGE` | `0.002` | Market order slippage cap |
+| `VARIBOT_FLATTEN_SLIPPAGE_EXTRA` | `0.001` | +0.10% added to reduce-only trim/flatten slippage (IM trim, notional cap, close-all path) |
 | `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE` | `30` | Per-ticker reduce-only trim when notional exceeds multiple × grid rung (`investment×lev/grid_num`; `0` = off) |
 | `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION` | `0.5` | Fraction of position qty to cut per trim (default 50%) |
 
@@ -591,16 +592,17 @@ Each Varibot cycle runs **`Varibot/book_hedge.py` at the end of the cycle** (aft
 
 **Rules (defaults):**
 
-1. If `|book_net| > 3 × portfolio_value` → target hedge = **−book_net** (1×), split **⅓** each on BTC, ETH, SOL (e.g. book +$12k → **$4k short** each).
-2. Rebalance hedge only when `|hedge_target − hedge_net| > $1,000` (avoids tiny churn).
-3. If `|book_net| ≤ 3 × portfolio_value` → **flatten** all BTC/ETH/SOL positions (close hedge entirely).
+1. **Enter** when `|book_net| > 3 × portfolio_value` → target hedge = **−book_net** (1×), split **⅓** each on BTC, ETH, SOL.
+2. **Exit** (flatten hedge) only when `|book_net| ≤ 2.5 × portfolio_value` **while hedge is already on** — hysteresis so book flirting with 3× does not repeatedly open/close.
+3. Rebalance hedge only when `|hedge_target − hedge_net| > $1,000` (and enter/exit rules allow trading).
 
 Hedge market orders use **0.03%** max slippage on BTC/ETH (`VARIBOT_BOOK_HEDGE_SLIPPAGE`, default `0.0003`) and **0.05%** on SOL (`VARIBOT_BOOK_HEDGE_SLIPPAGE_SOL`, default `0.0005`). Reduce-only when the leg shrinks an existing hedge position.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `VARIBOT_BOOK_HEDGE_ENABLED` | on | Set `0` to disable |
-| `VARIBOT_BOOK_HEDGE_PORT_MULT` | `3` | Trigger multiple of portfolio value |
+| `VARIBOT_BOOK_HEDGE_PORT_MULT` | `3` | **Enter**: open/adjust when \|book_net\| exceeds this × port |
+| `VARIBOT_BOOK_HEDGE_EXIT_PORT_MULT` | `2.5` | **Exit**: close hedge only below this × port (must be < enter mult) |
 | `VARIBOT_BOOK_HEDGE_ADJUST_USD` | `1000` | Min \|target−hedge\| to trade |
 | `VARIBOT_BOOK_HEDGE_SLIPPAGE` | `0.0003` | 0.03% slippage cap on BTC/ETH hedge legs |
 | `VARIBOT_BOOK_HEDGE_SLIPPAGE_SOL` | `0.0005` | 0.05% slippage cap on SOL hedge legs |

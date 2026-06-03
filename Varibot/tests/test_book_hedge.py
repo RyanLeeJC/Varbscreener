@@ -101,6 +101,38 @@ class TestBookHedgePlan(unittest.TestCase):
         self.assertEqual(plan.action, "open_adjust")
         self.assertGreater(len(plan.legs), 0)
 
+    def test_hysteresis_keeps_hedge_in_band(self) -> None:
+        # port 3000 → enter 9000, exit 7500; book 8500 (between) with hedge on → hold, no close
+        positions = [
+            _pos("XPL", "short", 8500.0, 1.0),
+            _pos("BTC", "long", 8500.0 / 67000.0, 67000.0),
+        ]
+        plan = plan_book_hedge(
+            portfolio_value_usd=3000.0,
+            positions=positions,
+            port_mult=3.0,
+            exit_port_mult=2.5,
+            adjust_usd=1000.0,
+            mark_by_ticker={"BTC": 67000.0, "ETH": 1850.0, "SOL": 140.0},
+        )
+        assert plan is not None
+        self.assertTrue(plan.hedge_active)
+        self.assertEqual(plan.action, "hold")
+        self.assertEqual(len(plan.legs), 0)
+
+    def test_no_open_below_enter_without_hedge(self) -> None:
+        positions = [_pos("XPL", "short", 8500.0, 1.0)]
+        plan = plan_book_hedge(
+            portfolio_value_usd=3000.0,
+            positions=positions,
+            port_mult=3.0,
+            exit_port_mult=2.5,
+            mark_by_ticker={"BTC": 67000.0, "ETH": 1850.0, "SOL": 140.0},
+        )
+        assert plan is not None
+        self.assertFalse(plan.hedge_active)
+        self.assertEqual(plan.action, "skip")
+
     def test_close_hedge_when_book_below_trigger(self) -> None:
         positions = [
             _pos("XPL", "long", 2000.0, 1.0),

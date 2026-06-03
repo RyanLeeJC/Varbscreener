@@ -343,12 +343,12 @@ class TestReduceOnlyMarketSlippage(unittest.TestCase):
     def test_lighter_uses_triple_cap(self) -> None:
         with patch.dict(os.environ, {"MAX_SLIPPAGE_LIGHTER": "0.0015"}, clear=False):
             slip = _reduce_only_market_slippage("LIGHTER", base_max_slippage=0.001)
-        self.assertAlmostEqual(slip, 0.0045)
+        self.assertAlmostEqual(slip, 0.0055)  # 3×0.0015 + 0.001 flatten extra
 
     def test_other_ticker_uses_base(self) -> None:
         with patch.dict(os.environ, {"MAX_SLIPPAGE_ETH": "0.002"}, clear=False):
             slip = _reduce_only_market_slippage("ETH", base_max_slippage=0.001)
-        self.assertAlmostEqual(slip, 0.001)
+        self.assertAlmostEqual(slip, 0.002)  # 0.001 base + 0.001 flatten extra
 
 
 class TestPlanImHighUsageTrims(unittest.TestCase):

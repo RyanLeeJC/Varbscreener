@@ -1948,8 +1948,10 @@ def _close_reduce_only_with_slippage_steps(
     cap_slip = _max_slippage_cap_for_asset(sym_u, default_cap=float(max_slip))
     # Flatten market orders: allow a higher slippage cap to actually get flat under venue limits.
     # LIGHTER tends to require a wider cap; use 3× there, 2× elsewhere.
+    from portfolio_rebalance import flatten_slippage_extra  # noqa: WPS433
+
     flatten_mult = 3.0 if sym_u == "LIGHTER" else 2.0
-    cap_slip = float(flatten_mult) * float(cap_slip)
+    cap_slip = float(flatten_mult) * float(cap_slip) + flatten_slippage_extra()
     base_slip = min(float(max_slip), float(cap_slip))
 
     last_err: Optional[Exception] = None
