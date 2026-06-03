@@ -34,6 +34,8 @@ DEFAULT_TRIM_MULTIPLE: float = 0.0  # <= 0 disables per-ticker position trim
 DEFAULT_TRIM_FRACTION: float = 0.5
 ENV_OVERSIZED_FLATTEN_MULTIPLE = "VARIBOT_OVERSIZED_FLATTEN_MULTIPLE"
 DEFAULT_OVERSIZED_FLATTEN_MULTIPLE: float = 10.0  # <= 0 disables oversized profit flatten
+ENV_OVERSIZED_FLATTEN_MIN_UPNL_USD = "VARIBOT_OVERSIZED_FLATTEN_MIN_UPNL_USD"
+DEFAULT_OVERSIZED_FLATTEN_MIN_UPNL_USD: float = 10.0  # require uPNL above this before 100% flatten
 # Per-ticker reduce-only trim when position notional exceeds multiple × grid rung USD.
 ENV_NOTIONAL_CAP_TRIM_MULTIPLE = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE"
 ENV_NOTIONAL_CAP_TRIM_FRACTION = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION"
@@ -258,6 +260,11 @@ def oversized_flatten_multiple() -> float:
     return _env_float(ENV_OVERSIZED_FLATTEN_MULTIPLE, DEFAULT_OVERSIZED_FLATTEN_MULTIPLE)
 
 
+def oversized_flatten_min_upnl_usd() -> float:
+    """Minimum uPNL (USD) required before oversized profit flatten runs. <= 0 treated as 0."""
+    return _env_float(ENV_OVERSIZED_FLATTEN_MIN_UPNL_USD, DEFAULT_OVERSIZED_FLATTEN_MIN_UPNL_USD)
+
+
 def notional_cap_trim_constants() -> Tuple[float, float]:
     """(cap_multiple, trim_fraction). multiple <= 0 disables notional-cap trimming."""
     return (
@@ -385,11 +392,13 @@ def plan_oversized_profit_flattens(
     min_order_usd: Optional[float] = None,
 ) -> List[PlannedTrimOrder]:
     """
-    Flatten (100%% reduce-only) when abs notional exceeds ``flatten_multiple × rung_usd`` and uPNL > 0.
+    Flatten (100%% reduce-only) when abs notional exceeds ``flatten_multiple × rung_usd`` and
+    uPNL exceeds ``oversized_flatten_min_upnl_usd()`` (default $10, slippage buffer on close).
 
     Default multiple is 10 (``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE``). Set <= 0 to disable.
     """
     mult = oversized_flatten_multiple() if flatten_multiple is None else float(flatten_multiple)
+    min_upnl = oversized_flatten_min_upnl_usd()
     _, _, _, min_usd = rebalance_constants()
     if min_order_usd is not None:
         min_usd = float(min_order_usd)
@@ -399,7 +408,7 @@ def plan_oversized_profit_flattens(
 
     out: List[PlannedTrimOrder] = []
     for pos in positions:
-        if pos.upnl_usd is None or float(pos.upnl_usd) <= 0:
+        if pos.upnl_usd is None or float(pos.upnl_usd) <= float(min_upnl):
             continue
         rung = grid_rung_usd_for_ticker(pos.ticker)
         if rung <= 0:
@@ -861,7 +870,8 @@ def rebalance_portfolio(
     Portfolio maintenance on each call when positions exist:
 
     0. **Oversized profit flatten** — 100%% reduce-only when abs notional exceeds
-       ``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE × grid_rung_usd`` (default 10×) and uPNL > 0.
+       ``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE × grid_rung_usd`` (default 10×) and uPNL >
+       ``VARIBOT_OVERSIZED_FLATTEN_MIN_UPNL_USD`` (default $10).
     1. **Notional cap trim** — reduce-only market when position notional exceeds
        ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE × grid_rung_usd`` (default 30×) by
        ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION`` (default 50%).
@@ -919,7 +929,8 @@ def rebalance_portfolio(
         log_tag="oversized profit flatten",
         summary_line=(
             f"oversized profit flatten: {len(flatten_trims)} ticker(s) over "
-            f"{flatten_mult:g}× rung with uPNL>0; flatten 100% each (reduce-only market); "
+            f"{flatten_mult:g}× rung with uPNL>${oversized_flatten_min_upnl_usd():g}; "
+            f"flatten 100% each (reduce-only market); "
             f"projected_volume=${sum(t.order_notional for t in flatten_trims):.2f}"
             if flatten_trims
             else None

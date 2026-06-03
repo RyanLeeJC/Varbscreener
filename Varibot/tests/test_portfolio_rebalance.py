@@ -382,8 +382,8 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
     def test_flattens_oversized_profitable_positions(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
             [
-                _pos("AAVE", "short", 39.293, 82.71, upnl_usd=2.19),
-                _pos("XRP", "short", 1531.0, 1.34, upnl_usd=7.92),
+                _pos("AAVE", "short", 39.293, 82.71, upnl_usd=12.19),
+                _pos("XRP", "short", 1531.0, 1.34, upnl_usd=17.92),
                 _pos("BNB", "short", 5.6813, 674.9, upnl_usd=-84.05),
             ],
             flatten_multiple=10.0,
@@ -402,6 +402,18 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
     def test_skips_when_upnl_not_positive(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
             [_pos("BNB", "short", 5.6813, 674.9, upnl_usd=-84.05)],
+            flatten_multiple=10.0,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(trims, [])
+
+    @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
+    def test_skips_when_upnl_at_or_below_ten_dollars(self, _mock: object) -> None:
+        trims = plan_oversized_profit_flattens(
+            [
+                _pos("AAVE", "short", 39.293, 82.71, upnl_usd=10.0),
+                _pos("XRP", "short", 1531.0, 1.34, upnl_usd=7.92),
+            ],
             flatten_multiple=10.0,
             min_order_usd=5.0,
         )
