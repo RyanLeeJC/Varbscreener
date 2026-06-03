@@ -130,7 +130,7 @@ GRID_TRADING_TICKERS: Dict[str, float] = {
     "TAO": 3.0,
     "VIRTUAL": 3.0,
     "WLFI": 1.5,
-    "XPL": 3.0,
+    "CHZ": 4.0,
 
     # RWA
     # "CL": 2.0,

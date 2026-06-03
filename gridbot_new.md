@@ -3,9 +3,7 @@
 # Future Developments
 - Reducing Cycle intervals
 -
-- creating BTC and or ETH counterweight against the current tickers' net position (total long position - total net position). Like https://app.lighter.xyz/quant?tab=risk
-need to use a larger amount of BTC and or ETH since the tickers' beta are usually higher.
-Purpose of using this counterweight, is so that the whole book is not super skewed to long or short.
+- ~~creating BTC and or ETH counterweight~~ **Implemented (Jun 2026):** `Varibot/book_hedge.py` — each cycle when positions exist, book net (all tickers except **BTC/ETH/SOL**) vs portfolio value; see **Book direction hedge (BTC/ETH/SOL)** below.
 
 As grid trading bot, it's best to stay net flat?
 
@@ -15,6 +13,258 @@ As grid trading bot, it's best to stay net flat?
 A Grid Bot is an automated trading strategy that places multiple buy (Long) and sell (Short) orders at preset price intervals, creating a "grid" of orders. It profits from natural market volatility by buying low and selling high repeatedly — without requiring you to predict market direction.
 
 **How it works:** The bot divides your chosen price range into equal levels (grids). When price drops to a grid level, it opens a long position. When price rises to the next level, it closes for profit. This cycle repeats automatically 24/7.
+
+---
+
+## Finding VIRTUAL-like grid tickers
+
+Use this when one ticker (e.g. **VIRTUAL**) outperforms on a volatile / dump window and you want **similar alts** to add to `GRID_TRADING_TICKERS` in `strategy/gridstrat.py`.
+
+For **absolute chop / low-drift screening** aimed at RPNL (no reference ticker), see **Screening tickers for grid RPNL** below.
+
+**Motivation (example):** VIRTUAL had the best realized grid PnL over a ~12h dump/volatility window. Similar names should share a comparable **FDV tier** and **short-horizon price co-movement** with VIRTUAL so the same band / rung settings behave similarly.
+
+### Workflow (5 steps)
+
+| Step | What | Source |
+|------|------|--------|
+| 1 | Fetch all Omni perp metadata | `GET /api/metadata/supported_assets` (auth: `Varibot/.env`) |
+| 2 | FDV filter | Keep `has_perp` tickers with FDV in **[−25%, +200%]** of reference FDV: `0.75 × ref_fdv ≤ fdv ≤ 3.0 × ref_fdv` |
+| 3 | Price history | Binance USD-M perps `GET /fapi/v1/klines` — **5m**, **3 days** (≈864 bars), for ref + each candidate |
+| 4 | Correlation & beta | Align timestamps; **log returns** on close; **corr** = Pearson; **beta** = Cov(r, r_ref) / Var(r_ref) |
+| 5 | Rank & pick top 5 | Composite **grid_score** (below); sanity-check Vari **24h volume** / OI |
+
+Only tickers with a Binance USDT perpetual mapping are scored (`TICKERUSDT`, or `1000TICKERUSDT` e.g. PEPE).
+
+### grid_score (ranking for grid-like behaviour)
+
+Weights (0–1 scale per component, then combined):
+
+```
+grid_score = 0.45 × corr
+           + 0.25 × (1 − min(1, |beta − 1| / 0.5))
+           + 0.20 × (1 − min(1, |rv − rv_ref| / rv_ref))
+           + 0.10 × max(0, −AC1)
+```
+
+- **corr** — moves with VIRTUAL during the window  
+- **beta ≈ 1** — similar amplitude per VIRTUAL move (good for similar fill churn)  
+- **rv** — 5m returns dailyized (`std × √288`) vs VIRTUAL  
+- **AC1** — lag-1 return autocorrelation; slight mean-reversion bonus (negative AC1)
+
+**Pure correlation top 5** can differ (high corr + low beta → smaller swings, less grid churn unless bands are tighter).
+
+### Run (maintainer)
+
+From repo root (needs `numpy`, `Varibot/.env` with `VR_TOKEN` / `VR_WALLET_ADDRESS`):
+
+```bash
+python3 scripts/find_virtual_like_tickers.py
+python3 scripts/find_virtual_like_tickers.py --days 3 --out GridbotData/virtual_similar_analysis.json
+```
+
+Writes `GridbotData/virtual_similar_analysis.json` (`top5_grid`, `top5_corr`, FDV band stats).
+
+### Example output (Jun 2026, ref = VIRTUAL, FDV ≈ $708M)
+
+**FDV band:** ~$531M – $2.12B · **49** Vari perps · **43** with Binance klines · **864** aligned 5m bars.
+
+**Top 5 by grid_score**
+
+| # | Ticker | Corr | Beta | FDV vs VIRTUAL | Notes |
+|---|--------|------|------|----------------|-------|
+| 1 | RENDER | 0.76 | 0.90 | +63% | Best composite; vol closest to VIRTUAL |
+| 2 | XPL | 0.71 | 0.83 | +23% | Strong OI on Vari |
+| 3 | APT | 0.84 | 0.64 | +41% | Highest corr in set; thinner Vari book |
+| 4 | FIL | 0.80 | 0.65 | +142% | High corr; low Vari 24h vol |
+| 5 | JUP | 0.70 | 0.69 | +92% | Solid mid-cap alt |
+
+**Practical add (also validated live):** **PENGU** ranked ~#7 on score but **#4 on raw corr (0.84)** and nearly same FDV tier (−22%); worth including if already profitable on the bot.
+
+**Highest raw corr (3d):** PEPE, ENS, APT, PENGU, ETC — several have **beta ~0.5** (smaller moves per VIRTUAL tick).
+
+**Outside FDV band (excluded by step 2, but can still grid well):** ONDO, LINK, SUI, TAO (much larger FDV). Widen `--fdv-hi-pct` if you want them in the scan.
+
+### After selection
+
+1. Add tickers and **% band** to `GRID_TRADING_TICKERS` in `strategy/gridstrat.py` (bands: tune per ticker with 3d sim — see `scripts/grid_rearm_hyperparam.py` / paired sim in `strategy/gridstrat_rearm.py`).
+2. Remove retired tickers from the dict; cancel their limits and flatten inventory:
+   - `python3 Varibot/cancelalllimitorders.py --underlyings TICK1,TICK2 --live`
+   - Flatten off-list positions (reduce-only market; use `position_info.qty` from `GET /api/positions`, not stale top-level fields).
+3. Commit / push `gridstrat.py`; restart Varibot so env and file stay in sync.
+
+### Related: per-ticker % band (3d hyperparam)
+
+Once a ticker is shortlisted, sweep **1.5 / 2 / 2.5 / 3%** band on the same 3d Binance 5m path with your rung sizing (e.g. **$300/rung**, **10 rungs**, `halt` breach policy). Example Jun 2026:
+
+| Ticker | 3d move | Best RPNL / tPNL band | Max volume band |
+|--------|---------|------------------------|-----------------|
+| RENDER | +3.7% | 3.0% | 1.5% |
+| XPL | −6.8% | 3.0% | 1.5% |
+| JUP | +6.7% | 2.5% RPNL; 3.0% least-bad tPNL | 1.5% |
+| WLFI | +1.0% | 1.5% | 1.5% |
+
+Wider bands → fewer fills, often better RPNL on trending windows; tighter bands → more churn.
+
+---
+
+## Screening tickers for grid RPNL (chop & oscillation)
+
+Use this when you want tickers that **maximize realized grid PnL** on a lookback window — not names that merely **move like a reference** (see **Finding VIRTUAL-like grid tickers** above).
+
+**Intuition:** many peak-to-trough oscillations, price chopping inside a range, and **start ≈ end** (not trending hard). A grid earns when price **crosses levels and reverses**, not when it drifts one way.
+
+### What drives RPNL
+
+In the paired re-arm model, each closed round-trip earns roughly:
+
+```
+RPNL ≈ (round-trips) × (grid spacing) × (qty per grid)
+```
+
+A strong RPNL candidate has enough path to hit many grid levels **and** enough reversals to close paired round-trips. High vol + strong trend often means one-sided fills, inventory buildup, and **low** realized PnL.
+
+### Three pillars → quantifiable metrics
+
+Data source: same as VIRTUAL scan — Binance USD-M **5m** klines, **3 days** (≈864 bars), close (optionally high/low for range).
+
+#### 1. Low net drift (“start ≈ end”)
+
+| Metric | Formula | WLFI example (3d, Jun 2026) | Interpretation |
+|--------|---------|----------------------------|----------------|
+| **Net move %** | `\|P_T / P_0 − 1\| × 100` | **1.01%** (0.0594 → 0.06) | Primary drift filter |
+| **Trend R²** | R² of `log(price)` vs bar index | **0.16** | Low = not trending hard |
+| **Drift / range** | `\|P_T − P_0\| / (max − min)` | **~0.20** | Small = chop inside range |
+
+**Screen:** prefer `net_move_pct < 3%` over 3d (WLFI-like), and/or `trend_r2 < 0.3`.
+
+#### 2. Many oscillations (“peak-to-trough churn”)
+
+| Metric | Formula | WLFI example | Interpretation |
+|--------|---------|--------------|----------------|
+| **Local extrema count** | Peaks + troughs on close series | **235** / 864 bars | Raw “wiggle” count |
+| **Extrema rate** | extrema / (bars − 2) | **0.27** | Normalize across tickers |
+| **Zero-crossings** | Sign changes of `log(P) − mean(log P)` | **79** | Oscillation around mean |
+| **Choppiness index** | `1 − \|P_T − P_0\| / Σ\|ΔP\|` | **0.99** | 1 = pure back-and-forth, 0 = one-way |
+
+**Screen:** high choppiness (>0.85) and extrema rate above median for your universe.
+
+Fills come from **cumulative** path through grid levels, not only single-bar jumps. Do not require large per-bar moves if choppiness and extrema rate are high.
+
+#### 3. Enough vol to hit grids (band-matched)
+
+| Metric | Formula | WLFI example | Interpretation |
+|--------|---------|--------------|----------------|
+| **RV (dailyized)** | `std(5m log returns) × √288` | **4.1%** | Must exceed ~half your band |
+| **Range %** | `(max − min) / min × 100` | **5.0%** | Must span several grid spacings |
+| **AC1** | corr(`r_t`, `r_{t−1}`) on 5m log returns | **−0.14** | Negative = slight mean-reversion |
+
+Rule of thumb for planned band `b%`:
+
+- **Range % ≥ 2–3 × b** (WLFI: 5% range vs 1.5% band ✓)
+- **RV_daily ≥ ~0.5 × b** in % terms (WLFI: 4% vol vs 1.5% band ✓)
+
+The existing **grid_score** already uses **AC1** as a mean-reversion bonus; that aligns with pillar 2 but ranks vs a reference ticker, not absolute grid profitability.
+
+### grid_rpnl_score v1 (legacy — over-penalizes range names like JUP)
+
+```
+grid_rpnl_score_v1 =
+    0.30 × (1 − min(1, net_move_pct / 5%))      # full-window net drift
+  + 0.25 × choppiness
+  + 0.20 × min(1, extrema_rate / 0.35)
+  + 0.15 × min(1, range_pct / (3 × band_pct))
+  + 0.10 × max(0, −AC1)
+```
+
+**Problem:** full-window `net_move_pct` and `trend_r2` punish tickers that trended early then ranged (e.g. JUP). Use **v2** for disable/keep decisions.
+
+### grid_rpnl_score v2 (recommended)
+
+Key extra metrics:
+
+| Metric | Formula | Good grid |
+|--------|---------|-----------|
+| **drift_range** | `\|P_T − P_0\| / (max − min)` | Low (0.2–0.5) — net move small vs range |
+| **range_bound** | `choppiness × (1 − min(1, drift_range/0.6))` | High |
+| **last_half** | Same metrics on final 50% of bars | Low `trend_r2`, low `net_move_pct` |
+
+```
+grid_rpnl_score_v2 =
+    0.25 × (1 − min(1, drift_range / 0.6))
+  + 0.25 × choppiness
+  + 0.20 × min(1, extrema_rate / 0.35)
+  + 0.15 × min(1, range_pct / (3 × band_pct))
+  + 0.10 × max(0, −AC1)
+  + 0.05 × (1 − trend_penalty)
+
+trend_penalty = min(1, max(0, (trend_r2_last_half − 0.25) / 0.5))
+```
+
+**Hard filters (v2 disable):**
+
+1. `range_pct > 1.5 × band_pct` (else grids rarely fire)
+2. **Disable** if `drift_range > 0.75` **and** `trend_r2_last_half > 0.5` (hard trend)
+3. **Disable** if `net_move_pct_last_half > 8%` (ongoing directional move)
+
+**Run:**
+
+```bash
+python3 scripts/score_grid_candidates.py
+python3 scripts/score_grid_candidates.py --out GridbotData/grid_rpnl_screen_3d_v2.json
+```
+
+WLFI scores very high: ~1% net drift, choppiness ~0.99, negative AC1, range ~3× its 1.5% band → **215 sim fills** and **~$94.5 RPNL** at 1.5% band (`GridbotData/wlfi_band_analysis.json`, `GridbotData/WLFI_sim.html`).
+
+### grid_score vs grid_rpnl_score
+
+| | **grid_score** (existing) | **grid_rpnl_score_v2** |
+|--|---------------------------|-------------------------|
+| Goal | Find alts that *behave like VIRTUAL* | Find alts that *look good for grid RPNL* |
+| Uses | corr, beta, RV vs ref, AC1 | drift_range, choppiness, last-half trend, range vs band |
+| Script | `scripts/find_virtual_like_tickers.py` | `scripts/score_grid_candidates.py` |
+
+Use **grid_rpnl_score** to find chop candidates; **grid_score** if you want names that co-move with a profitable reference; then **band sim** as the final gate.
+
+### Band choice is not independent of regime
+
+WLFI 3d band sweep (same path, ~$300/rung sizing in analysis):
+
+| Band | Fills | RPNL |
+|------|-------|------|
+| 1.5% | 215 | **94.5** |
+| 2.0% | 134 | 78.6 |
+| 2.5% | 114 | 83.2 |
+| 3.0% | 61 | 54.0 |
+
+On a choppy, low-drift name, **tighter band → more round-trips → higher RPNL**. Score and sweep at the **band you plan to run**, not a fixed 3%.
+
+### Recommended workflow
+
+```
+Binance 5m klines (3d)
+    → compute drift, choppiness, extrema, RV, AC1, range
+    → filter + rank by grid_rpnl_score
+    → top N → band sweep (wlfi_band_analysis-style / WLFI_sim.html)
+    → pick band with best sim RPNL / fill count
+    → sanity-check Vari 24h vol + OI
+    → add to GRID_TRADING_TICKERS in strategy/gridstrat.py
+```
+
+### Caveats
+
+- **Past chop ≠ future chop** — use rolling 3d windows; drop tickers when drift spikes or range collapses.
+- **Sim RPNL > live RPNL** — fees, slippage, mark vs Binance, partial fills. Use sim for *relative* ranking.
+- **Trending winners look bad on drift metrics** — intentional; grids lose on one-way moves.
+- **Correlation cluster** — many alts chop together; the book can still end up net long if everything dumps.
+
+### Example v2 ranking (Jun 2026, 3d Binance 5m)
+
+**Keep (not disabled):** VIRTUAL, WLFI, FET, XPL, **JUP**, ICP
+
+**Disable (v2):** RENDER, ONDO, SEI, NEAR, AVAX, LINK, SUI, TAO, PENGU
+
+JUP moves off the disable list vs v1: `drift_range` 0.62, last-half `trend_r2` 0.06, last-half net move 4.1%.
 
 ---
 
@@ -326,6 +576,36 @@ python3 rebalance_run.py
 **Notional cap trim** runs every cycle when you have open positions (before IM rebalance): if any ticker’s position notional is **over 30× grid rung USD** (default 30× $400 = **$12,000** with 80×50/10), the bot places a **reduce-only market** order for **50%** of that position’s qty. Grid limits are not canceled.
 
 `varibot.py --live` calls the same logic at the **start of each cycle** when positions exist (no latch).
+
+---
+
+## Book direction hedge (BTC / ETH / SOL)
+
+Each Varibot cycle runs **`Varibot/book_hedge.py` at the end of the cycle** (after grid limit adds/cancels and strategy work) so limit maintenance takes priority. Portfolio rebalance trims still run at cycle start when positions exist.
+
+| Concept | Definition |
+|---------|------------|
+| **Book** | All position signed USD notional except **BTC, ETH, SOL** |
+| **Book net** | Long notional − short notional on book tickers |
+| **Hedge net** | Signed notional on BTC + ETH + SOL only |
+
+**Rules (defaults):**
+
+1. If `|book_net| > 3 × portfolio_value` → target hedge = **−book_net** (1×), split **⅓** each on BTC, ETH, SOL (e.g. book +$12k → **$4k short** each).
+2. Rebalance hedge only when `|hedge_target − hedge_net| > $1,000` (avoids tiny churn).
+3. If `|book_net| ≤ 3 × portfolio_value` → **flatten** all BTC/ETH/SOL positions (close hedge entirely).
+
+Hedge market orders use **0.03%** max slippage (`VARIBOT_BOOK_HEDGE_SLIPPAGE`, default `0.0003`). Reduce-only when the leg shrinks an existing hedge position.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `VARIBOT_BOOK_HEDGE_ENABLED` | on | Set `0` to disable |
+| `VARIBOT_BOOK_HEDGE_PORT_MULT` | `3` | Trigger multiple of portfolio value |
+| `VARIBOT_BOOK_HEDGE_ADJUST_USD` | `1000` | Min \|target−hedge\| to trade |
+| `VARIBOT_BOOK_HEDGE_SLIPPAGE` | `0.0003` | 0.03% slippage cap on hedge legs |
+| `VARIBOT_BOOK_HEDGE_MIN_ORDER_USD` | `5` | Skip smaller legs |
+
+Dry-run: same as rebalance — `varibot.py` without `--live`, or `--rebalance-dry-run`.
 
 ---
 
