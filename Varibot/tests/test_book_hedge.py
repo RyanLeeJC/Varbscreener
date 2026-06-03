@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from book_hedge import (
+    book_hedge_slippage_for_ticker,
     compute_book_net,
     compute_hedge_net,
     plan_book_hedge,
@@ -23,6 +24,10 @@ def _pos(ticker: str, side: str, qty: float, mark: float) -> LivePosition:
 
 
 class TestBookHedgePlan(unittest.TestCase):
+    def test_sol_slippage_default(self) -> None:
+        self.assertAlmostEqual(book_hedge_slippage_for_ticker("SOL"), 0.0005)
+        self.assertAlmostEqual(book_hedge_slippage_for_ticker("BTC"), 0.0003)
+
     def test_below_trigger_skips(self) -> None:
         # port 3330, 3x = 9990; book net 5000 long; no hedge legs open
         positions = [

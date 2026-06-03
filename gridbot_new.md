@@ -595,14 +595,15 @@ Each Varibot cycle runs **`Varibot/book_hedge.py` at the end of the cycle** (aft
 2. Rebalance hedge only when `|hedge_target − hedge_net| > $1,000` (avoids tiny churn).
 3. If `|book_net| ≤ 3 × portfolio_value` → **flatten** all BTC/ETH/SOL positions (close hedge entirely).
 
-Hedge market orders use **0.03%** max slippage (`VARIBOT_BOOK_HEDGE_SLIPPAGE`, default `0.0003`). Reduce-only when the leg shrinks an existing hedge position.
+Hedge market orders use **0.03%** max slippage on BTC/ETH (`VARIBOT_BOOK_HEDGE_SLIPPAGE`, default `0.0003`) and **0.05%** on SOL (`VARIBOT_BOOK_HEDGE_SLIPPAGE_SOL`, default `0.0005`). Reduce-only when the leg shrinks an existing hedge position.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `VARIBOT_BOOK_HEDGE_ENABLED` | on | Set `0` to disable |
 | `VARIBOT_BOOK_HEDGE_PORT_MULT` | `3` | Trigger multiple of portfolio value |
 | `VARIBOT_BOOK_HEDGE_ADJUST_USD` | `1000` | Min \|target−hedge\| to trade |
-| `VARIBOT_BOOK_HEDGE_SLIPPAGE` | `0.0003` | 0.03% slippage cap on hedge legs |
+| `VARIBOT_BOOK_HEDGE_SLIPPAGE` | `0.0003` | 0.03% slippage cap on BTC/ETH hedge legs |
+| `VARIBOT_BOOK_HEDGE_SLIPPAGE_SOL` | `0.0005` | 0.05% slippage cap on SOL hedge legs |
 | `VARIBOT_BOOK_HEDGE_MIN_ORDER_USD` | `5` | Skip smaller legs |
 
 Dry-run: same as rebalance — `varibot.py` without `--live`, or `--rebalance-dry-run`.

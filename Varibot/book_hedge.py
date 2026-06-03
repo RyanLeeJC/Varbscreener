@@ -30,12 +30,14 @@ ENV_ENABLED = "VARIBOT_BOOK_HEDGE_ENABLED"
 ENV_PORT_MULT = "VARIBOT_BOOK_HEDGE_PORT_MULT"
 ENV_ADJUST_USD = "VARIBOT_BOOK_HEDGE_ADJUST_USD"
 ENV_SLIPPAGE = "VARIBOT_BOOK_HEDGE_SLIPPAGE"
+ENV_SLIPPAGE_SOL = "VARIBOT_BOOK_HEDGE_SLIPPAGE_SOL"
 ENV_MIN_ORDER_USD = "VARIBOT_BOOK_HEDGE_MIN_ORDER_USD"
 
 DEFAULT_ENABLED: bool = True
 DEFAULT_PORT_MULT: float = 3.0
 DEFAULT_ADJUST_USD: float = 1000.0
-DEFAULT_SLIPPAGE: float = 0.0003  # 0.03%
+DEFAULT_SLIPPAGE: float = 0.0003  # 0.03% (BTC, ETH)
+DEFAULT_SLIPPAGE_SOL: float = 0.0005  # 0.05% — SOL hedge needs wider cap vs rejects
 DEFAULT_MIN_ORDER_USD: float = 5.0
 
 
@@ -54,6 +56,15 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return float(default)
+
+
+def book_hedge_slippage_for_ticker(ticker: str, *, default_slip: Optional[float] = None) -> float:
+    """Per-hedge-leg slippage cap (fraction of notional). SOL defaults to 0.05%."""
+    sym = str(ticker).strip().upper()
+    if sym == "SOL":
+        return _env_float(ENV_SLIPPAGE_SOL, DEFAULT_SLIPPAGE_SOL)
+    base = float(default_slip) if default_slip is not None else _env_float(ENV_SLIPPAGE, DEFAULT_SLIPPAGE)
+    return base
 
 
 def book_hedge_constants() -> Tuple[bool, float, float, float, float]:
@@ -306,15 +317,17 @@ def maybe_book_hedge(
     total_vol = sum(l.order_notional for l in plan.legs)
     log(
         f"book_hedge: {plan.action} — {len(plan.legs)} leg(s) "
-        f"slippage={slip * 100:.4f}% projected_volume≈${total_vol:.2f}"
+        f"slippage BTC/ETH={slip * 100:.4f}% SOL={book_hedge_slippage_for_ticker('SOL', default_slip=slip) * 100:.4f}% "
+        f"projected_volume≈${total_vol:.2f}"
     )
     for leg in plan.legs:
+        leg_slip = book_hedge_slippage_for_ticker(leg.ticker, default_slip=slip)
         log(
             f"book_hedge[{leg.ticker}]: "
             f"cur=${leg.current_signed_notional:+.2f} → "
             f"target=${leg.target_signed_notional:+.2f} "
             f"{leg.order_side} qty={format_qty_for_indicative_api(leg.order_quantity)} "
-            f"notional≈${leg.order_notional:.2f}"
+            f"notional≈${leg.order_notional:.2f} slip={leg_slip * 100:.4f}%"
             + (" reduce-only" if leg.is_reduce_only else "")
         )
 
@@ -330,12 +343,13 @@ def maybe_book_hedge(
     ok, fail = 0, 0
     n = len(plan.legs)
     for idx, leg in enumerate(plan.legs):
+        leg_slip = book_hedge_slippage_for_ticker(leg.ticker, default_slip=slip)
         rc, oid, err = _place_market_leg(
             ep,
             ticker=leg.ticker,
             side=leg.order_side,
             quantity=leg.order_quantity,
-            max_slippage=float(slip),
+            max_slippage=float(leg_slip),
             is_reduce_only=leg.is_reduce_only,
         )
         if rc != 0:
