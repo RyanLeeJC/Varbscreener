@@ -32,7 +32,7 @@ ENV_SLIPPAGE = "VARIBOT_BOOK_HEDGE_SLIPPAGE"
 ENV_SLIPPAGE_SOL = "VARIBOT_BOOK_HEDGE_SLIPPAGE_SOL"
 ENV_MIN_ORDER_USD = "VARIBOT_BOOK_HEDGE_MIN_ORDER_USD"
 
-DEFAULT_ENABLED: bool = True
+DEFAULT_ENABLED: bool = False
 DEFAULT_PORT_MULT: float = 2.0  # enter: open/adjust hedge when |book_net| exceeds this × port
 DEFAULT_EXIT_PORT_MULT: float = 2.5  # exit: close hedge only below this × port (hysteresis)
 DEFAULT_ADJUST_USD: float = 1000.0
@@ -434,4 +434,156 @@ def maybe_book_hedge(
             time.sleep(pace_s)
 
     log(f"book_hedge: complete — ok={ok} failed={fail}")
+    return fail == 0
+
+
+def plan_flatten_hedge_legs(
+    positions: Sequence[LivePosition],
+    *,
+    min_order_usd: float = DEFAULT_MIN_ORDER_USD,
+    mark_by_ticker: Optional[dict[str, float]] = None,
+) -> Tuple[PlannedHedgeLeg, ...]:
+    """Reduce-only market legs to close all material BTC/ETH/SOL hedge positions (target 0)."""
+    notionals = _signed_notional_map(positions)
+    marks: dict[str, float] = {}
+    if mark_by_ticker:
+        for k, v in mark_by_ticker.items():
+            if v is not None and float(v) > 0:
+                marks[str(k).strip().upper()] = float(v)
+    for p in positions:
+        if float(p.mark_price) > 0:
+            marks[p.ticker] = float(p.mark_price)
+
+    legs: List[PlannedHedgeLeg] = []
+    for sym in HEDGE_TICKERS:
+        cur = float(notionals.get(sym, 0.0))
+        if abs(cur) < float(min_order_usd):
+            continue
+        delta = -cur
+        mk = marks.get(sym)
+        if mk is None or mk <= 0:
+            continue
+        qty = abs(delta) / mk
+        if qty <= 0:
+            continue
+        side = "buy" if delta > 0 else "sell"
+        reduce_only = (cur > 0 and delta < 0) or (cur < 0 and delta > 0)
+        legs.append(
+            PlannedHedgeLeg(
+                ticker=sym,
+                order_side=side,
+                order_quantity=float(qty),
+                order_notional=abs(delta),
+                current_signed_notional=cur,
+                target_signed_notional=0.0,
+                is_reduce_only=bool(reduce_only),
+            )
+        )
+    return tuple(legs)
+
+
+def flatten_hedge_legs(
+    *,
+    ep: VariEndpoints,
+    positions_raw: object,
+    live: bool,
+    dry_run: bool,
+    log: Callable[[str], None],
+    mark_fetcher: Optional[Callable[[str], float]] = None,
+) -> bool:
+    """Close BTC/ETH/SOL hedge legs to flat (ignores VARIBOT_BOOK_HEDGE_ENABLED)."""
+    _, _, _, _, slip, min_usd = book_hedge_constants()
+    positions = parse_live_positions_from_raw(positions_raw)
+    if mark_fetcher is not None:
+        enriched: List[LivePosition] = []
+        for p in positions:
+            try:
+                mk = float(mark_fetcher(p.ticker))
+            except Exception as e:
+                log(
+                    f"flatten_hedge: skip {p.ticker} — mark fetch failed "
+                    f"({type(e).__name__}: {e})"
+                )
+                continue
+            if mk <= 0:
+                log(f"flatten_hedge: skip {p.ticker} — invalid mark")
+                continue
+            enriched.append(
+                LivePosition(
+                    ticker=p.ticker,
+                    side=p.side,
+                    quantity=p.quantity,
+                    mark_price=mk,
+                    upnl_usd=p.upnl_usd,
+                )
+            )
+        positions = enriched
+
+    marks_extra: dict[str, float] = {p.ticker: float(p.mark_price) for p in positions}
+    if mark_fetcher is not None:
+        for sym in HEDGE_TICKERS:
+            if sym in marks_extra and marks_extra[sym] > 0:
+                continue
+            try:
+                mk = float(mark_fetcher(sym))
+                if mk > 0:
+                    marks_extra[sym] = mk
+            except Exception:
+                pass
+
+    hedge_net = compute_hedge_net(positions)
+    if not hedge_is_active(hedge_net, min_order_usd=min_usd):
+        log(f"flatten_hedge: no material hedge legs (hedge_net=${hedge_net:+.2f})")
+        return False
+
+    legs = plan_flatten_hedge_legs(
+        positions, min_order_usd=min_usd, mark_by_ticker=marks_extra
+    )
+    if not legs:
+        log("flatten_hedge: hedge active but no closable legs (missing marks?)")
+        return False
+
+    log(
+        f"flatten_hedge: hedge_net=${hedge_net:+.2f} — closing {len(legs)} leg(s) "
+        f"slippage BTC/ETH={slip * 100:.4f}% "
+        f"SOL={book_hedge_slippage_for_ticker('SOL', default_slip=slip) * 100:.4f}%"
+    )
+    for leg in legs:
+        leg_slip = book_hedge_slippage_for_ticker(leg.ticker, default_slip=slip)
+        log(
+            f"flatten_hedge[{leg.ticker}]: "
+            f"cur=${leg.current_signed_notional:+.2f} → flat "
+            f"{leg.order_side} qty={format_qty_for_indicative_api(leg.order_quantity)} "
+            f"notional≈${leg.order_notional:.2f} slip={leg_slip * 100:.4f}%"
+            + (" reduce-only" if leg.is_reduce_only else "")
+        )
+
+    if dry_run or not live:
+        log(f"flatten_hedge: dry-run — would place {len(legs)} market order(s)")
+        return True
+
+    pace_s = rebalance_sleep_between_market_orders_s()
+    ok, fail = 0, 0
+    n = len(legs)
+    for idx, leg in enumerate(legs):
+        leg_slip = book_hedge_slippage_for_ticker(leg.ticker, default_slip=slip)
+        rc, oid, err = _place_market_leg_with_slippage_retry(
+            ep,
+            ticker=leg.ticker,
+            side=leg.order_side,
+            quantity=leg.order_quantity,
+            max_slippage=float(leg_slip),
+            is_reduce_only=leg.is_reduce_only,
+            log=log,
+        )
+        if rc != 0:
+            fail += 1
+            log(f"flatten_hedge[{leg.ticker}]: FAILED ({err or 'unknown'})")
+        else:
+            ok += 1
+            log(f"flatten_hedge[{leg.ticker}]: ok order_id={oid!r}")
+        if pace_s > 0 and idx < n - 1:
+            time.sleep(pace_s)
+
+    log(f"flatten_hedge: complete — ok={ok} failed={fail}")
     return fail == 0

@@ -600,7 +600,7 @@ Hedge market orders use **0.03%** max slippage on BTC/ETH (`VARIBOT_BOOK_HEDGE_S
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `VARIBOT_BOOK_HEDGE_ENABLED` | on | Set `0` to disable |
+| `VARIBOT_BOOK_HEDGE_ENABLED` | off | Set `1` to enable |
 | `VARIBOT_BOOK_HEDGE_PORT_MULT` | `3` | **Enter**: open/adjust when \|book_net\| exceeds this × port |
 | `VARIBOT_BOOK_HEDGE_EXIT_PORT_MULT` | `2.5` | **Exit**: close hedge only below this × port (must be < enter mult) |
 | `VARIBOT_BOOK_HEDGE_ADJUST_USD` | `1000` | Min \|target−hedge\| to trade |
