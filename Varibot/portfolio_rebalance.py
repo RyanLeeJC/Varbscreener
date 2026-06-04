@@ -44,6 +44,8 @@ DEFAULT_NOTIONAL_CAP_TRIM_FRACTION: float = 0.5
 # When IM usage ≥ rebalance trigger: reduce-only trim every open position by this fraction (default 50%).
 ENV_IM_HIGH_USAGE_TRIM_FRACTION = "VARIBOT_IM_HIGH_USAGE_TRIM_FRACTION"
 DEFAULT_IM_HIGH_USAGE_TRIM_FRACTION: float = 0.5
+# Book hedge legs (see book_hedge.py) — excluded from grid-style trims and interval risk.
+HEDGE_TICKERS: Tuple[str, ...] = ("BTC", "ETH", "SOL")
 # Each market leg: 2× indicative quote + 1× POST market (see VariEndpoints.quote_id_for_order_qty).
 MARKET_LEG_HTTP_CALLS: int = 3
 
@@ -278,6 +280,16 @@ def im_high_usage_trim_fraction() -> float:
     return _env_float(ENV_IM_HIGH_USAGE_TRIM_FRACTION, DEFAULT_IM_HIGH_USAGE_TRIM_FRACTION)
 
 
+def is_hedge_ticker(ticker: str) -> bool:
+    """True for BTC/ETH/SOL book-hedge legs (not grid inventory)."""
+    return str(ticker).strip().upper() in HEDGE_TICKERS
+
+
+def _positions_for_grid_trims(positions: Sequence[LivePosition]) -> List[LivePosition]:
+    """Grid book positions only — hedge legs are sized to offset book net, not grid rungs."""
+    return [p for p in positions if not is_hedge_ticker(p.ticker)]
+
+
 def _planned_trim_order(
     pos: LivePosition,
     *,
@@ -336,7 +348,7 @@ def plan_notional_cap_trims(
         return []
 
     out: List[PlannedTrimOrder] = []
-    for pos in positions:
+    for pos in _positions_for_grid_trims(positions):
         rung = grid_rung_usd_for_ticker(pos.ticker)
         if rung <= 0:
             continue
@@ -376,7 +388,7 @@ def plan_position_trims(
 
     threshold = float(mult) * float(rung)
     out: List[PlannedTrimOrder] = []
-    for pos in positions:
+    for pos in _positions_for_grid_trims(positions):
         planned = _planned_trim_order(
             pos, threshold=threshold, frac=frac, rung_usd=float(rung), min_usd=min_usd
         )
@@ -407,7 +419,7 @@ def plan_oversized_profit_flattens(
         return []
 
     out: List[PlannedTrimOrder] = []
-    for pos in positions:
+    for pos in _positions_for_grid_trims(positions):
         if pos.upnl_usd is None or float(pos.upnl_usd) <= float(min_upnl):
             continue
         rung = grid_rung_usd_for_ticker(pos.ticker)
@@ -433,9 +445,10 @@ def plan_im_high_usage_trims(
     min_order_usd: Optional[float] = None,
 ) -> List[PlannedTrimOrder]:
     """
-    Reduce-only trim of ``trim_fraction`` of qty on every open position (default 50%).
+    Reduce-only trim of ``trim_fraction`` of qty on grid book positions (default 50%).
 
     Intended when portfolio IM usage is at or above ``VARIBOT_REBALANCE_IM_TRIGGER`` (default 80%).
+    BTC/ETH/SOL hedge legs are excluded — sized and adjusted only by ``book_hedge.py``.
     """
     frac = im_high_usage_trim_fraction() if trim_fraction is None else float(trim_fraction)
     _, _, _, min_usd = rebalance_constants()
@@ -446,7 +459,7 @@ def plan_im_high_usage_trims(
         return []
 
     out: List[PlannedTrimOrder] = []
-    for pos in positions:
+    for pos in _positions_for_grid_trims(positions):
         rung = grid_rung_usd_for_ticker(pos.ticker)
         planned = _planned_trim_order(
             pos,
@@ -644,7 +657,7 @@ def plan_portfolio_rebalance(
     if float(portfolio_value) <= 0 or float(max_leverage) <= 0:
         return None
 
-    live = [p for p in positions if p.mark_price > 0 and p.quantity > 0]
+    live = [p for p in positions if p.mark_price > 0 and p.quantity > 0 and not is_hedge_ticker(p.ticker)]
     n = len(live)
     if n == 0:
         return None
@@ -879,8 +892,10 @@ def rebalance_portfolio(
        ``VARIBOT_REBALANCE_TRIM_MULTIPLE × grid_rung_usd`` (default off).
     3. **IM high-usage trim** — when IM% ≥ ``VARIBOT_REBALANCE_IM_TRIGGER`` (default 80%),
        reduce-only market trim of ``VARIBOT_IM_HIGH_USAGE_TRIM_FRACTION`` (default 50%) on
-       every open position; skips equal-notional interval risk for that cycle.
-    4. **IM interval risk** — equal-notional rebalance when IM% ≥ trigger (only if step 3 off).
+       each grid-book position (BTC/ETH/SOL hedge legs excluded); skips equal-notional interval
+       risk for that cycle.
+    4. **IM interval risk** — equal-notional rebalance when IM% ≥ trigger (only if step 3 off;
+       hedge legs excluded).
 
     ``varibot_dir`` is kept for API compatibility but no longer used for persistence.
     """
@@ -984,12 +999,13 @@ def rebalance_portfolio(
             log_tag="IM high usage trim",
             summary_line=(
                 f"IM high usage trim: IM%={float(im_usage) * 100:.2f}% >= {trig * 100:g}% — "
-                f"trim {im_frac * 100:g}% of each position ({len(im_trims)} ticker(s)); "
+                f"trim {im_frac * 100:g}% of book positions, hedges excluded "
+                f"({len(im_trims)} ticker(s)); "
                 f"projected_volume=${sum(t.order_notional for t in im_trims):.2f}"
                 if im_trims
                 else (
                     f"IM high usage trim: IM%={float(im_usage) * 100:.2f}% >= {trig * 100:g}% "
-                    f"but no trim orders (no positions or below min order USD)"
+                    f"but no book trim orders (no grid positions or below min order USD)"
                 )
             ),
         )

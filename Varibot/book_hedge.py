@@ -17,14 +17,12 @@ from variationalbot.domain import PortfolioSnapshot
 from variationalbot.vari.endpoints import VariEndpoints, format_qty_for_indicative_api
 
 from portfolio_rebalance import (
+    HEDGE_TICKERS,
     LivePosition,
     _place_market_leg,
     parse_live_positions_from_raw,
     rebalance_sleep_between_market_orders_s,
 )
-
-# Tickers used for hedging only — excluded from book net.
-HEDGE_TICKERS: Tuple[str, ...] = ("BTC", "ETH", "SOL")
 
 ENV_ENABLED = "VARIBOT_BOOK_HEDGE_ENABLED"
 ENV_PORT_MULT = "VARIBOT_BOOK_HEDGE_PORT_MULT"
@@ -35,7 +33,7 @@ ENV_SLIPPAGE_SOL = "VARIBOT_BOOK_HEDGE_SLIPPAGE_SOL"
 ENV_MIN_ORDER_USD = "VARIBOT_BOOK_HEDGE_MIN_ORDER_USD"
 
 DEFAULT_ENABLED: bool = True
-DEFAULT_PORT_MULT: float = 3.0  # enter: open/adjust hedge when |book_net| exceeds this × port
+DEFAULT_PORT_MULT: float = 2.0  # enter: open/adjust hedge when |book_net| exceeds this × port
 DEFAULT_EXIT_PORT_MULT: float = 2.5  # exit: close hedge only below this × port (hysteresis)
 DEFAULT_ADJUST_USD: float = 1000.0
 DEFAULT_SLIPPAGE: float = 0.0003  # 0.03% (BTC, ETH)
@@ -144,10 +142,10 @@ def plan_book_hedge(
     Plan BTC/ETH/SOL hedge legs.
 
     - Book net = sum signed notional on all tickers except BTC, ETH, SOL.
-    - **Enter** when |book_net| > port_mult × portfolio_value (default 3×): target hedge = −book_net,
+    - **Enter** when |book_net| > port_mult × portfolio_value (default 2×): target hedge = −book_net,
       split equally across BTC, ETH, SOL (1× book net total).
     - **Exit** (close hedge) only when |book_net| ≤ exit_port_mult × port (default 2.5×) while
-      hedge is active — hysteresis vs enter so book flirting with 3× does not flip on/off.
+      hedge is active — hysteresis vs enter so book flirting with the enter threshold does not flip on/off.
     - Adjust only if |hedge_target − hedge_net| > adjust_usd.
     """
     pv = float(portfolio_value_usd)

@@ -89,8 +89,8 @@ class TestPlanPortfolioRebalance(unittest.TestCase):
 
     def test_even_n_no_drop(self) -> None:
         positions = [
-            _pos("ETH", "long", 1.0, 100.0),
-            _pos("BTC", "short", 1.0, 100.0),
+            _pos("AVAX", "long", 1.0, 100.0),
+            _pos("LINK", "short", 1.0, 100.0),
         ]
         plan = plan_portfolio_rebalance(
             portfolio_value=1000.0,
@@ -108,8 +108,8 @@ class TestPlanPortfolioRebalance(unittest.TestCase):
         target = round_to_nearest(1000.0 * 50.0 * IM_TARGET / 2, 10.0)
         qty = target / 100.0
         positions = [
-            _pos("ETH", "long", qty, 100.0),
-            _pos("BTC", "short", qty, 100.0),
+            _pos("AVAX", "long", qty, 100.0),
+            _pos("LINK", "short", qty, 100.0),
         ]
         plan = plan_portfolio_rebalance(
             portfolio_value=1000.0,
@@ -209,13 +209,13 @@ class TestPlanPortfolioRebalance(unittest.TestCase):
         )
         self.assertIsNotNone(plan)
         assert plan is not None
-        self.assertEqual(plan.n_eff, 14)
-        self.assertEqual(plan.target_notional, 710.0)
-        self.assertIsNotNone(plan.dropped_ticker)
+        self.assertEqual(plan.n_eff, 12)
+        self.assertEqual(plan.target_notional, 830.0)
+        self.assertIsNone(plan.dropped_ticker)
         longs = [o for o in plan.orders if o.assigned_side == "long"]
         shorts = [o for o in plan.orders if o.assigned_side == "short"]
-        self.assertEqual(len(longs), 7)
-        self.assertEqual(len(shorts), 7)
+        self.assertEqual(len(longs), 6)
+        self.assertEqual(len(shorts), 6)
         self.assertGreater(plan.total_volume_usd, 0.0)
 
     def test_delta_qty_signs(self) -> None:
@@ -224,26 +224,26 @@ class TestPlanPortfolioRebalance(unittest.TestCase):
             max_leverage=50.0,
             current_im_usage=0.40,
             positions=[
-                _pos("ETH", "long", 2.0, 100.0),
-                _pos("BTC", "short", 2.0, 100.0),
+                _pos("AVAX", "long", 2.0, 100.0),
+                _pos("LINK", "short", 2.0, 100.0),
             ],
             margin_trigger=0.35,
             min_order_usd=0.01,
         )
         self.assertIsNotNone(plan)
         assert plan is not None
-        eth = next(o for o in plan.orders if o.ticker == "ETH")
-        if eth.delta_qty > 0:
-            self.assertEqual(eth.order_side, "buy")
+        avax = next(o for o in plan.orders if o.ticker == "AVAX")
+        if avax.delta_qty > 0:
+            self.assertEqual(avax.order_side, "buy")
         else:
-            self.assertEqual(eth.order_side, "sell")
+            self.assertEqual(avax.order_side, "sell")
 
 
 class TestPlanNotionalCapTrims(unittest.TestCase):
     def test_trims_when_over_20x_rung(self) -> None:
-        # 20 × $400 rung = $8000; $10000 long @ $2000 → sell 50% = 2.5 ETH
+        # 20 × $400 rung = $8000; $10000 long @ $2000 → sell 50% = 2.5 AVAX
         trims = plan_notional_cap_trims(
-            [_pos("ETH", "long", 5.0, 2000.0)],
+            [_pos("AVAX", "long", 5.0, 2000.0)],
             cap_multiple=20.0,
             trim_fraction=0.5,
             min_order_usd=5.0,
@@ -259,7 +259,7 @@ class TestPlanNotionalCapTrims(unittest.TestCase):
     def test_at_threshold_no_trim(self) -> None:
         # exactly 20 × $400 = $8000 — no trim
         trims = plan_notional_cap_trims(
-            [_pos("ETH", "long", 4.0, 2000.0)],
+            [_pos("AVAX", "long", 4.0, 2000.0)],
             cap_multiple=20.0,
             trim_fraction=0.5,
         )
@@ -279,7 +279,7 @@ class TestPlanNotionalCapTrims(unittest.TestCase):
 
     def test_disabled_when_multiple_zero(self) -> None:
         trims = plan_notional_cap_trims(
-            [_pos("ETH", "long", 10.0, 1000.0)],
+            [_pos("AVAX", "long", 10.0, 1000.0)],
             cap_multiple=0.0,
             trim_fraction=0.5,
         )
@@ -294,7 +294,7 @@ class TestPlanPositionTrims(unittest.TestCase):
     def test_trims_when_over_threshold(self) -> None:
         # 15 × $200 = $3000; $3500 long → sell 50% of qty
         trims = plan_position_trims(
-            [_pos("ETH", "long", 1.75, 2000.0)],
+            [_pos("AVAX", "long", 1.75, 2000.0)],
             trim_multiple=15.0,
             trim_fraction=0.5,
             rung_usd=200.0,
@@ -302,14 +302,14 @@ class TestPlanPositionTrims(unittest.TestCase):
         )
         self.assertEqual(len(trims), 1)
         t = trims[0]
-        self.assertEqual(t.ticker, "ETH")
+        self.assertEqual(t.ticker, "AVAX")
         self.assertEqual(t.order_side, "sell")
         self.assertAlmostEqual(t.order_quantity, 0.875)
         self.assertAlmostEqual(t.order_notional, 1750.0)
 
     def test_short_trims_with_buy(self) -> None:
         trims = plan_position_trims(
-            [_pos("BTC", "short", 0.1, 60000.0)],
+            [_pos("LINK", "short", 0.1, 60000.0)],
             trim_multiple=15.0,
             trim_fraction=0.5,
             rung_usd=200.0,
@@ -321,7 +321,7 @@ class TestPlanPositionTrims(unittest.TestCase):
 
     def test_at_threshold_no_trim(self) -> None:
         trims = plan_position_trims(
-            [_pos("ETH", "long", 1.5, 2000.0)],
+            [_pos("AVAX", "long", 1.5, 2000.0)],
             trim_multiple=15.0,
             trim_fraction=0.5,
             rung_usd=200.0,
@@ -331,7 +331,7 @@ class TestPlanPositionTrims(unittest.TestCase):
 
     def test_disabled_when_multiple_zero(self) -> None:
         trims = plan_position_trims(
-            [_pos("ETH", "long", 10.0, 1000.0)],
+            [_pos("AVAX", "long", 10.0, 1000.0)],
             trim_multiple=0.0,
             trim_fraction=0.5,
             rung_usd=200.0,
@@ -355,7 +355,7 @@ class TestPlanImHighUsageTrims(unittest.TestCase):
     def test_trims_every_position_by_fraction(self) -> None:
         trims = plan_im_high_usage_trims(
             [
-                _pos("ETH", "long", 2.0, 3000.0),
+                _pos("AVAX", "long", 2.0, 3000.0),
                 _pos("TON", "short", 1000.0, 2.0),
             ],
             trim_fraction=0.5,
@@ -363,15 +363,15 @@ class TestPlanImHighUsageTrims(unittest.TestCase):
         )
         self.assertEqual(len(trims), 2)
         by_ticker = {t.ticker: t for t in trims}
-        self.assertAlmostEqual(by_ticker["ETH"].order_quantity, 1.0)
-        self.assertEqual(by_ticker["ETH"].order_side, "sell")
+        self.assertAlmostEqual(by_ticker["AVAX"].order_quantity, 1.0)
+        self.assertEqual(by_ticker["AVAX"].order_side, "sell")
         self.assertAlmostEqual(by_ticker["TON"].order_quantity, 500.0)
         self.assertEqual(by_ticker["TON"].order_side, "buy")
-        self.assertAlmostEqual(by_ticker["ETH"].trim_fraction, 0.5)
+        self.assertAlmostEqual(by_ticker["AVAX"].trim_fraction, 0.5)
 
     def test_zero_fraction_disables(self) -> None:
         trims = plan_im_high_usage_trims(
-            [_pos("ETH", "long", 1.0, 2000.0)],
+            [_pos("AVAX", "long", 1.0, 2000.0)],
             trim_fraction=0.0,
         )
         self.assertEqual(trims, [])
@@ -422,11 +422,52 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
     @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
     def test_skips_when_below_rung_multiple(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
-            [_pos("ETH", "long", 0.5, 2000.0, upnl_usd=10.0)],
+            [_pos("AVAX", "long", 0.5, 2000.0, upnl_usd=10.0)],
             flatten_multiple=10.0,
             min_order_usd=5.0,
         )
         self.assertEqual(trims, [])
+
+
+class TestHedgeTickerExclusion(unittest.TestCase):
+    def test_notional_cap_skips_btc_eth_sol(self) -> None:
+        positions = [
+            _pos("BTC", "short", 0.5, 67000.0),
+            _pos("ETH", "short", 2.0, 3000.0),
+            _pos("SOL", "short", 100.0, 140.0),
+        ]
+        trims = plan_notional_cap_trims(
+            positions,
+            cap_multiple=10.0,
+            trim_fraction=0.5,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(trims, [])
+
+    def test_im_high_usage_skips_hedge_legs(self) -> None:
+        trims = plan_im_high_usage_trims(
+            [
+                _pos("BTC", "short", 0.2, 67000.0),
+                _pos("AVAX", "long", 1.0, 2000.0),
+            ],
+            trim_fraction=0.5,
+            min_order_usd=5.0,
+        )
+        self.assertEqual(len(trims), 1)
+        self.assertEqual(trims[0].ticker, "AVAX")
+
+    def test_interval_risk_ignores_hedge_only_book(self) -> None:
+        plan = plan_portfolio_rebalance(
+            portfolio_value=1000.0,
+            max_leverage=50.0,
+            current_im_usage=0.40,
+            positions=[
+                _pos("BTC", "short", 0.1, 67000.0),
+                _pos("ETH", "short", 1.0, 3000.0),
+            ],
+            margin_trigger=0.35,
+        )
+        self.assertIsNone(plan)
 
 
 if __name__ == "__main__":
