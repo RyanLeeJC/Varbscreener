@@ -19,7 +19,7 @@ from variationalbot.vari.endpoints import VariEndpoints, format_qty_for_indicati
 from portfolio_rebalance import (
     HEDGE_TICKERS,
     LivePosition,
-    _place_market_leg,
+    _place_market_leg_with_slippage_retry,
     parse_live_positions_from_raw,
     rebalance_sleep_between_market_orders_s,
 )
@@ -407,13 +407,14 @@ def maybe_book_hedge(
     n = len(plan.legs)
     for idx, leg in enumerate(plan.legs):
         leg_slip = book_hedge_slippage_for_ticker(leg.ticker, default_slip=slip)
-        rc, oid, err = _place_market_leg(
+        rc, oid, err = _place_market_leg_with_slippage_retry(
             ep,
             ticker=leg.ticker,
             side=leg.order_side,
             quantity=leg.order_quantity,
             max_slippage=float(leg_slip),
             is_reduce_only=leg.is_reduce_only,
+            log=log,
         )
         if rc != 0:
             fail += 1

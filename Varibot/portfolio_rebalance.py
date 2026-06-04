@@ -142,6 +142,29 @@ def _max_slippage_cap_for_asset(asset: str, *, default_cap: float) -> float:
     return v if v > 0 else float(default_cap)
 
 
+def _global_max_slippage_default() -> float:
+    raw = (os.environ.get("MAX_SLIPPAGE") or "").strip()
+    if not raw:
+        return float(DEFAULT_MAX_SLIPPAGE)
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return float(DEFAULT_MAX_SLIPPAGE)
+    return v if v > 0 else float(DEFAULT_MAX_SLIPPAGE)
+
+
+def _market_leg_slippage_retry_cap(sym: str, *, leg_max_slippage: float) -> float:
+    """
+    Upper bound for slippage retries on a leg.
+
+    Book hedge uses a tight first-attempt slip (e.g. 0.05% SOL); retries may step up to
+    ``MAX_SLIPPAGE`` / ``MAX_SLIPPAGE_<ASSET>`` when that global cap is higher.
+    """
+    per = _max_slippage_cap_for_asset(sym, default_cap=float(leg_max_slippage))
+    global_cap = _max_slippage_cap_for_asset(sym, default_cap=_global_max_slippage_default())
+    return max(float(per), float(global_cap))
+
+
 def flatten_slippage_extra() -> float:
     """Extra max-slippage fraction added to reduce-only flatten/trim market orders (default +0.10%)."""
     return _env_float(ENV_FLATTEN_SLIPPAGE_EXTRA, DEFAULT_FLATTEN_SLIPPAGE_EXTRA)
@@ -734,6 +757,30 @@ def plan_portfolio_rebalance(
     )
 
 
+# Market-leg retry (book_hedge, trims): same increment/attempts as varibot / multimarketorder.
+MARKET_LEG_SLIPPAGE_RETRY_INCREMENT: float = 0.0005
+MARKET_LEG_MAX_ATTEMPTS: int = 6
+DEFAULT_MAX_SLIPPAGE: float = 0.002  # matches env.example MAX_SLIPPAGE when unset
+
+
+def _looks_like_slippage_reject(msg: str) -> bool:
+    m = (msg or "").lower()
+    return ("max slippage" in m and ("exceed" in m or "exceeded" in m)) or (
+        "slippage" in m and "exceed" in m
+    )
+
+
+def _slippage_schedule(*, base: float, cap: float, inc: float, attempts: int) -> List[float]:
+    """Increasing slippage steps (deduped), capped at *cap*."""
+    out: List[float] = []
+    for i in range(int(attempts)):
+        s = float(base) + float(i) * float(inc)
+        s = min(float(s), float(cap))
+        if not out or abs(out[-1] - s) > 1e-12:
+            out.append(float(s))
+    return out
+
+
 def _order_response_rejected(resp: Any) -> bool:
     if not isinstance(resp, dict):
         return False
@@ -787,6 +834,61 @@ def _place_market_leg(
         preview = str(resp)[:400] if resp is not None else ""
         return 1, None, f"venue rejected: {preview}"
     return 0, _extract_order_id(resp), None
+
+
+def _place_market_leg_with_slippage_retry(
+    ep: VariEndpoints,
+    *,
+    ticker: str,
+    side: str,
+    quantity: float,
+    max_slippage: float,
+    is_reduce_only: bool = False,
+    max_attempts: int = MARKET_LEG_MAX_ATTEMPTS,
+    slippage_retry_increment: float = MARKET_LEG_SLIPPAGE_RETRY_INCREMENT,
+    log: Optional[Callable[[str], None]] = None,
+) -> Tuple[int, Optional[str], Optional[str]]:
+    """
+    Place a market leg, bumping max_slippage on venue slippage rejects (HTTP 200 + status=Rejected).
+    """
+    sym = str(ticker).strip().upper()
+    cap_slip = _market_leg_slippage_retry_cap(sym, leg_max_slippage=float(max_slippage))
+    base_slip = min(float(max_slippage), float(cap_slip))
+    slips = _slippage_schedule(
+        base=float(base_slip),
+        cap=float(cap_slip),
+        inc=float(slippage_retry_increment),
+        attempts=int(max_attempts),
+    )
+    last_err: Optional[str] = None
+    n = len(slips)
+    for attempt, slip in enumerate(slips, start=1):
+        rc, oid, err = _place_market_leg(
+            ep,
+            ticker=ticker,
+            side=side,
+            quantity=quantity,
+            max_slippage=float(slip),
+            is_reduce_only=is_reduce_only,
+        )
+        if rc == 0:
+            if log is not None and attempt > 1:
+                log(
+                    f"market[{sym}]: ok on attempt {attempt}/{n} "
+                    f"max_slippage={slip * 100:.4f}% order_id={oid!r}"
+                )
+            return rc, oid, err
+        last_err = err
+        if not _looks_like_slippage_reject(str(err or "")):
+            return rc, oid, err
+        if attempt < n:
+            if log is not None:
+                log(
+                    f"market[{sym}]: slippage reject attempt {attempt}/{n} "
+                    f"(slip={slip * 100:.4f}%); retry with higher max_slippage..."
+                )
+            time.sleep(0.25)
+    return 1, None, last_err
 
 
 def _execute_trim_orders(

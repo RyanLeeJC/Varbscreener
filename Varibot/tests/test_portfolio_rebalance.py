@@ -9,7 +9,11 @@ from unittest.mock import patch
 from portfolio_rebalance import (
     IM_TARGET,
     LivePosition,
+    _looks_like_slippage_reject,
+    _market_leg_slippage_retry_cap,
+    _place_market_leg_with_slippage_retry,
     _reduce_only_market_slippage,
+    _slippage_schedule,
     grid_rung_usd_notional,
     plan_im_high_usage_trims,
     plan_notional_cap_trims,
@@ -468,6 +472,46 @@ class TestHedgeTickerExclusion(unittest.TestCase):
             margin_trigger=0.35,
         )
         self.assertIsNone(plan)
+
+
+class TestMarketLegSlippageRetry(unittest.TestCase):
+    def test_looks_like_slippage_reject(self) -> None:
+        self.assertTrue(
+            _looks_like_slippage_reject("Reject reason: Max slippage exceeded. Raise your max slippage")
+        )
+        self.assertFalse(_looks_like_slippage_reject("insufficient margin"))
+
+    def test_sol_retry_cap_uses_global_max_slippage(self) -> None:
+        with patch.dict(os.environ, {"MAX_SLIPPAGE": "0.002"}, clear=False):
+            cap = _market_leg_slippage_retry_cap("SOL", leg_max_slippage=0.0005)
+        self.assertAlmostEqual(cap, 0.002)
+
+    def test_slippage_schedule_steps_up_to_cap(self) -> None:
+        steps = _slippage_schedule(base=0.0005, cap=0.002, inc=0.0005, attempts=6)
+        self.assertEqual(steps, [0.0005, 0.001, 0.0015, 0.002])
+
+    def test_retry_on_venue_slippage_reject(self) -> None:
+        calls: list[float] = []
+
+        def fake_leg(*_a, max_slippage: float, **_k):
+            calls.append(float(max_slippage))
+            if len(calls) < 2:
+                return 1, None, "venue rejected: Max slippage exceeded"
+            return 0, "oid-1", None
+
+        with patch("portfolio_rebalance._place_market_leg", side_effect=fake_leg):
+            with patch.dict(os.environ, {"MAX_SLIPPAGE": "0.002"}, clear=False):
+                rc, oid, err = _place_market_leg_with_slippage_retry(
+                    None,  # type: ignore[arg-type]
+                    ticker="SOL",
+                    side="sell",
+                    quantity=41.25,
+                    max_slippage=0.0005,
+                )
+        self.assertEqual(rc, 0)
+        self.assertEqual(oid, "oid-1")
+        self.assertIsNone(err)
+        self.assertEqual(calls, [0.0005, 0.001])
 
 
 if __name__ == "__main__":
