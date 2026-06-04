@@ -1011,6 +1011,9 @@ def run_grid_limits_bootstrap(
     )
 
     for asset, ameta in asset_metas:
+        if ameta.get("grid_paused"):
+            log(f"gridlimits: skip {asset} (ticker paused)")
+            continue
         mark = ameta.get("grid_mark")
         try:
             mark_f = float(mark) if mark is not None else None

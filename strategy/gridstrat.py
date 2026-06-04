@@ -89,7 +89,7 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "halt"
 # (Same idea as ``DEFAULT_GRID_BAND_PCT`` — leave bounds NaN to use ±band around mark.)
 # -----------------------------------------------------------------------------
 DEFAULT_GRID_ASSET: str = "BTC"
-DEFAULT_GRID_INVESTMENT_USD: float = 50.0
+DEFAULT_GRID_INVESTMENT_USD: float = 25.0
 DEFAULT_GRID_LEVERAGE: float = 33.0
 # Omni POST /api/settlement_pools/set_leverage rejects leverage > this (422).
 GRID_API_MAX_LEVERAGE: float = 50.0
@@ -985,6 +985,7 @@ def pick_tickers(
     venue_pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
     venue_marks_by_asset: Optional[Dict[str, float]] = None,
     account_flat_by_asset: Optional[Dict[str, bool]] = None,
+    paused_assets: Optional[Set[str]] = None,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
     _ = top_n
     _ = marketstate_json
@@ -1000,7 +1001,26 @@ def pick_tickers(
     all_events: List[Dict[str, Any]] = []
     errors: List[str] = []
 
+    paused_set: Set[str] = set()
+    if paused_assets:
+        paused_set = {str(a).strip().upper() for a in paused_assets if str(a).strip()}
+
     for asset, band in tickers.items():
+        if asset in paused_set:
+            asset_state = assets_map.get(asset)
+            if not isinstance(asset_state, dict):
+                asset_state = {}
+            grid_by_asset[asset] = {
+                "strategy": STRATEGY_NAME,
+                "grid_mode": True,
+                "grid_paused": True,
+                "grid_asset": asset,
+                "grid_market_events": [],
+                "grid_paired_limit_mode": True,
+                "grid_order_execution": "limit",
+            }
+            assets_map[asset] = asset_state
+            continue
         asset_state = assets_map.get(asset)
         if not isinstance(asset_state, dict):
             asset_state = {}
@@ -1053,6 +1073,8 @@ def pick_tickers(
         "long_count": 0,
         "short_count": 0,
     }
+    if paused_set:
+        combined["grid_paused_assets"] = sorted(paused_set)
     if errors:
         combined["error"] = "; ".join(errors)
     for k, v in primary_meta.items():
@@ -1315,6 +1337,7 @@ def run_strategy(
     venue_pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
     venue_marks_by_asset: Optional[Dict[str, float]] = None,
     account_flat_by_asset: Optional[Dict[str, bool]] = None,
+    paused_assets: Optional[Set[str]] = None,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
     mod = load_strategy_module(strategy_key)
     if not hasattr(mod, "pick_tickers"):
@@ -1337,6 +1360,8 @@ def run_strategy(
         pick_kw["venue_marks_by_asset"] = venue_marks_by_asset
     if account_flat_by_asset is not None:
         pick_kw["account_flat_by_asset"] = account_flat_by_asset
+    if paused_assets is not None:
+        pick_kw["paused_assets"] = paused_assets
     longs, shorts, meta = mod.pick_tickers(**pick_kw)
     if not isinstance(meta, dict):
         meta = {"strategy": str(getattr(mod, "STRATEGY_NAME", mod.__name__))}

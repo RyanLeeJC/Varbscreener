@@ -1228,6 +1228,7 @@ def run_strategy_pick_tickers(
     venue_pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
     venue_marks_by_asset: Optional[Dict[str, float]] = None,
     account_flat_by_asset: Optional[Dict[str, bool]] = None,
+    paused_assets: Optional[Set[str]] = None,
 ) -> Tuple[List[str], List[str], Dict[str, Any]]:
     ms_path = _resolve_marketstate_json_path(args=args)
     _ensure_strategy_marketstate_json(ms_path)
@@ -1248,7 +1249,65 @@ def run_strategy_pick_tickers(
         venue_pending_by_asset=venue_pending_by_asset,
         venue_marks_by_asset=venue_marks_by_asset,
         account_flat_by_asset=account_flat_by_asset,
+        paused_assets=paused_assets,
     )
+
+
+def _maybe_run_ticker_pain_pause(
+    *,
+    ep: VariEndpoints,
+    positions_raw: Any,
+    args: argparse.Namespace,
+    strat_key: str,
+) -> Tuple[Set[str], Any]:
+    """Cancel limits, flatten, and pause tickers that breach uPnL+rPnL vs position value."""
+    if not _is_grid_like_strategy(strat_key):
+        return set(), positions_raw
+    try:
+        from ticker_pause import load_pause_state, default_state_path, run_ticker_pain_cycle, ticker_pause_enabled
+    except ImportError as e:
+        _log(f"ticker_pause: unavailable ({type(e).__name__}: {e})")
+        return set(), positions_raw
+    if not ticker_pause_enabled():
+        from ticker_pause import paused_ticker_set, apply_pause_clear, save_pause_state
+
+        path = default_state_path(_VARIBOT_DIR)
+        st = load_pause_state(path)
+        cleared = apply_pause_clear(st)
+        if cleared:
+            save_pause_state(path, st)
+            _log(f"ticker_pause: cleared pause for {', '.join(sorted(cleared))}")
+        return paused_ticker_set(st), positions_raw
+
+    grid_syms = {str(s).strip().upper() for s in grid_trading_ticker_band_pcts().keys()}
+    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
+    max_slip = float(_resolve_max_slippage())
+
+    def _close(sym: str, qty_abs: float, close_side: str) -> None:
+        _close_reduce_only_with_slippage_steps(
+            ep=ep,
+            sym=sym,
+            qty_abs=float(qty_abs),
+            close_side=str(close_side),
+            max_slip=max_slip,
+        )
+
+    paused = run_ticker_pain_cycle(
+        ep,
+        positions_raw,
+        grid_tickers=grid_syms,
+        varibot_dir=_VARIBOT_DIR,
+        live=bool(args.live),
+        dry_run=rebalance_dry,
+        log=_log,
+        close_position=_close,
+    )
+    if bool(args.live):
+        try:
+            positions_raw = ep.get_positions()
+        except Exception as e:
+            _log(f"ticker_pause: refresh positions failed ({type(e).__name__}: {e})")
+    return paused, positions_raw
 
 
 def _fetch_cycle_pending_by_asset(
@@ -2552,6 +2611,15 @@ def one_cycle(
     raw_pos = ep.get_positions()
     _log(_fmt_portfolio_snapshot_line(out))
 
+    paused_tickers, raw_pos = _maybe_run_ticker_pain_pause(
+        ep=ep,
+        positions_raw=raw_pos,
+        args=args,
+        strat_key=strat_key,
+    )
+    if paused_tickers:
+        _log(f"ticker_pause: active paused tickers: {', '.join(sorted(paused_tickers))}")
+
     cycle_bulk_marks: Optional[Dict[str, float]] = None
     if bool(args.live) and _use_bulk_supported_assets_marks():
         try:
@@ -2648,6 +2716,7 @@ def one_cycle(
             venue_pending_by_asset=pending_by or None,
             account_flat_by_asset=flat_by or None,
             account_flat=True,
+            paused_assets=paused_tickers or None,
         )
         _log("step: strategy feed ready")
         _log(f"step: strategy finished (strategy={meta.get('strategy')}, longs={len(longs)}, shorts={len(shorts)})")
@@ -2776,6 +2845,7 @@ def one_cycle(
                 venue_pending_by_asset=pending_by,
                 account_flat_by_asset=flat_by,
                 account_flat=False,
+                paused_assets=paused_tickers or None,
             )
             if meta_g.get("grid_mode"):
                 n_ev = len(meta_g.get("grid_market_events") or [])
