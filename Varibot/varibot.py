@@ -141,6 +141,7 @@ from variationalbot.config import load_config  # noqa: E402
 from variationalbot.domain import parse_portfolio_snapshot  # noqa: E402
 from variationalbot.vari import VariAuth, VariClient, VariEndpoints  # noqa: E402
 from variationalbot.vari.endpoints import Instrument, format_qty_for_indicative_api  # noqa: E402
+from variationalbot.util.telegram_notify import maybe_notify_vari_portfolio_auth_failure  # noqa: E402
 
 from multimarketorder import (  # noqa: E402
     DEFAULT_IM_TARGET_PCT,
@@ -3206,6 +3207,7 @@ def _child_main() -> int:
             ti_just_closed = one_cycle(ep=ep, cfg=cfg, args=args, cycle_index=cycle_n)
         except Exception as e:
             _log(f"cycle error: {type(e).__name__}: {e}")
+            maybe_notify_vari_portfolio_auth_failure(e, cycle_index=cycle_n, log=_log)
             if args.once:
                 return 1
             ti_just_closed = False
