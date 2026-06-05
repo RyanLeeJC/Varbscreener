@@ -52,8 +52,7 @@ def _deployment_label() -> str:
     return "Gridbot"
 
 
-def _wallet_label() -> str:
-    wallet = (os.getenv("VR_WALLET_ADDRESS") or "").strip()
+def _mask_wallet(wallet: str) -> str:
     if not wallet:
         return "—"
     if len(wallet) <= 12:
@@ -61,14 +60,19 @@ def _wallet_label() -> str:
     return f"{wallet[:6]}…{wallet[-4:]}"
 
 
+def _wallet_label(*, wallet_address: Optional[str] = None) -> str:
+    wallet = (wallet_address or os.getenv("VR_WALLET_ADDRESS") or "").strip()
+    return _mask_wallet(wallet)
+
+
 def _format_sgt_time(dt: datetime) -> str:
     return f"{dt.strftime('%H:%M:%S')} SGT {dt.day} {dt.strftime('%b %Y')}"
 
 
-def _format_auth_alert(*, cycle_index: Optional[int] = None) -> str:
+def _format_auth_alert(*, cycle_index: Optional[int] = None, wallet_address: Optional[str] = None) -> str:
     now = datetime.now(_SGT)
     lines = [
-        f"Auth failure on Vari>{_deployment_label()} ({_wallet_label()})",
+        f"Auth failure on Vari>{_deployment_label()} ({_wallet_label(wallet_address=wallet_address)})",
     ]
     if cycle_index is not None:
         lines.append(f"Cycle: {cycle_index}")
@@ -91,13 +95,14 @@ def _build_webhook_payload(
     text: str,
     error: str,
     cycle_index: Optional[int],
+    wallet_address: Optional[str],
 ) -> Dict[str, Any]:
     now = datetime.now(_SGT)
     payload: Dict[str, Any] = {
         "text": text,
         "error": error,
         "deployment": _deployment_label(),
-        "wallet": _wallet_label(),
+        "wallet": _wallet_label(wallet_address=wallet_address),
         "time": _format_sgt_time(now),
         "event": "vari_portfolio_auth_failure",
     }
@@ -107,14 +112,25 @@ def _build_webhook_payload(
     return payload
 
 
-def _send_auth_alert(*, text: str, error: str, cycle_index: Optional[int]) -> None:
+def _send_auth_alert(
+    *,
+    text: str,
+    error: str,
+    cycle_index: Optional[int],
+    wallet_address: Optional[str],
+) -> None:
     webhook = (os.getenv("TELEGRAM_WEBHOOK_URL") or "").strip()
     timeout_s = float((os.getenv("TELEGRAM_NOTIFY_TIMEOUT_S") or "15").strip() or "15")
 
     if webhook:
         _post_json(
             url=webhook,
-            payload=_build_webhook_payload(text=text, error=error, cycle_index=cycle_index),
+            payload=_build_webhook_payload(
+                text=text,
+                error=error,
+                cycle_index=cycle_index,
+                wallet_address=wallet_address,
+            ),
             timeout_s=timeout_s,
         )
         return
@@ -140,6 +156,7 @@ def maybe_notify_vari_portfolio_auth_failure(
     exc: BaseException,
     *,
     cycle_index: Optional[int] = None,
+    wallet_address: Optional[str] = None,
     log: Optional[Any] = None,
 ) -> bool:
     """
@@ -167,9 +184,14 @@ def maybe_notify_vari_portfolio_auth_failure(
         _LAST_SENT_MONO = now
 
     error = str(exc)
-    text = _format_auth_alert(cycle_index=cycle_index)
+    text = _format_auth_alert(cycle_index=cycle_index, wallet_address=wallet_address)
     try:
-        _send_auth_alert(text=text, error=error, cycle_index=cycle_index)
+        _send_auth_alert(
+            text=text,
+            error=error,
+            cycle_index=cycle_index,
+            wallet_address=wallet_address,
+        )
     except Exception as send_err:
         if log is not None:
             log(f"telegram: auth alert failed ({type(send_err).__name__}: {send_err})")

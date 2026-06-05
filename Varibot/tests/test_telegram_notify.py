@@ -28,6 +28,17 @@ def test_maybe_notify_skips_without_config(monkeypatch: pytest.MonkeyPatch) -> N
     assert tn.maybe_notify_vari_portfolio_auth_failure(exc) is False
 
 
+def test_mask_wallet() -> None:
+    assert tn._mask_wallet("0xbc31c7582489484e81ba39a7ce020a76d73e9a59") == "0xbc31…9a59"
+    assert tn._mask_wallet("0x123456") == "0x123456"
+    assert tn._mask_wallet("") == "—"
+
+
+def test_wallet_label_prefers_explicit_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VR_WALLET_ADDRESS", "0xbc31c7582489484e81ba39a7ce020a76d73e9a59")
+    assert tn._wallet_label(wallet_address="0x1c993748bd640c7263fa72fdf3e1a506fe2baf96") == "0x1c99…af96"
+
+
 def test_format_auth_alert() -> None:
     fixed = tn.datetime(2026, 6, 5, 15, 24, 4, tzinfo=tn._SGT)
     with patch.object(tn, "_deployment_label", return_value="Gridbot"), patch.object(

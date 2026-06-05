@@ -3207,7 +3207,9 @@ def _child_main() -> int:
             ti_just_closed = one_cycle(ep=ep, cfg=cfg, args=args, cycle_index=cycle_n)
         except Exception as e:
             _log(f"cycle error: {type(e).__name__}: {e}")
-            maybe_notify_vari_portfolio_auth_failure(e, cycle_index=cycle_n, log=_log)
+            maybe_notify_vari_portfolio_auth_failure(
+                e, cycle_index=cycle_n, wallet_address=cfg.wallet_address, log=_log
+            )
             if args.once:
                 return 1
             ti_just_closed = False
