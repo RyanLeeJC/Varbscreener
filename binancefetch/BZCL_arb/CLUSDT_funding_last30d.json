@@ -1,0 +1,1089 @@
+{
+  "symbol": "CLUSDT",
+  "days": 30,
+  "source": "https://fapi.binance.com/fapi/v1/fundingRate",
+  "fetched_at": "2026-06-05T23:12:51.499472+00:00",
+  "record_count": 180,
+  "records": [
+    {
+      "time": "2026-05-07T00:00:00.002000+00:00",
+      "funding_time_ms": 1778112000002,
+      "funding_rate": -0.00049502,
+      "mark_price": 95.81
+    },
+    {
+      "time": "2026-05-07T04:00:00.001000+00:00",
+      "funding_time_ms": 1778126400001,
+      "funding_rate": -0.00057222,
+      "mark_price": 95.62094348
+    },
+    {
+      "time": "2026-05-07T08:00:00.001000+00:00",
+      "funding_time_ms": 1778140800001,
+      "funding_rate": -0.00055432,
+      "mark_price": 93.13
+    },
+    {
+      "time": "2026-05-07T12:00:00.001000+00:00",
+      "funding_time_ms": 1778155200001,
+      "funding_rate": -0.00067024,
+      "mark_price": 91.64
+    },
+    {
+      "time": "2026-05-07T16:00:00.001000+00:00",
+      "funding_time_ms": 1778169600001,
+      "funding_rate": -0.00110438,
+      "mark_price": 93.04
+    },
+    {
+      "time": "2026-05-07T20:00:00.001000+00:00",
+      "funding_time_ms": 1778184000001,
+      "funding_rate": -0.00242031,
+      "mark_price": 95.91
+    },
+    {
+      "time": "2026-05-08T00:00:00.001000+00:00",
+      "funding_time_ms": 1778198400001,
+      "funding_rate": -2.592e-05,
+      "mark_price": 96.09396438
+    },
+    {
+      "time": "2026-05-08T04:00:00.002000+00:00",
+      "funding_time_ms": 1778212800002,
+      "funding_rate": -0.0001249,
+      "mark_price": 94.82
+    },
+    {
+      "time": "2026-05-08T08:00:00.001000+00:00",
+      "funding_time_ms": 1778227200001,
+      "funding_rate": -0.00047308,
+      "mark_price": 94.34
+    },
+    {
+      "time": "2026-05-08T12:00:00.001000+00:00",
+      "funding_time_ms": 1778241600001,
+      "funding_rate": -0.00072321,
+      "mark_price": 94.05
+    },
+    {
+      "time": "2026-05-08T16:00:00.001000+00:00",
+      "funding_time_ms": 1778256000001,
+      "funding_rate": -0.00137958,
+      "mark_price": 94.72
+    },
+    {
+      "time": "2026-05-08T20:00:00.001000+00:00",
+      "funding_time_ms": 1778270400001,
+      "funding_rate": -0.00244917,
+      "mark_price": 93.70034692
+    },
+    {
+      "time": "2026-05-09T00:00:00.001000+00:00",
+      "funding_time_ms": 1778284800001,
+      "funding_rate": -0.00038642,
+      "mark_price": 93.12158597
+    },
+    {
+      "time": "2026-05-09T04:00:00.002000+00:00",
+      "funding_time_ms": 1778299200002,
+      "funding_rate": 0.0,
+      "mark_price": 92.76
+    },
+    {
+      "time": "2026-05-09T08:00:00.001000+00:00",
+      "funding_time_ms": 1778313600001,
+      "funding_rate": 0.0,
+      "mark_price": 92.81
+    },
+    {
+      "time": "2026-05-09T12:00:00.001000+00:00",
+      "funding_time_ms": 1778328000001,
+      "funding_rate": 0.0,
+      "mark_price": 92.91
+    },
+    {
+      "time": "2026-05-09T16:00:00.001000+00:00",
+      "funding_time_ms": 1778342400001,
+      "funding_rate": 0.0,
+      "mark_price": 93.26
+    },
+    {
+      "time": "2026-05-09T20:00:00.001000+00:00",
+      "funding_time_ms": 1778356800001,
+      "funding_rate": 0.0,
+      "mark_price": 93.475091
+    },
+    {
+      "time": "2026-05-10T00:00:00.002000+00:00",
+      "funding_time_ms": 1778371200002,
+      "funding_rate": 0.0,
+      "mark_price": 93.50548265
+    },
+    {
+      "time": "2026-05-10T04:00:00.001000+00:00",
+      "funding_time_ms": 1778385600001,
+      "funding_rate": 0.0,
+      "mark_price": 93.15772164
+    },
+    {
+      "time": "2026-05-10T08:00:00.001000+00:00",
+      "funding_time_ms": 1778400000001,
+      "funding_rate": 0.0,
+      "mark_price": 93.39
+    },
+    {
+      "time": "2026-05-10T12:00:00.001000+00:00",
+      "funding_time_ms": 1778414400001,
+      "funding_rate": 0.0,
+      "mark_price": 93.31
+    },
+    {
+      "time": "2026-05-10T16:00:00.001000+00:00",
+      "funding_time_ms": 1778428800001,
+      "funding_rate": 0.0,
+      "mark_price": 92.69
+    },
+    {
+      "time": "2026-05-10T20:00:00.001000+00:00",
+      "funding_time_ms": 1778443200001,
+      "funding_rate": 0.00073157,
+      "mark_price": 93.99
+    },
+    {
+      "time": "2026-05-11T00:00:00.002000+00:00",
+      "funding_time_ms": 1778457600002,
+      "funding_rate": 0.0,
+      "mark_price": 97.3
+    },
+    {
+      "time": "2026-05-11T04:00:00.001000+00:00",
+      "funding_time_ms": 1778472000001,
+      "funding_rate": -0.00057086,
+      "mark_price": 98.18
+    },
+    {
+      "time": "2026-05-11T08:00:00.001000+00:00",
+      "funding_time_ms": 1778486400001,
+      "funding_rate": -0.00085277,
+      "mark_price": 96.6799128
+    },
+    {
+      "time": "2026-05-11T12:00:00.001000+00:00",
+      "funding_time_ms": 1778500800001,
+      "funding_rate": -0.00102001,
+      "mark_price": 96.58627801
+    },
+    {
+      "time": "2026-05-11T16:00:00.001000+00:00",
+      "funding_time_ms": 1778515200001,
+      "funding_rate": -0.00143185,
+      "mark_price": 96.22
+    },
+    {
+      "time": "2026-05-11T20:00:00.001000+00:00",
+      "funding_time_ms": 1778529600001,
+      "funding_rate": -0.00218021,
+      "mark_price": 96.51
+    },
+    {
+      "time": "2026-05-12T00:00:00.001000+00:00",
+      "funding_time_ms": 1778544000001,
+      "funding_rate": -0.00034683,
+      "mark_price": 96.04
+    },
+    {
+      "time": "2026-05-12T04:00:00.001000+00:00",
+      "funding_time_ms": 1778558400001,
+      "funding_rate": -0.00046655,
+      "mark_price": 96.92
+    },
+    {
+      "time": "2026-05-12T08:00:00.001000+00:00",
+      "funding_time_ms": 1778572800001,
+      "funding_rate": -0.00078662,
+      "mark_price": 98.22
+    },
+    {
+      "time": "2026-05-12T12:00:00.001000+00:00",
+      "funding_time_ms": 1778587200001,
+      "funding_rate": -0.00112438,
+      "mark_price": 99.0
+    },
+    {
+      "time": "2026-05-12T16:00:00.001000+00:00",
+      "funding_time_ms": 1778601600001,
+      "funding_rate": -0.00170505,
+      "mark_price": 99.21
+    },
+    {
+      "time": "2026-05-12T20:00:00.001000+00:00",
+      "funding_time_ms": 1778616000001,
+      "funding_rate": -0.0025185,
+      "mark_price": 99.61
+    },
+    {
+      "time": "2026-05-13T00:00:00.002000+00:00",
+      "funding_time_ms": 1778630400002,
+      "funding_rate": -0.00044329,
+      "mark_price": 98.88322303
+    },
+    {
+      "time": "2026-05-13T04:00:00.001000+00:00",
+      "funding_time_ms": 1778644800001,
+      "funding_rate": -0.0003167,
+      "mark_price": 97.95
+    },
+    {
+      "time": "2026-05-13T08:00:00.001000+00:00",
+      "funding_time_ms": 1778659200001,
+      "funding_rate": -0.00053389,
+      "mark_price": 98.15
+    },
+    {
+      "time": "2026-05-13T12:00:00.001000+00:00",
+      "funding_time_ms": 1778673600001,
+      "funding_rate": -0.00103811,
+      "mark_price": 98.6
+    },
+    {
+      "time": "2026-05-13T16:00:00.001000+00:00",
+      "funding_time_ms": 1778688000001,
+      "funding_rate": -0.00188176,
+      "mark_price": 98.48
+    },
+    {
+      "time": "2026-05-13T20:00:00.001000+00:00",
+      "funding_time_ms": 1778702400001,
+      "funding_rate": -0.00260448,
+      "mark_price": 97.39
+    },
+    {
+      "time": "2026-05-14T00:00:00.001000+00:00",
+      "funding_time_ms": 1778716800001,
+      "funding_rate": -1.275e-05,
+      "mark_price": 96.82699724
+    },
+    {
+      "time": "2026-05-14T04:00:00.001000+00:00",
+      "funding_time_ms": 1778731200001,
+      "funding_rate": 0.0,
+      "mark_price": 97.08299935
+    },
+    {
+      "time": "2026-05-14T08:00:00.001000+00:00",
+      "funding_time_ms": 1778745600001,
+      "funding_rate": -3.051e-05,
+      "mark_price": 97.64250872
+    },
+    {
+      "time": "2026-05-14T12:00:00.001000+00:00",
+      "funding_time_ms": 1778760000001,
+      "funding_rate": 0.0,
+      "mark_price": 96.0037426
+    },
+    {
+      "time": "2026-05-14T16:00:00.001000+00:00",
+      "funding_time_ms": 1778774400001,
+      "funding_rate": 0.0,
+      "mark_price": 96.62
+    },
+    {
+      "time": "2026-05-14T20:00:00.002000+00:00",
+      "funding_time_ms": 1778788800002,
+      "funding_rate": 0.0,
+      "mark_price": 97.64615996
+    },
+    {
+      "time": "2026-05-15T00:00:00.002000+00:00",
+      "funding_time_ms": 1778803200002,
+      "funding_rate": 0.0,
+      "mark_price": 97.69028784
+    },
+    {
+      "time": "2026-05-15T04:00:00.001000+00:00",
+      "funding_time_ms": 1778817600001,
+      "funding_rate": 0.0,
+      "mark_price": 98.12
+    },
+    {
+      "time": "2026-05-15T08:00:00.001000+00:00",
+      "funding_time_ms": 1778832000001,
+      "funding_rate": -7.641e-05,
+      "mark_price": 99.13767865
+    },
+    {
+      "time": "2026-05-15T12:00:00.001000+00:00",
+      "funding_time_ms": 1778846400001,
+      "funding_rate": -0.00016454,
+      "mark_price": 99.98189284
+    },
+    {
+      "time": "2026-05-15T16:00:00.001000+00:00",
+      "funding_time_ms": 1778860800001,
+      "funding_rate": -8.921e-05,
+      "mark_price": 100.83237119
+    },
+    {
+      "time": "2026-05-15T20:00:00.001000+00:00",
+      "funding_time_ms": 1778875200001,
+      "funding_rate": -0.00015078,
+      "mark_price": 101.10453457
+    },
+    {
+      "time": "2026-05-16T00:00:00.001000+00:00",
+      "funding_time_ms": 1778889600001,
+      "funding_rate": 0.0,
+      "mark_price": 101.07
+    },
+    {
+      "time": "2026-05-16T04:00:00.002000+00:00",
+      "funding_time_ms": 1778904000002,
+      "funding_rate": 0.0,
+      "mark_price": 100.74
+    },
+    {
+      "time": "2026-05-16T08:00:00.001000+00:00",
+      "funding_time_ms": 1778918400001,
+      "funding_rate": 0.00016429,
+      "mark_price": 101.5426761
+    },
+    {
+      "time": "2026-05-16T12:00:00.002000+00:00",
+      "funding_time_ms": 1778932800002,
+      "funding_rate": 0.0,
+      "mark_price": 101.76738601
+    },
+    {
+      "time": "2026-05-16T16:00:00.001000+00:00",
+      "funding_time_ms": 1778947200001,
+      "funding_rate": 0.0,
+      "mark_price": 101.65
+    },
+    {
+      "time": "2026-05-16T20:00:00.001000+00:00",
+      "funding_time_ms": 1778961600001,
+      "funding_rate": -7.32e-06,
+      "mark_price": 101.03
+    },
+    {
+      "time": "2026-05-17T00:00:00.001000+00:00",
+      "funding_time_ms": 1778976000001,
+      "funding_rate": 0.0,
+      "mark_price": 101.69
+    },
+    {
+      "time": "2026-05-17T04:00:00.001000+00:00",
+      "funding_time_ms": 1778990400001,
+      "funding_rate": 0.0,
+      "mark_price": 101.51
+    },
+    {
+      "time": "2026-05-17T08:00:00.001000+00:00",
+      "funding_time_ms": 1779004800001,
+      "funding_rate": 0.0,
+      "mark_price": 101.30393694
+    },
+    {
+      "time": "2026-05-17T12:00:00.001000+00:00",
+      "funding_time_ms": 1779019200001,
+      "funding_rate": 0.0,
+      "mark_price": 101.44547639
+    },
+    {
+      "time": "2026-05-17T16:00:00.001000+00:00",
+      "funding_time_ms": 1779033600001,
+      "funding_rate": 0.0,
+      "mark_price": 101.82
+    },
+    {
+      "time": "2026-05-17T20:00:00.001000+00:00",
+      "funding_time_ms": 1779048000001,
+      "funding_rate": 0.0,
+      "mark_price": 101.62
+    },
+    {
+      "time": "2026-05-18T00:00:00.001000+00:00",
+      "funding_time_ms": 1779062400001,
+      "funding_rate": 0.0,
+      "mark_price": 102.41
+    },
+    {
+      "time": "2026-05-18T04:00:00.001000+00:00",
+      "funding_time_ms": 1779076800001,
+      "funding_rate": -0.00016034,
+      "mark_price": 103.11683785
+    },
+    {
+      "time": "2026-05-18T08:00:00.001000+00:00",
+      "funding_time_ms": 1779091200001,
+      "funding_rate": -5.881e-05,
+      "mark_price": 102.13
+    },
+    {
+      "time": "2026-05-18T12:00:00.002000+00:00",
+      "funding_time_ms": 1779105600002,
+      "funding_rate": -2.64e-06,
+      "mark_price": 100.8165643
+    },
+    {
+      "time": "2026-05-18T16:00:00.001000+00:00",
+      "funding_time_ms": 1779120000001,
+      "funding_rate": -0.00013012,
+      "mark_price": 102.77025275
+    },
+    {
+      "time": "2026-05-18T20:00:00.001000+00:00",
+      "funding_time_ms": 1779134400001,
+      "funding_rate": -0.00016121,
+      "mark_price": 101.94
+    },
+    {
+      "time": "2026-05-19T00:00:00.001000+00:00",
+      "funding_time_ms": 1779148800001,
+      "funding_rate": -0.00019171,
+      "mark_price": 102.2147122
+    },
+    {
+      "time": "2026-05-19T04:00:00.002000+00:00",
+      "funding_time_ms": 1779163200002,
+      "funding_rate": -9.829e-05,
+      "mark_price": 102.75
+    },
+    {
+      "time": "2026-05-19T08:00:00.001000+00:00",
+      "funding_time_ms": 1779177600001,
+      "funding_rate": -0.00014163,
+      "mark_price": 103.06271948
+    },
+    {
+      "time": "2026-05-19T12:00:00+00:00",
+      "funding_time_ms": 1779192000000,
+      "funding_rate": -0.00021661,
+      "mark_price": 103.85980736
+    },
+    {
+      "time": "2026-05-19T16:00:00+00:00",
+      "funding_time_ms": 1779206400000,
+      "funding_rate": -0.00013967,
+      "mark_price": 103.73
+    },
+    {
+      "time": "2026-05-19T20:00:00+00:00",
+      "funding_time_ms": 1779220800000,
+      "funding_rate": -0.0001862,
+      "mark_price": 104.35
+    },
+    {
+      "time": "2026-05-20T00:00:00+00:00",
+      "funding_time_ms": 1779235200000,
+      "funding_rate": -0.0001715,
+      "mark_price": 103.84048467
+    },
+    {
+      "time": "2026-05-20T04:00:00+00:00",
+      "funding_time_ms": 1779249600000,
+      "funding_rate": -8.884e-05,
+      "mark_price": 103.64
+    },
+    {
+      "time": "2026-05-20T08:00:00+00:00",
+      "funding_time_ms": 1779264000000,
+      "funding_rate": 0.0,
+      "mark_price": 102.98934328
+    },
+    {
+      "time": "2026-05-20T12:00:00.001000+00:00",
+      "funding_time_ms": 1779278400001,
+      "funding_rate": -8.966e-05,
+      "mark_price": 102.45
+    },
+    {
+      "time": "2026-05-20T16:00:00+00:00",
+      "funding_time_ms": 1779292800000,
+      "funding_rate": -3.761e-05,
+      "mark_price": 99.17254799
+    },
+    {
+      "time": "2026-05-20T20:00:00+00:00",
+      "funding_time_ms": 1779307200000,
+      "funding_rate": 0.0,
+      "mark_price": 98.45
+    },
+    {
+      "time": "2026-05-21T00:00:00+00:00",
+      "funding_time_ms": 1779321600000,
+      "funding_rate": 0.0,
+      "mark_price": 98.88
+    },
+    {
+      "time": "2026-05-21T04:00:00+00:00",
+      "funding_time_ms": 1779336000000,
+      "funding_rate": 0.0,
+      "mark_price": 99.03512455
+    },
+    {
+      "time": "2026-05-21T08:00:00.001000+00:00",
+      "funding_time_ms": 1779350400001,
+      "funding_rate": -4.1e-07,
+      "mark_price": 99.28
+    },
+    {
+      "time": "2026-05-21T12:00:00.001000+00:00",
+      "funding_time_ms": 1779364800001,
+      "funding_rate": 0.0,
+      "mark_price": 100.51
+    },
+    {
+      "time": "2026-05-21T16:00:00.001000+00:00",
+      "funding_time_ms": 1779379200001,
+      "funding_rate": -8.454e-05,
+      "mark_price": 100.67791069
+    },
+    {
+      "time": "2026-05-21T20:00:00.001000+00:00",
+      "funding_time_ms": 1779393600001,
+      "funding_rate": 0.0,
+      "mark_price": 97.36863278
+    },
+    {
+      "time": "2026-05-22T00:00:00.001000+00:00",
+      "funding_time_ms": 1779408000001,
+      "funding_rate": -6.81e-05,
+      "mark_price": 97.7
+    },
+    {
+      "time": "2026-05-22T04:00:00+00:00",
+      "funding_time_ms": 1779422400000,
+      "funding_rate": -7.401e-05,
+      "mark_price": 97.41
+    },
+    {
+      "time": "2026-05-22T08:00:00.001000+00:00",
+      "funding_time_ms": 1779436800001,
+      "funding_rate": 0.0,
+      "mark_price": 98.39
+    },
+    {
+      "time": "2026-05-22T12:00:00.001000+00:00",
+      "funding_time_ms": 1779451200001,
+      "funding_rate": 0.0,
+      "mark_price": 97.52007225
+    },
+    {
+      "time": "2026-05-22T16:00:00.001000+00:00",
+      "funding_time_ms": 1779465600001,
+      "funding_rate": 0.0,
+      "mark_price": 97.0156598
+    },
+    {
+      "time": "2026-05-22T20:00:00.001000+00:00",
+      "funding_time_ms": 1779480000001,
+      "funding_rate": 0.0,
+      "mark_price": 96.261407
+    },
+    {
+      "time": "2026-05-23T00:00:00.001000+00:00",
+      "funding_time_ms": 1779494400001,
+      "funding_rate": 0.00075814,
+      "mark_price": 98.24921142
+    },
+    {
+      "time": "2026-05-23T04:00:00.001000+00:00",
+      "funding_time_ms": 1779508800001,
+      "funding_rate": 0.0,
+      "mark_price": 98.62386767
+    },
+    {
+      "time": "2026-05-23T08:00:00.001000+00:00",
+      "funding_time_ms": 1779523200001,
+      "funding_rate": 0.0,
+      "mark_price": 98.41873552
+    },
+    {
+      "time": "2026-05-23T12:00:00.001000+00:00",
+      "funding_time_ms": 1779537600001,
+      "funding_rate": 0.0,
+      "mark_price": 98.56331176
+    },
+    {
+      "time": "2026-05-23T16:00:00.001000+00:00",
+      "funding_time_ms": 1779552000001,
+      "funding_rate": -0.00093284,
+      "mark_price": 96.64
+    },
+    {
+      "time": "2026-05-23T20:00:00.001000+00:00",
+      "funding_time_ms": 1779566400001,
+      "funding_rate": -0.0014931,
+      "mark_price": 94.20003006
+    },
+    {
+      "time": "2026-05-24T00:00:00.001000+00:00",
+      "funding_time_ms": 1779580800001,
+      "funding_rate": -0.0009254,
+      "mark_price": 89.95
+    },
+    {
+      "time": "2026-05-24T04:00:00.001000+00:00",
+      "funding_time_ms": 1779595200001,
+      "funding_rate": 0.0,
+      "mark_price": 90.39
+    },
+    {
+      "time": "2026-05-24T08:00:00.001000+00:00",
+      "funding_time_ms": 1779609600001,
+      "funding_rate": 0.00018827,
+      "mark_price": 90.74443568
+    },
+    {
+      "time": "2026-05-24T12:00:00.001000+00:00",
+      "funding_time_ms": 1779624000001,
+      "funding_rate": 0.0,
+      "mark_price": 90.77067924
+    },
+    {
+      "time": "2026-05-24T16:00:00.001000+00:00",
+      "funding_time_ms": 1779638400001,
+      "funding_rate": 0.00074531,
+      "mark_price": 92.28508499
+    },
+    {
+      "time": "2026-05-24T20:00:00.001000+00:00",
+      "funding_time_ms": 1779652800001,
+      "funding_rate": 0.0,
+      "mark_price": 92.96999146
+    },
+    {
+      "time": "2026-05-25T00:00:00.001000+00:00",
+      "funding_time_ms": 1779667200001,
+      "funding_rate": 0.0,
+      "mark_price": 92.11978031
+    },
+    {
+      "time": "2026-05-25T04:00:00.001000+00:00",
+      "funding_time_ms": 1779681600001,
+      "funding_rate": 0.0,
+      "mark_price": 90.96290081
+    },
+    {
+      "time": "2026-05-25T08:00:00.001000+00:00",
+      "funding_time_ms": 1779696000001,
+      "funding_rate": 0.0,
+      "mark_price": 91.71
+    },
+    {
+      "time": "2026-05-25T12:00:00.001000+00:00",
+      "funding_time_ms": 1779710400001,
+      "funding_rate": 0.0,
+      "mark_price": 90.88774053
+    },
+    {
+      "time": "2026-05-25T16:00:00.001000+00:00",
+      "funding_time_ms": 1779724800001,
+      "funding_rate": 0.0,
+      "mark_price": 91.1
+    },
+    {
+      "time": "2026-05-25T20:00:00.001000+00:00",
+      "funding_time_ms": 1779739200001,
+      "funding_rate": 0.0,
+      "mark_price": 90.49453765
+    },
+    {
+      "time": "2026-05-26T00:00:00.001000+00:00",
+      "funding_time_ms": 1779753600001,
+      "funding_rate": 0.0,
+      "mark_price": 90.94
+    },
+    {
+      "time": "2026-05-26T04:00:00.001000+00:00",
+      "funding_time_ms": 1779768000001,
+      "funding_rate": 0.0,
+      "mark_price": 91.7
+    },
+    {
+      "time": "2026-05-26T08:00:00.001000+00:00",
+      "funding_time_ms": 1779782400001,
+      "funding_rate": 0.0,
+      "mark_price": 92.48593281
+    },
+    {
+      "time": "2026-05-26T12:00:00.001000+00:00",
+      "funding_time_ms": 1779796800001,
+      "funding_rate": 0.0,
+      "mark_price": 92.68323649
+    },
+    {
+      "time": "2026-05-26T16:00:00.001000+00:00",
+      "funding_time_ms": 1779811200001,
+      "funding_rate": -7.453e-05,
+      "mark_price": 93.83776543
+    },
+    {
+      "time": "2026-05-26T20:00:00.001000+00:00",
+      "funding_time_ms": 1779825600001,
+      "funding_rate": -0.00012936,
+      "mark_price": 93.48
+    },
+    {
+      "time": "2026-05-27T00:00:00.001000+00:00",
+      "funding_time_ms": 1779840000001,
+      "funding_rate": -5.987e-05,
+      "mark_price": 93.22594798
+    },
+    {
+      "time": "2026-05-27T04:00:00.001000+00:00",
+      "funding_time_ms": 1779854400001,
+      "funding_rate": -8.68e-06,
+      "mark_price": 92.04065472
+    },
+    {
+      "time": "2026-05-27T08:00:00.001000+00:00",
+      "funding_time_ms": 1779868800001,
+      "funding_rate": 0.0,
+      "mark_price": 91.1
+    },
+    {
+      "time": "2026-05-27T12:00:00.001000+00:00",
+      "funding_time_ms": 1779883200001,
+      "funding_rate": 0.0,
+      "mark_price": 90.56516294
+    },
+    {
+      "time": "2026-05-27T16:00:00.001000+00:00",
+      "funding_time_ms": 1779897600001,
+      "funding_rate": 0.0,
+      "mark_price": 90.0
+    },
+    {
+      "time": "2026-05-27T20:00:00.001000+00:00",
+      "funding_time_ms": 1779912000001,
+      "funding_rate": 0.0,
+      "mark_price": 89.44668045
+    },
+    {
+      "time": "2026-05-28T00:00:00.001000+00:00",
+      "funding_time_ms": 1779926400001,
+      "funding_rate": 0.0,
+      "mark_price": 90.24
+    },
+    {
+      "time": "2026-05-28T04:00:00.001000+00:00",
+      "funding_time_ms": 1779940800001,
+      "funding_rate": 0.0,
+      "mark_price": 92.15
+    },
+    {
+      "time": "2026-05-28T08:00:00.001000+00:00",
+      "funding_time_ms": 1779955200001,
+      "funding_rate": 0.0,
+      "mark_price": 90.92072317
+    },
+    {
+      "time": "2026-05-28T12:00:00.001000+00:00",
+      "funding_time_ms": 1779969600001,
+      "funding_rate": 0.0,
+      "mark_price": 91.29
+    },
+    {
+      "time": "2026-05-28T16:00:00.001000+00:00",
+      "funding_time_ms": 1779984000001,
+      "funding_rate": 0.0,
+      "mark_price": 89.82088344
+    },
+    {
+      "time": "2026-05-28T20:00:00.001000+00:00",
+      "funding_time_ms": 1779998400001,
+      "funding_rate": 0.0,
+      "mark_price": 89.43636164
+    },
+    {
+      "time": "2026-05-29T00:00:00.001000+00:00",
+      "funding_time_ms": 1780012800001,
+      "funding_rate": 0.0,
+      "mark_price": 88.57541467
+    },
+    {
+      "time": "2026-05-29T04:00:00.001000+00:00",
+      "funding_time_ms": 1780027200001,
+      "funding_rate": 0.00016545,
+      "mark_price": 88.2760225
+    },
+    {
+      "time": "2026-05-29T08:00:00.001000+00:00",
+      "funding_time_ms": 1780041600001,
+      "funding_rate": 0.0,
+      "mark_price": 88.76137217
+    },
+    {
+      "time": "2026-05-29T12:00:00.001000+00:00",
+      "funding_time_ms": 1780056000001,
+      "funding_rate": 5.48e-06,
+      "mark_price": 87.64
+    },
+    {
+      "time": "2026-05-29T16:00:00.001000+00:00",
+      "funding_time_ms": 1780070400001,
+      "funding_rate": 0.0,
+      "mark_price": 87.6
+    },
+    {
+      "time": "2026-05-29T20:00:00.001000+00:00",
+      "funding_time_ms": 1780084800001,
+      "funding_rate": 0.0,
+      "mark_price": 88.10868328
+    },
+    {
+      "time": "2026-05-30T00:00:00.001000+00:00",
+      "funding_time_ms": 1780099200001,
+      "funding_rate": 0.0004457,
+      "mark_price": 88.64
+    },
+    {
+      "time": "2026-05-30T04:00:00.001000+00:00",
+      "funding_time_ms": 1780113600001,
+      "funding_rate": 0.0,
+      "mark_price": 88.37
+    },
+    {
+      "time": "2026-05-30T08:00:00.001000+00:00",
+      "funding_time_ms": 1780128000001,
+      "funding_rate": 0.0,
+      "mark_price": 88.14679545
+    },
+    {
+      "time": "2026-05-30T12:00:00.001000+00:00",
+      "funding_time_ms": 1780142400001,
+      "funding_rate": 0.0,
+      "mark_price": 88.0753304
+    },
+    {
+      "time": "2026-05-30T16:00:00.001000+00:00",
+      "funding_time_ms": 1780156800001,
+      "funding_rate": 0.0,
+      "mark_price": 88.22003909
+    },
+    {
+      "time": "2026-05-30T20:00:00.001000+00:00",
+      "funding_time_ms": 1780171200001,
+      "funding_rate": 0.0,
+      "mark_price": 88.11501806
+    },
+    {
+      "time": "2026-05-31T00:00:00.001000+00:00",
+      "funding_time_ms": 1780185600001,
+      "funding_rate": 0.0,
+      "mark_price": 88.35
+    },
+    {
+      "time": "2026-05-31T04:00:00.001000+00:00",
+      "funding_time_ms": 1780200000001,
+      "funding_rate": 0.0,
+      "mark_price": 88.33
+    },
+    {
+      "time": "2026-05-31T08:00:00.001000+00:00",
+      "funding_time_ms": 1780214400001,
+      "funding_rate": 0.0,
+      "mark_price": 88.6
+    },
+    {
+      "time": "2026-05-31T12:00:00.001000+00:00",
+      "funding_time_ms": 1780228800001,
+      "funding_rate": 0.0,
+      "mark_price": 88.66532938
+    },
+    {
+      "time": "2026-05-31T16:00:00.001000+00:00",
+      "funding_time_ms": 1780243200001,
+      "funding_rate": 0.0,
+      "mark_price": 88.77543398
+    },
+    {
+      "time": "2026-05-31T20:00:00.001000+00:00",
+      "funding_time_ms": 1780257600001,
+      "funding_rate": 0.0,
+      "mark_price": 88.97
+    },
+    {
+      "time": "2026-06-01T00:00:00.001000+00:00",
+      "funding_time_ms": 1780272000001,
+      "funding_rate": 0.0,
+      "mark_price": 89.43756714
+    },
+    {
+      "time": "2026-06-01T04:00:00.001000+00:00",
+      "funding_time_ms": 1780286400001,
+      "funding_rate": 0.0,
+      "mark_price": 89.75467909
+    },
+    {
+      "time": "2026-06-01T08:00:00.001000+00:00",
+      "funding_time_ms": 1780300800001,
+      "funding_rate": 0.0,
+      "mark_price": 90.41
+    },
+    {
+      "time": "2026-06-01T12:00:00.001000+00:00",
+      "funding_time_ms": 1780315200001,
+      "funding_rate": 0.0,
+      "mark_price": 90.24
+    },
+    {
+      "time": "2026-06-01T16:00:00.001000+00:00",
+      "funding_time_ms": 1780329600001,
+      "funding_rate": -0.00025329,
+      "mark_price": 93.64
+    },
+    {
+      "time": "2026-06-01T20:00:00.001000+00:00",
+      "funding_time_ms": 1780344000001,
+      "funding_rate": -7.618e-05,
+      "mark_price": 92.41
+    },
+    {
+      "time": "2026-06-02T00:00:00.001000+00:00",
+      "funding_time_ms": 1780358400001,
+      "funding_rate": -2.654e-05,
+      "mark_price": 91.86
+    },
+    {
+      "time": "2026-06-02T04:00:00.001000+00:00",
+      "funding_time_ms": 1780372800001,
+      "funding_rate": -3.154e-05,
+      "mark_price": 91.37148148
+    },
+    {
+      "time": "2026-06-02T08:00:00.001000+00:00",
+      "funding_time_ms": 1780387200001,
+      "funding_rate": -5.258e-05,
+      "mark_price": 90.76794772
+    },
+    {
+      "time": "2026-06-02T12:00:00.001000+00:00",
+      "funding_time_ms": 1780401600001,
+      "funding_rate": -4.906e-05,
+      "mark_price": 90.98972411
+    },
+    {
+      "time": "2026-06-02T16:00:00.001000+00:00",
+      "funding_time_ms": 1780416000001,
+      "funding_rate": -9.985e-05,
+      "mark_price": 92.77083494
+    },
+    {
+      "time": "2026-06-02T20:00:00.001000+00:00",
+      "funding_time_ms": 1780430400001,
+      "funding_rate": -0.0002469,
+      "mark_price": 93.59
+    },
+    {
+      "time": "2026-06-03T00:00:00.001000+00:00",
+      "funding_time_ms": 1780444800001,
+      "funding_rate": -0.00014493,
+      "mark_price": 94.49555322
+    },
+    {
+      "time": "2026-06-03T04:00:00.001000+00:00",
+      "funding_time_ms": 1780459200001,
+      "funding_rate": -0.00026539,
+      "mark_price": 94.62
+    },
+    {
+      "time": "2026-06-03T08:00:00.001000+00:00",
+      "funding_time_ms": 1780473600001,
+      "funding_rate": -0.00014505,
+      "mark_price": 95.79
+    },
+    {
+      "time": "2026-06-03T12:00:00.001000+00:00",
+      "funding_time_ms": 1780488000001,
+      "funding_rate": -0.00027946,
+      "mark_price": 95.62
+    },
+    {
+      "time": "2026-06-03T16:00:00.001000+00:00",
+      "funding_time_ms": 1780502400001,
+      "funding_rate": -0.00012285,
+      "mark_price": 95.84003564
+    },
+    {
+      "time": "2026-06-03T20:00:00.001000+00:00",
+      "funding_time_ms": 1780516800001,
+      "funding_rate": -0.00019412,
+      "mark_price": 96.13577154
+    },
+    {
+      "time": "2026-06-04T00:00:00.001000+00:00",
+      "funding_time_ms": 1780531200001,
+      "funding_rate": -0.00036735,
+      "mark_price": 95.32
+    },
+    {
+      "time": "2026-06-04T04:00:00.001000+00:00",
+      "funding_time_ms": 1780545600001,
+      "funding_rate": -0.00014545,
+      "mark_price": 95.00979362
+    },
+    {
+      "time": "2026-06-04T08:00:00.001000+00:00",
+      "funding_time_ms": 1780560000001,
+      "funding_rate": -0.00019279,
+      "mark_price": 95.32
+    },
+    {
+      "time": "2026-06-04T12:00:00.001000+00:00",
+      "funding_time_ms": 1780574400001,
+      "funding_rate": -0.00025549,
+      "mark_price": 92.38
+    },
+    {
+      "time": "2026-06-04T16:00:00.001000+00:00",
+      "funding_time_ms": 1780588800001,
+      "funding_rate": -0.00016326,
+      "mark_price": 92.94
+    },
+    {
+      "time": "2026-06-04T20:00:00.001000+00:00",
+      "funding_time_ms": 1780603200001,
+      "funding_rate": -0.00024659,
+      "mark_price": 93.05054615
+    },
+    {
+      "time": "2026-06-05T00:00:00.001000+00:00",
+      "funding_time_ms": 1780617600001,
+      "funding_rate": -0.00017015,
+      "mark_price": 92.895045
+    },
+    {
+      "time": "2026-06-05T04:00:00.001000+00:00",
+      "funding_time_ms": 1780632000001,
+      "funding_rate": -0.00044676,
+      "mark_price": 93.06
+    },
+    {
+      "time": "2026-06-05T08:00:00.001000+00:00",
+      "funding_time_ms": 1780646400001,
+      "funding_rate": -0.00069979,
+      "mark_price": 92.5
+    },
+    {
+      "time": "2026-06-05T12:00:00.001000+00:00",
+      "funding_time_ms": 1780660800001,
+      "funding_rate": -0.00127289,
+      "mark_price": 92.67138037
+    },
+    {
+      "time": "2026-06-05T16:00:00.001000+00:00",
+      "funding_time_ms": 1780675200001,
+      "funding_rate": -0.00116849,
+      "mark_price": 90.56
+    },
+    {
+      "time": "2026-06-05T20:00:00.001000+00:00",
+      "funding_time_ms": 1780689600001,
+      "funding_rate": -0.00163023,
+      "mark_price": 89.98
+    }
+  ]
+}

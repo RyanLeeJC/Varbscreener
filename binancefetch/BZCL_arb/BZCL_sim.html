@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BZ/CL Spread Arb Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
+<script src="BZCL_sim.data.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0a0e0d;
+    --panel: #141a1f;
+    --grid-line: #1f2830;
+    --text: #d4d8d2;
+    --text-dim: #9aa1a6;
+    --text-faint: #5a6168;
+    --long: #26a69a;
+    --short: #ef5350;
+    --accent: #fbbf24;
+    --bz: #fbbf24;
+    --cl: #67e8f9;
+    --spread: #c084fc;
+    --zline: #e879f9;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg); color: var(--text);
+    font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1600px; margin: 0 auto; padding: 16px 16px 32px; }
+  header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    flex-wrap: wrap; gap: 16px;
+    padding-bottom: 18px; margin-bottom: 20px;
+    border-bottom: 1px solid var(--grid-line);
+  }
+  h1 { font-family: 'Fraunces', serif; font-weight: 600; font-size: 26px; }
+  h1 .accent { color: var(--accent); font-style: italic; }
+  .subtitle { font-size: 10px; color: var(--text-dim); margin-top: 8px; max-width: 780px; line-height: 1.65; }
+  .load-status { font-size: 10px; color: var(--text-faint); margin-top: 10px; }
+  .load-status.ok { color: var(--long); }
+  .load-status.err { color: var(--short); }
+
+  .config-panel {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    padding: 14px 18px; margin-bottom: 14px;
+  }
+  .config-section-label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.18em;
+    color: var(--text-faint); margin-bottom: 10px;
+  }
+  .config-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 20px;
+  }
+  @media (max-width: 1100px) { .config-grid { grid-template-columns: 1fr 1fr; } }
+  .cfg-row { display: flex; align-items: center; gap: 8px; }
+  .cfg-row label { font-size: 9px; text-transform: uppercase; color: var(--text-dim); min-width: 72px; }
+  .cfg-row input[type="range"] { flex: 1; min-width: 0; height: 4px; -webkit-appearance: none; background: var(--grid-line); }
+  .cfg-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px; background: var(--accent); cursor: pointer;
+  }
+  .cfg-row .val { font-size: 10px; min-width: 88px; text-align: right; font-variant-numeric: tabular-nums; }
+  .cfg-toggle { gap: 10px; }
+  .cfg-toggle input[type="checkbox"] {
+    width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
+  }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr minmax(380px, 420px);
+    gap: 12px; align-items: stretch;
+    margin-bottom: 12px; min-height: calc(100vh - 240px);
+  }
+  @media (max-width: 1100px) { .main-grid { grid-template-columns: 1fr; min-height: 0; } }
+
+  .charts-col { min-width: 0; display: flex; flex-direction: column; }
+  .charts-stack {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    overflow: hidden; flex: 1;
+    display: flex; flex-direction: column; min-height: 620px;
+  }
+  .chart-pane {
+    border-bottom: 1px solid var(--grid-line);
+    display: flex; flex-direction: column; flex: 1; min-height: 0;
+  }
+  .chart-pane:first-child { flex: 1.1; }
+  .chart-pane:last-child { border-bottom: none; }
+  .chart-pane-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 6px 10px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    flex-shrink: 0;
+  }
+  .chart-pane-head.z { color: var(--zline); }
+  .chart-pane-head.ratio { color: var(--spread); }
+  .chart-pane-head.bz { color: var(--bz); }
+  .chart-pane-head.cl { color: var(--cl); }
+  .chart-pane-head .ohlc { color: var(--text-dim); font-size: 9.5px; text-transform: none; letter-spacing: 0; }
+  .chart-host { width: 100%; flex: 1; min-height: 120px; position: relative; }
+
+  .sidebar { display: flex; flex-direction: column; gap: 10px; min-width: 380px; }
+  .controls {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    padding: 12px 14px;
+  }
+  .slider-row { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+  .slider-row label { font-size: 10px; text-transform: uppercase; color: var(--text-dim); min-width: 48px; }
+  .slider-row input[type="range"] { flex: 1; height: 4px; -webkit-appearance: none; background: var(--grid-line); }
+  .slider-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; background: var(--accent); cursor: pointer;
+  }
+  .tick-display { font-size: 10.5px; font-variant-numeric: tabular-nums; margin-bottom: 10px; line-height: 1.4; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    background: transparent; border: 1px solid var(--grid-line); color: var(--text-dim);
+    font-family: inherit; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+    padding: 6px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+
+  .ticker-panel {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    padding: 14px; border-top: 2px solid var(--grid-line);
+  }
+  .ticker-panel.summary { border-top-color: var(--spread); }
+  .ticker-panel.pos { border-top-color: var(--accent); }
+  .ticker-panel.bz { border-top-color: var(--bz); }
+  .ticker-panel.cl { border-top-color: var(--cl); }
+  .ticker-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--grid-line);
+  }
+  .ticker-name { font-family: 'Fraunces', serif; font-style: italic; font-size: 16px; }
+  .ticker-tag {
+    font-size: 8px; text-transform: uppercase; letter-spacing: 0.1em;
+    padding: 2px 6px; border: 1px solid;
+  }
+  .ticker-tag.long { color: var(--long); border-color: var(--long); }
+  .ticker-tag.short { color: var(--short); border-color: var(--short); }
+  .ticker-tag.flat { color: var(--text-faint); border-color: var(--text-faint); }
+  .stat-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 10.5px; }
+  .stat-row .k { color: var(--text-faint); }
+  .stat-row .v { font-variant-numeric: tabular-nums; text-align: right; }
+  .stat-row .v.pos { color: var(--long); }
+  .stat-row .v.neg { color: var(--short); }
+  .stat-row.divider { border-top: 1px dashed var(--grid-line); margin-top: 4px; padding-top: 6px; }
+  .stat-row.highlight { background: rgba(251,191,36,0.05); margin: 4px -6px 0; padding: 6px; }
+
+  .legs-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 1100px) { .legs-row { grid-template-columns: 1fr; } }
+
+  .event-panel {
+    background: var(--panel); border: 1px solid var(--grid-line);
+    padding: 12px 14px;
+  }
+  .event-panel-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 20px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .event-panel-grid { grid-template-columns: 1fr; gap: 16px 0; }
+  }
+  .event-panel-col { min-width: 0; }
+  .event-panel-col + .event-panel-col {
+    border-left: 1px solid var(--grid-line);
+    padding-left: 20px;
+  }
+  @media (max-width: 900px) {
+    .event-panel-col + .event-panel-col {
+      border-left: none;
+      padding-left: 0;
+      border-top: 1px solid var(--grid-line);
+      padding-top: 16px;
+    }
+  }
+  .event-panel h3 {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.16em;
+    color: var(--text-dim); margin-bottom: 10px;
+  }
+  .event-log { max-height: 220px; overflow-y: auto; font-size: 10px; line-height: 1.65; }
+  .event { display: grid; grid-template-columns: 130px 1fr; gap: 8px; padding: 2px 0; border-bottom: 1px dashed rgba(255,255,255,0.04); }
+  .event .t { color: var(--text-faint); font-size: 9px; }
+  .event.enter .msg { color: var(--long); }
+  .event.scale_in .msg { color: var(--accent); }
+  .event.exit .msg { color: var(--cl); }
+  .event.exit_half .msg { color: #a78bfa; }
+  .strategy-doc {
+    font-size: 10px; line-height: 1.7; color: var(--text-dim);
+    max-height: 220px; overflow-y: auto;
+  }
+  .strategy-doc h4 {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.14em;
+    color: var(--text-faint); margin: 12px 0 6px;
+  }
+  .strategy-doc h4:first-child { margin-top: 0; }
+  .strategy-doc p { margin-bottom: 8px; }
+  .strategy-doc ul { margin: 0 0 8px 14px; padding: 0; }
+  .strategy-doc li { margin-bottom: 4px; }
+  .strategy-doc .hl-long { color: var(--long); }
+  .strategy-doc .hl-short { color: var(--short); }
+  .strategy-doc .hl-bz { color: var(--bz); }
+  .strategy-doc .hl-cl { color: var(--cl); }
+  .strategy-doc .hl-z { color: var(--zline); }
+  .strategy-doc code { color: var(--text); font-size: 9.5px; }
+  .footnote { margin-top: 16px; font-size: 10px; color: var(--text-faint); line-height: 1.65; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>BZ / CL <span class="accent">Spread Arb</span></h1>
+      <div class="subtitle">
+        Mean-reversion on log(BZ/CL): when Brent (BZ) trades rich vs WTI (CL), short BZ / long CL; when cheap, reverse.
+        Z-score uses a rolling window on the log ratio. Market-neutral pair trade — profits when the spread reverts.
+        30d · 5m bars · Binance USDT-M futures.
+      </div>
+      <div class="load-status" id="load-status">Loading…</div>
+    </div>
+  </header>
+
+  <div class="config-panel">
+    <div class="config-section-label">Strategy parameters</div>
+    <div class="config-grid">
+      <div class="cfg-row">
+        <label>Lookback</label>
+        <input type="range" id="cfg-lookback" min="48" max="864" step="48" value="288">
+        <span class="val" id="val-lookback">288 bars (1d)</span>
+      </div>
+      <div class="cfg-row">
+        <label>Entry |z|</label>
+        <input type="range" id="cfg-entry" min="15" max="40" step="5" value="25">
+        <span class="val" id="val-entry">2.5 σ</span>
+      </div>
+      <div class="cfg-row">
+        <label>Exit |z|</label>
+        <input type="range" id="cfg-exit" min="0" max="10" step="5" value="0">
+        <span class="val" id="val-exit">0.0 σ</span>
+      </div>
+      <div class="cfg-row">
+        <label>$ / leg</label>
+        <input type="range" id="cfg-notional" min="5000" max="50000" step="1000" value="10000">
+        <span class="val" id="val-notional">$10,000</span>
+      </div>
+      <div class="cfg-row cfg-toggle">
+        <label>½ @ 2σ</label>
+        <input type="checkbox" id="cfg-half-scale">
+        <span class="val" id="val-half-scale">Off · full size @ entry σ</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="main-grid">
+    <div class="charts-col">
+      <div class="charts-stack">
+        <div class="chart-pane">
+          <div class="chart-pane-head z">
+            <span>Z-score · log(BZ/CL)</span>
+            <span class="ohlc" id="z-readout">—</span>
+          </div>
+          <div class="chart-host" id="chart-z"></div>
+        </div>
+        <div class="chart-pane">
+          <div class="chart-pane-head ratio">
+            <span>BZ/CL ratio</span>
+            <span class="ohlc" id="ratio-readout">—</span>
+          </div>
+          <div class="chart-host" id="chart-ratio"></div>
+        </div>
+        <div class="chart-pane">
+          <div class="chart-pane-head bz">
+            <span>BZUSDT · 5m</span>
+            <span class="ohlc" id="bz-readout">—</span>
+          </div>
+          <div class="chart-host" id="chart-bz"></div>
+        </div>
+        <div class="chart-pane">
+          <div class="chart-pane-head cl">
+            <span>CLUSDT · 5m</span>
+            <span class="ohlc" id="cl-readout">—</span>
+          </div>
+          <div class="chart-host" id="chart-cl"></div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="sidebar">
+      <div class="controls">
+        <div class="slider-row">
+          <label>Time</label>
+          <input type="range" id="slider" min="0" max="0" value="0">
+        </div>
+        <div class="tick-display" id="tick-display">—</div>
+        <div class="btn-row">
+          <button type="button" id="btn-reset">Reset</button>
+          <button type="button" id="btn-play">Play ▶</button>
+          <button type="button" id="btn-step-back">◀</button>
+          <button type="button" id="btn-step-fwd">▶</button>
+          <button type="button" id="btn-fit">Fit</button>
+        </div>
+      </div>
+
+      <div class="ticker-panel summary">
+        <div class="ticker-head">
+          <div class="ticker-name" style="color:var(--spread)">Backtest</div>
+          <div class="ticker-tag flat" id="trade-count-tag">—</div>
+        </div>
+        <div class="stat-row"><span class="k">Price PnL</span><span class="v" id="price-pnl">—</span></div>
+        <div class="stat-row"><span class="k">Funding (realized)</span><span class="v" id="funding-pnl">—</span></div>
+        <div class="stat-row highlight"><span class="k">Total PnL</span><span class="v" id="total-pnl">—</span></div>
+        <div class="stat-row"><span class="k">Win rate</span><span class="v" id="win-rate">—</span></div>
+        <div class="stat-row"><span class="k">Avg trade</span><span class="v" id="avg-trade">—</span></div>
+        <div class="stat-row"><span class="k">Max drawdown</span><span class="v" id="max-dd">—</span></div>
+        <div class="stat-row"><span class="k">Total volume</span><span class="v" id="total-volume">—</span></div>
+        <div class="stat-row divider"><span class="k">Equity (tick)</span><span class="v" id="eq-tick">—</span></div>
+      </div>
+
+      <div class="ticker-panel pos">
+        <div class="ticker-head">
+          <div class="ticker-name" style="color:var(--accent)">Position</div>
+          <div class="ticker-tag flat" id="pos-tag">flat</div>
+        </div>
+        <div class="stat-row"><span class="k">Z-score</span><span class="v" id="pos-z">—</span></div>
+        <div class="stat-row"><span class="k">Spread</span><span class="v" id="pos-spread">—</span></div>
+        <div class="stat-row"><span class="k">UPNL</span><span class="v" id="pos-upnl">—</span></div>
+        <div class="stat-row"><span class="k">Accrued funding</span><span class="v" id="pos-funding">—</span></div>
+        <div class="stat-row divider"><span class="k">RPNL</span><span class="v" id="pos-rpnl">—</span></div>
+      </div>
+
+      <div class="legs-row">
+        <div class="ticker-panel bz">
+          <div class="ticker-head">
+            <div class="ticker-name" style="color:var(--bz)">BZ</div>
+            <div class="ticker-tag flat" id="bz-leg-tag">—</div>
+          </div>
+          <div class="stat-row"><span class="k">Price</span><span class="v" id="bz-px">—</span></div>
+          <div class="stat-row"><span class="k">Entry</span><span class="v" id="bz-entry">—</span></div>
+          <div class="stat-row"><span class="k">Leg PnL</span><span class="v" id="bz-leg-pnl">—</span></div>
+        </div>
+        <div class="ticker-panel cl">
+          <div class="ticker-head">
+            <div class="ticker-name" style="color:var(--cl)">CL</div>
+            <div class="ticker-tag flat" id="cl-leg-tag">—</div>
+          </div>
+          <div class="stat-row"><span class="k">Price</span><span class="v" id="cl-px">—</span></div>
+          <div class="stat-row"><span class="k">Entry</span><span class="v" id="cl-entry">—</span></div>
+          <div class="stat-row"><span class="k">Leg PnL</span><span class="v" id="cl-leg-pnl">—</span></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="event-panel">
+    <div class="event-panel-grid">
+      <div class="event-panel-col">
+        <h3>Trade events</h3>
+        <div class="event-log" id="eventlog"></div>
+      </div>
+      <div class="event-panel-col">
+        <h3>Strategy</h3>
+        <div class="strategy-doc" id="strategy-doc"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footnote">
+    Double-click this file — data loads from sibling <code>BZCL_sim.data.js</code> (no server required).
+  </div>
+</div>
+
+<script>
+(function () {
+  const BAR_SEC = 5 * 60;
+  let DATA = null;
+  const HALF_Z = 2.0;
+  let CFG = { lookback: 288, entryZ: 2.5, exitZ: 0, notional: 10000, halfScale: false };
+  let SIM = null;
+  let tick = 0;
+  let charts = null;
+  let syncing = false;
+  let playTimer = null;
+
+  function $(id) { return document.getElementById(id); }
+  function fmtUsd(n) {
+    const s = n >= 0 ? '+' : '';
+    return s + '$' + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function fmtPct(n) { return (n * 100).toFixed(1) + '%'; }
+  function fmtVol(n) {
+    return '$' + Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+  function pnlClass(n) { return n > 0 ? 'pos' : n < 0 ? 'neg' : ''; }
+  function shortTime(iso) {
+    const m = String(iso).match(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+    return m ? `${m[1]} ${m[2]}` : iso;
+  }
+  function lookbackLabel(bars) {
+    const days = bars * BAR_SEC / 86400;
+    return days >= 1 ? `${bars} bars (${days.toFixed(1)}d)` : `${bars} bars`;
+  }
+
+  let BZ_FUND_PERIODS = [];
+  let CL_FUND_PERIODS = [];
+
+  function buildFundingPeriods(records) {
+    if (!records?.length) return [];
+    const sorted = [...records].sort((a, b) => a.t - b.t);
+    return sorted.map((r, i) => ({
+      start: i > 0 ? sorted[i - 1].t : r.t - 8 * 3600 * 1000,
+      end: r.t,
+      rate: r.rate,
+    }));
+  }
+
+  function initFundingPeriods() {
+    BZ_FUND_PERIODS = buildFundingPeriods(DATA.funding?.bz);
+    CL_FUND_PERIODS = buildFundingPeriods(DATA.funding?.cl);
+  }
+
+  /** Prorated leg funding for one 8h interval; long pays +rate, short receives. */
+  function periodLegFunding(period, side, notional, entryMs, asOfMs) {
+    if (asOfMs <= entryMs || period.end <= entryMs || period.start >= asOfMs) return 0;
+    const start = Math.max(entryMs, period.start);
+    const end = Math.min(asOfMs, period.end);
+    if (end <= start) return 0;
+    const span = period.end - period.start;
+    if (span <= 0) return 0;
+    const frac = (end - start) / span;
+    const sign = side === 'long' ? -1 : 1;
+    return sign * notional * period.rate * frac;
+  }
+
+  function calcPairFunding(entryMs, asOfMs, position, notional) {
+    if (!position || asOfMs <= entryMs) return 0;
+    let total = 0;
+    const bzSide = position === 1 ? 'long' : 'short';
+    const clSide = position === 1 ? 'short' : 'long';
+    for (const p of BZ_FUND_PERIODS) {
+      total += periodLegFunding(p, bzSide, notional, entryMs, asOfMs);
+    }
+    for (const p of CL_FUND_PERIODS) {
+      total += periodLegFunding(p, clSide, notional, entryMs, asOfMs);
+    }
+    return total;
+  }
+
+  function closeTrade(bar, position, bzEntry, clEntry, entryMs, notional) {
+    const bc = bar.bz, cc = bar.cl;
+    let pricePnl;
+    if (position === 1) pricePnl = notional * (bc / bzEntry - 1) - notional * (cc / clEntry - 1);
+    else pricePnl = -notional * (bc / bzEntry - 1) + notional * (cc / clEntry - 1);
+    const fundingPnl = calcPairFunding(entryMs, bar.t, position, notional);
+    return { pricePnl, fundingPnl, totalPnl: pricePnl + fundingPnl };
+  }
+
+  function zscoreAt(logSpreads, i, lookback) {
+    if (i < lookback) return null;
+    const w = logSpreads.slice(i - lookback, i);
+    const m = w.reduce((a, b) => a + b, 0) / w.length;
+    const v = w.reduce((a, b) => a + (b - m) ** 2, 0) / (w.length - 1);
+    const s = Math.sqrt(v);
+    return s > 0 ? (logSpreads[i] - m) / s : 0;
+  }
+
+  function runBacktest(bars, cfg) {
+    const logSpreads = bars.map(b => b.log_spread);
+    const n = bars.length;
+    let position = 0;
+    let sizeFrac = 0;
+    let bzEntry = 0, clEntry = 0, entryMs = 0;
+    let priceRpnl = 0;
+    let fundingRpnl = 0;
+    let volumeUsd = 0;
+    let peak = 0, maxDd = 0;
+    const trades = [];
+    const events = [];
+    const equity = [];
+    const zSeries = [];
+    const stateAt = [];
+
+    function recordState(i, z) {
+      const st = snapshot(i, z);
+      if (i >= cfg.lookback) {
+        peak = Math.max(peak, st.eq);
+        maxDd = Math.max(maxDd, peak - st.eq);
+      }
+      st.maxDdSoFar = maxDd;
+      stateAt[i] = st;
+      if (i >= cfg.lookback) equity.push({ time: Math.floor(bars[i].t / 1000), value: st.eq });
+      return st;
+    }
+
+    function snapshot(i, z) {
+      const bar = bars[i];
+      let upnl = 0;
+      let openFunding = 0;
+      const legN = cfg.notional * sizeFrac;
+      if (position !== 0 && legN > 0) {
+        const bc = bar.bz, cc = bar.cl;
+        if (position === 1) upnl = legN * (bc / bzEntry - 1) - legN * (cc / clEntry - 1);
+        else upnl = -legN * (bc / bzEntry - 1) + legN * (cc / clEntry - 1);
+        openFunding = calcPairFunding(entryMs, bar.t, position, legN);
+      }
+      const rpnl = priceRpnl + fundingRpnl;
+      const eq = rpnl + upnl + openFunding;
+      return {
+        position, sizeFrac, bzEntry, clEntry, entryMs,
+        priceRpnl, fundingRpnl, rpnl,
+        upnl, openFunding, eq, z, volumeUsd,
+      };
+    }
+
+    function addVolume(frac) {
+      volumeUsd += cfg.notional * 2 * frac;
+    }
+
+    function pushExit(i, bar, z, frac, pricePnl, fundingPnl, totalPnl, partial) {
+      trades.push({
+        pricePnl, fundingPnl, pnl: totalPnl, partial: !!partial,
+        side: position === 1 ? 'long_bz_short_cl' : 'short_bz_long_cl',
+      });
+      events.push({
+        i, type: partial ? 'exit_half' : 'exit', pnl: totalPnl, pricePnl, fundingPnl, z,
+        iso: bar.iso, time: Math.floor(bar.t / 1000), sizeFrac: frac,
+      });
+    }
+
+    function closeFraction(i, z, frac, partial) {
+      const bar = bars[i];
+      const legN = cfg.notional * frac;
+      const { pricePnl, fundingPnl, totalPnl } = closeTrade(bar, position, bzEntry, clEntry, entryMs, legN);
+      priceRpnl += pricePnl;
+      fundingRpnl += fundingPnl;
+      addVolume(frac);
+      pushExit(i, bar, z, frac, pricePnl, fundingPnl, totalPnl, partial);
+      sizeFrac -= frac;
+      if (sizeFrac <= 1e-9) {
+        sizeFrac = 0;
+        position = 0;
+      }
+    }
+
+    function openPosition(i, z, side, frac) {
+      const bar = bars[i];
+      position = side;
+      sizeFrac = frac;
+      bzEntry = bar.bz;
+      clEntry = bar.cl;
+      entryMs = bar.t;
+      addVolume(frac);
+      events.push({
+        i, type: 'enter', side: side === 1 ? 'long_bz_short_cl' : 'short_bz_long_cl', z,
+        iso: bar.iso, time: Math.floor(bar.t / 1000), sizeFrac: frac,
+      });
+    }
+
+    function scaleIn(i, z) {
+      const bar = bars[i];
+      addVolume(0.5);
+      sizeFrac = 1;
+      events.push({
+        i, type: 'scale_in', side: position === 1 ? 'long_bz_short_cl' : 'short_bz_long_cl', z,
+        iso: bar.iso, time: Math.floor(bar.t / 1000), sizeFrac: 0.5,
+      });
+    }
+
+    function processScaled(i, z, bar, time) {
+      if (position === 0) {
+        if (z >= HALF_Z) openPosition(i, z, -1, 0.5);
+        else if (z <= -HALF_Z) openPosition(i, z, 1, 0.5);
+        return;
+      }
+      if (position === -1) {
+        if (z <= cfg.exitZ) { closeFraction(i, z, sizeFrac, false); return; }
+        if (sizeFrac >= 1 && z <= HALF_Z) { closeFraction(i, z, 0.5, true); return; }
+        if (sizeFrac < 1 && z >= cfg.entryZ) scaleIn(i, z);
+      } else {
+        if (z >= -cfg.exitZ) { closeFraction(i, z, sizeFrac, false); return; }
+        if (sizeFrac >= 1 && z >= -HALF_Z) { closeFraction(i, z, 0.5, true); return; }
+        if (sizeFrac < 1 && z <= -cfg.entryZ) scaleIn(i, z);
+      }
+    }
+
+    function processFull(i, z, bar, time) {
+      if (position === 0) {
+        if (z >= cfg.entryZ) openPosition(i, z, -1, 1);
+        else if (z <= -cfg.entryZ) openPosition(i, z, 1, 1);
+        return;
+      }
+      const exitSig = (position === 1 && z >= -cfg.exitZ) || (position === -1 && z <= cfg.exitZ);
+      if (exitSig) closeFraction(i, z, sizeFrac, false);
+    }
+
+    for (let i = 0; i < n; i++) {
+      const z = zscoreAt(logSpreads, i, cfg.lookback);
+      const time = Math.floor(bars[i].t / 1000);
+      zSeries.push(z !== null ? { time, value: z } : { time });
+
+      if (i < cfg.lookback || z === null) {
+        recordState(i, z);
+        continue;
+      }
+
+      const bar = bars[i];
+      if (cfg.halfScale) processScaled(i, z, bar, time);
+      else processFull(i, z, bar, time);
+      recordState(i, z);
+    }
+
+    if (position !== 0) {
+      const z = zscoreAt(logSpreads, n - 1, cfg.lookback);
+      closeFraction(n - 1, z, sizeFrac, false);
+      recordState(n - 1, z);
+    }
+
+    const wins = trades.filter(t => t.pnl > 0).length;
+    const totalPnl = priceRpnl + fundingRpnl;
+    return {
+      zSeries, equity, events, trades, stateAt,
+      summary: {
+        totalPnl,
+        pricePnl: priceRpnl,
+        fundingPnl: fundingRpnl,
+        volumeUsd,
+        trades: trades.length,
+        winRate: trades.length ? wins / trades.length : 0,
+        maxDd,
+        avgTrade: trades.length ? trades.reduce((a, t) => a + t.pnl, 0) / trades.length : 0,
+      },
+    };
+  }
+
+  function chartOpts() {
+    return {
+      layout: { background: { type: 'solid', color: '#141a1f' }, textColor: '#9aa1a6' },
+      grid: { vertLines: { color: '#1f2830' }, horzLines: { color: '#1f2830' } },
+      rightPriceScale: { borderColor: '#1f2830' },
+      timeScale: { borderColor: '#1f2830', timeVisible: true, secondsVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    };
+  }
+
+  function makeLineChart(hostId, color) {
+    const el = $(hostId);
+    const h = Math.max(100, el.clientHeight || 120);
+    const chart = LightweightCharts.createChart(el, { ...chartOpts(), width: el.clientWidth || 400, height: h });
+    const series = chart.addLineSeries({ color, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
+    return { chart, series, el, cursorLine: null };
+  }
+
+  function makeAreaChart(hostId, color) {
+    const el = $(hostId);
+    const h = Math.max(100, el.clientHeight || 120);
+    const chart = LightweightCharts.createChart(el, { ...chartOpts(), width: el.clientWidth || 400, height: h });
+    const series = chart.addAreaSeries({
+      lineColor: color, topColor: color + '33', bottomColor: color + '05',
+      lineWidth: 1.5, priceLineVisible: false,
+    });
+    return { chart, series, el };
+  }
+
+  function chartPanes() {
+    if (!charts) return [];
+    return [charts.z, charts.ratio, charts.bz, charts.cl];
+  }
+
+  function syncCharts(source) {
+    if (syncing || !source) return;
+    syncing = true;
+    const range = source.timeScale().getVisibleLogicalRange();
+    if (range) chartPanes().forEach(c => { if (c.chart !== source) c.chart.timeScale().setVisibleLogicalRange(range); });
+    syncing = false;
+  }
+
+  function initCharts() {
+    chartPanes().forEach(c => c?.chart?.remove());
+    charts = {
+      z: makeLineChart('chart-z', '#e879f9'),
+      ratio: makeLineChart('chart-ratio', '#c084fc'),
+      bz: makeLineChart('chart-bz', '#fbbf24'),
+      cl: makeLineChart('chart-cl', '#67e8f9'),
+    };
+
+    const bars = DATA.bars;
+    charts.ratio.series.setData(bars.map(b => ({ time: Math.floor(b.t / 1000), value: b.ratio })));
+    charts.bz.series.setData(bars.map(b => ({ time: Math.floor(b.t / 1000), value: b.bz })));
+    charts.cl.series.setData(bars.map(b => ({ time: Math.floor(b.t / 1000), value: b.cl })));
+
+    // entry/exit band lines on z chart
+    charts.z.entryHigh = charts.z.chart.addLineSeries({ color: '#ef5350', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+    charts.z.entryLow = charts.z.chart.addLineSeries({ color: '#26a69a', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+    charts.z.halfHigh = charts.z.chart.addLineSeries({ color: 'rgba(239,83,80,0.45)', lineWidth: 1, lineStyle: 3, priceLineVisible: false, lastValueVisible: false });
+    charts.z.halfLow = charts.z.chart.addLineSeries({ color: 'rgba(38,166,154,0.45)', lineWidth: 1, lineStyle: 3, priceLineVisible: false, lastValueVisible: false });
+    charts.z.zero = charts.z.chart.addLineSeries({ color: '#5a6168', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
+
+    requestAnimationFrame(() => {
+      resizeCharts();
+      chartPanes().forEach(c => c.chart.timeScale().subscribeVisibleLogicalRangeChange(() => syncCharts(c.chart)));
+      fitCharts();
+    });
+  }
+
+  function resizeCharts() {
+    chartPanes().forEach(c => {
+      const w = c.el.clientWidth, h = c.el.clientHeight;
+      if (w > 0 && h > 0) c.chart.applyOptions({ width: w, height: h });
+    });
+  }
+
+  function fitCharts() {
+    resizeCharts();
+    chartPanes().forEach(c => c.chart.timeScale().fitContent());
+  }
+
+  const VIEW_BARS = 864; // ~3 days visible when scrubbing
+
+  function bandLineData(val) {
+    return DATA.bars.map((b, i) => {
+      const time = Math.floor(b.t / 1000);
+      return i >= CFG.lookback ? { time, value: val } : { time };
+    });
+  }
+
+  function scrollChartsToTick(i) {
+    if (!charts || !DATA) return;
+    const n = DATA.bars.length;
+    const half = Math.floor(VIEW_BARS / 2);
+    const from = Math.max(0, i - half);
+    const to = Math.min(n - 1, i + half);
+    syncing = true;
+    chartPanes().forEach(c => {
+      c.chart.timeScale().setVisibleLogicalRange({ from, to });
+    });
+    syncing = false;
+  }
+
+  function setDottedPriceLine(series, existing, opts) {
+    const o = {
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dotted,
+      axisLabelVisible: true,
+      ...opts,
+    };
+    if (existing) {
+      try {
+        existing.applyOptions(o);
+        return existing;
+      } catch (_) {
+        try { series.removePriceLine(existing); } catch (_) {}
+      }
+    }
+    return series.createPriceLine(o);
+  }
+
+  function buildMarkers(upToTick) {
+    const vis = SIM.events.filter(e => e.i <= upToTick);
+    const zMarkers = [];
+    const bzMarkers = [];
+    const clMarkers = [];
+    const ratioMarkers = [];
+
+    for (const ev of vis) {
+      const t = ev.time ?? Math.floor(DATA.bars[ev.i].t / 1000);
+      if (ev.type === 'enter' || ev.type === 'scale_in') {
+        const longSpread = ev.side === 'long_bz_short_cl';
+        const half = ev.type === 'scale_in' || (ev.sizeFrac != null && ev.sizeFrac < 1);
+        const tag = half ? '½' : 'in';
+        zMarkers.push({
+          time: t,
+          position: longSpread ? 'belowBar' : 'aboveBar',
+          color: longSpread ? '#26a69a' : '#ef5350',
+          shape: longSpread ? 'arrowUp' : 'arrowDown',
+          text: longSpread ? (half ? 'L½' : 'L sprd') : (half ? 'S½' : 'S sprd'),
+        });
+        bzMarkers.push({
+          time: t,
+          position: longSpread ? 'belowBar' : 'aboveBar',
+          color: '#fbbf24',
+          shape: longSpread ? 'arrowUp' : 'arrowDown',
+          text: longSpread ? (half ? 'L½' : 'L') : (half ? 'S½' : 'S'),
+        });
+        clMarkers.push({
+          time: t,
+          position: longSpread ? 'aboveBar' : 'belowBar',
+          color: '#67e8f9',
+          shape: longSpread ? 'arrowDown' : 'arrowUp',
+          text: longSpread ? (half ? 'S½' : 'S') : (half ? 'L½' : 'L'),
+        });
+        ratioMarkers.push({
+          time: t,
+          position: longSpread ? 'belowBar' : 'aboveBar',
+          color: ev.type === 'scale_in' ? '#fbbf24' : (longSpread ? '#26a69a' : '#ef5350'),
+          shape: 'circle',
+          text: tag,
+        });
+      } else if (ev.type === 'exit' || ev.type === 'exit_half') {
+        const win = ev.pnl >= 0;
+        const half = ev.type === 'exit_half';
+        const mk = {
+          time: t,
+          position: 'inBar',
+          color: win ? '#26a69a' : '#ef5350',
+          shape: 'circle',
+          text: half ? 'out½' : (win ? 'exit +' : 'exit −'),
+        };
+        zMarkers.push(mk);
+        bzMarkers.push({ ...mk, text: 'out' });
+        clMarkers.push({ ...mk, text: 'out' });
+        ratioMarkers.push({ ...mk, text: 'out' });
+      }
+    }
+    return { zMarkers, bzMarkers, clMarkers, ratioMarkers };
+  }
+
+  function updateChartOverlays(bar, i) {
+    if (!charts || !SIM) return;
+    const tSec = Math.floor(bar.t / 1000);
+    const z = SIM.stateAt[i]?.z;
+
+    const tracers = [
+      { pane: charts.z, price: z, color: 'rgba(232,121,249,0.95)', title: 'z' },
+      { pane: charts.ratio, price: bar.ratio, color: 'rgba(192,132,252,0.92)', title: 'ratio' },
+      { pane: charts.bz, price: bar.bz, color: 'rgba(251,191,36,0.92)', title: 'BZ' },
+      { pane: charts.cl, price: bar.cl, color: 'rgba(103,232,249,0.92)', title: 'CL' },
+    ];
+    for (const { pane, price, color, title } of tracers) {
+      if (!pane?.series || price == null) continue;
+      pane.cursorLine = setDottedPriceLine(pane.series, pane.cursorLine, { price, color, title });
+      try {
+        pane.chart.setCrosshairPosition(price, tSec, pane.series);
+      } catch (_) {}
+    }
+
+    const { zMarkers, bzMarkers, clMarkers, ratioMarkers } = buildMarkers(i);
+    charts.z.series.setMarkers(zMarkers);
+    charts.bz.series.setMarkers(bzMarkers);
+    charts.cl.series.setMarkers(clMarkers);
+    charts.ratio.series.setMarkers(ratioMarkers);
+  }
+
+  function updateChartData() {
+    charts.z.series.setData(SIM.zSeries);
+    charts.z.entryHigh.setData(bandLineData(CFG.entryZ));
+    charts.z.entryLow.setData(bandLineData(-CFG.entryZ));
+    charts.z.zero.setData(bandLineData(0));
+    if (CFG.halfScale) {
+      charts.z.halfHigh.setData(bandLineData(HALF_Z));
+      charts.z.halfLow.setData(bandLineData(-HALF_Z));
+    } else {
+      charts.z.halfHigh.setData([]);
+      charts.z.halfLow.setData([]);
+    }
+  }
+
+  function summaryAtTick(i) {
+    const st = SIM.stateAt[i] || {};
+    const exits = SIM.events.filter(e => (e.type === 'exit' || e.type === 'exit_half') && e.i <= i);
+    const wins = exits.filter(e => e.pnl > 0).length;
+    const n = exits.length;
+    const avgTrade = n ? exits.reduce((a, e) => a + e.pnl, 0) / n : 0;
+    return {
+      pricePnl: st.priceRpnl || 0,
+      fundingPnl: st.fundingRpnl || 0,
+      totalPnl: st.eq || 0,
+      volumeUsd: st.volumeUsd || 0,
+      trades: n,
+      winRate: n ? wins / n : 0,
+      maxDd: st.maxDdSoFar || 0,
+      avgTrade,
+    };
+  }
+
+  function recompute() {
+    SIM = runBacktest(DATA.bars, CFG);
+    tick = 0;
+    updateChartData();
+    $('slider').min = '0';
+    $('slider').max = String(DATA.bars.length - 1);
+    $('slider').value = '0';
+    renderStrategyDoc();
+    renderTick();
+  }
+
+  function renderSummaryAtTick(i) {
+    const s = summaryAtTick(i);
+    $('price-pnl').textContent = fmtUsd(s.pricePnl);
+    $('price-pnl').className = 'v ' + pnlClass(s.pricePnl);
+    $('funding-pnl').textContent = fmtUsd(s.fundingPnl);
+    $('funding-pnl').className = 'v ' + pnlClass(s.fundingPnl);
+    $('total-pnl').textContent = fmtUsd(s.totalPnl);
+    $('total-pnl').className = 'v ' + pnlClass(s.totalPnl);
+    $('win-rate').textContent = s.trades ? fmtPct(s.winRate) : '—';
+    $('avg-trade').textContent = s.trades ? fmtUsd(s.avgTrade) : '—';
+    $('avg-trade').className = 'v ' + (s.trades ? pnlClass(s.avgTrade) : '');
+    $('max-dd').textContent = s.maxDd ? fmtUsd(-s.maxDd) : '—';
+    $('max-dd').className = 'v ' + (s.maxDd ? 'neg' : '');
+    $('total-volume').textContent = fmtVol(s.volumeUsd);
+    $('trade-count-tag').textContent = s.trades ? s.trades + ' trades' : '0 trades';
+  }
+
+  function renderStrategyDoc() {
+    const lb = lookbackLabel(CFG.lookback);
+    const el = $('strategy-doc');
+    if (!el) return;
+    el.innerHTML = `
+      <p>Brent (<span class="hl-bz">BZ</span>) and WTI (<span class="hl-cl">CL</span>) USDT-M perps move together but the
+      <span class="hl-bz">BZ</span>/<span class="hl-cl">CL</span> premium mean-reverts. This is a <em>market-neutral spread</em> trade — not a directional oil bet.</p>
+
+      <h4>Signal</h4>
+      <p>Spread = <code>log(BZ / CL)</code>. Rolling mean &amp; stdev over <strong>${lb}</strong> produce a
+      <span class="hl-z">z-score</span> on each 5m bar. First ${CFG.lookback} bars are warmup (no trades).</p>
+
+      <h4>Entry — flat only, one position at a time</h4>
+      ${CFG.halfScale ? `
+      <ul>
+        <li><span class="hl-short">Short spread ½</span> · <code>z ≥ +${HALF_Z.toFixed(1)}σ</code> → add ½ more at <code>+${CFG.entryZ.toFixed(1)}σ</code></li>
+        <li><span class="hl-long">Long spread ½</span> · <code>z ≤ −${HALF_Z.toFixed(1)}σ</code> → add ½ more at <code>−${CFG.entryZ.toFixed(1)}σ</code></li>
+      </ul>
+      <h4>Exit — scaled + mean reversion</h4>
+      <ul>
+        <li>Trim <strong>half</strong> when <code>|z|</code> reverts to <strong>${HALF_Z.toFixed(1)}σ</strong> (full size only)</li>
+        <li>Close remainder at exit σ (<code>±${CFG.exitZ.toFixed(1)}σ</code>)</li>
+      </ul>
+      <p>Each ½ fill = <strong>$${(CFG.notional / 2).toLocaleString()}</strong>/leg · more round-trips → higher volume.</p>
+      ` : `
+      <ul>
+        <li><span class="hl-short">Short spread</span> · <code>z ≥ +${CFG.entryZ.toFixed(1)}σ</code><br>
+          BZ rich vs CL → <span class="hl-short">short BZ</span> + <span class="hl-long">long CL</span></li>
+        <li><span class="hl-long">Long spread</span> · <code>z ≤ −${CFG.entryZ.toFixed(1)}σ</code><br>
+          BZ cheap vs CL → <span class="hl-long">long BZ</span> + <span class="hl-short">short CL</span></li>
+      </ul>
+      <h4>Exit — mean reversion</h4>
+      <ul>
+        <li>Long spread closes when <code>z ≥ −${CFG.exitZ.toFixed(1)}σ</code></li>
+        <li>Short spread closes when <code>z ≤ +${CFG.exitZ.toFixed(1)}σ</code></li>
+      </ul>
+      <p>At <code>0σ</code> exit the spread is back at its rolling mean. Price PnL, prorated funding, and volume are realized on exit.</p>
+      `}
+
+      <h4>Sizing &amp; funding</h4>
+      <p><strong>$${CFG.notional.toLocaleString()}</strong> max notional per leg ($${(CFG.notional * 2).toLocaleString()} both legs per full fill).
+      Funding accrues pro-rata over each 8h Binance interval while open; finalized when each slice closes.</p>
+    `;
+  }
+
+  function formatEventMsg(ev) {
+    const side = ev.side ? ev.side.replace(/_/g, ' ') : '';
+    if (ev.type === 'enter') {
+      const half = ev.sizeFrac != null && ev.sizeFrac < 1 ? ' ½' : '';
+      return `ENTER${half} ${side} · z=${ev.z.toFixed(2)}`;
+    }
+    if (ev.type === 'scale_in') return `ADD ½ ${side} · z=${ev.z.toFixed(2)}`;
+    if (ev.type === 'exit_half') {
+      return `EXIT ½ · pnl ${fmtUsd(ev.pnl)} (price ${fmtUsd(ev.pricePnl)} · funding ${fmtUsd(ev.fundingPnl)}) · z=${ev.z.toFixed(2)}`;
+    }
+    if (ev.type === 'exit') {
+      return `EXIT · pnl ${fmtUsd(ev.pnl)} (price ${fmtUsd(ev.pricePnl)} · funding ${fmtUsd(ev.fundingPnl)}) · z=${ev.z.toFixed(2)}`;
+    }
+    return ev.type;
+  }
+
+  function renderEventsUpTo(i) {
+    const log = $('eventlog');
+    log.innerHTML = '';
+    const shown = SIM.events.filter(e => e.i <= i).slice(-40).reverse();
+    for (const ev of shown) {
+      const div = document.createElement('div');
+      div.className = 'event ' + ev.type;
+      const msg = formatEventMsg(ev);
+      div.innerHTML = `<span class="t">${shortTime(ev.iso)}</span><span class="msg">${msg}</span>`;
+      log.appendChild(div);
+    }
+  }
+
+  function renderTick() {
+    const bar = DATA.bars[tick];
+    const st = SIM.stateAt[tick] || {};
+    const z = st.z;
+
+    $('tick-display').textContent =
+      `${shortTime(bar.iso)} · bar ${tick + 1}/${DATA.bars.length}` +
+      (tick < CFG.lookback ? ' (warmup)' : '') +
+      ` · BZ $${bar.bz.toFixed(2)} · CL $${bar.cl.toFixed(2)} · ratio ${bar.ratio.toFixed(4)}`;
+    $('z-readout').textContent = z != null ? `z = ${z.toFixed(3)}` : 'warming up';
+    $('ratio-readout').textContent = `ratio ${bar.ratio.toFixed(4)} (${((bar.ratio - 1) * 100).toFixed(2)}% premium)`;
+    $('bz-readout').textContent = `$${bar.bz.toFixed(2)}`;
+    $('cl-readout').textContent = `$${bar.cl.toFixed(2)}`;
+
+    const pos = st.position || 0;
+    const sz = st.sizeFrac || 0;
+    const sizeSuffix = sz === 0.5 ? ' ½' : '';
+    $('pos-tag').textContent = pos === 0 ? 'flat' : (pos === 1 ? 'long spread' : 'short spread') + sizeSuffix;
+    $('pos-tag').className = 'ticker-tag ' + (pos === 0 ? 'flat' : pos === 1 ? 'long' : 'short');
+    $('pos-z').textContent = z != null ? z.toFixed(3) : '—';
+    $('pos-spread').textContent = ((bar.ratio - 1) * 100).toFixed(2) + '%';
+    $('pos-upnl').textContent = fmtUsd(st.upnl || 0);
+    $('pos-upnl').className = 'v ' + pnlClass(st.upnl || 0);
+    if (pos !== 0) {
+      $('pos-funding').textContent = fmtUsd(st.openFunding || 0) + ' (open)';
+      $('pos-funding').className = 'v ' + pnlClass(st.openFunding || 0);
+    } else {
+      $('pos-funding').textContent = '—';
+      $('pos-funding').className = 'v';
+    }
+    $('pos-rpnl').textContent = fmtUsd(st.rpnl || 0);
+    $('pos-rpnl').className = 'v ' + pnlClass(st.rpnl || 0);
+    $('eq-tick').textContent = fmtUsd(st.eq || 0);
+    $('eq-tick').className = 'v ' + pnlClass(st.eq || 0);
+
+    renderSummaryAtTick(tick);
+    renderEventsUpTo(tick);
+
+    $('bz-px').textContent = '$' + bar.bz.toFixed(2);
+    $('cl-px').textContent = '$' + bar.cl.toFixed(2);
+    if (pos !== 0) {
+      $('bz-entry').textContent = '$' + st.bzEntry.toFixed(2);
+      $('cl-entry').textContent = '$' + st.clEntry.toFixed(2);
+      const bc = bar.bz, cc = bar.cl;
+      const legN = CFG.notional * sz;
+      let bzPnl, clPnl;
+      if (pos === 1) { bzPnl = legN * (bc / st.bzEntry - 1); clPnl = -legN * (cc / st.clEntry - 1); }
+      else { bzPnl = -legN * (bc / st.bzEntry - 1); clPnl = legN * (cc / st.clEntry - 1); }
+      $('bz-leg-tag').textContent = pos === 1 ? 'long' : 'short';
+      $('bz-leg-tag').className = 'ticker-tag ' + (pos === 1 ? 'long' : 'short');
+      $('cl-leg-tag').textContent = pos === 1 ? 'short' : 'long';
+      $('cl-leg-tag').className = 'ticker-tag ' + (pos === 1 ? 'short' : 'long');
+      $('bz-leg-pnl').textContent = fmtUsd(bzPnl);
+      $('bz-leg-pnl').className = 'v ' + pnlClass(bzPnl);
+      $('cl-leg-pnl').textContent = fmtUsd(clPnl);
+      $('cl-leg-pnl').className = 'v ' + pnlClass(clPnl);
+    } else {
+      $('bz-entry').textContent = '—';
+      $('cl-entry').textContent = '—';
+      $('bz-leg-tag').textContent = '—';
+      $('bz-leg-tag').className = 'ticker-tag flat';
+      $('cl-leg-tag').textContent = '—';
+      $('cl-leg-tag').className = 'ticker-tag flat';
+      $('bz-leg-pnl').textContent = '—';
+      $('cl-leg-pnl').textContent = '—';
+    }
+
+    updateChartOverlays(bar, tick);
+    scrollChartsToTick(tick);
+  }
+
+  function bindConfig() {
+    const lb = $('cfg-lookback');
+    const en = $('cfg-entry');
+    const ex = $('cfg-exit');
+    const no = $('cfg-notional');
+    const hs = $('cfg-half-scale');
+
+    function refreshHalfLabel() {
+      $('val-half-scale').textContent = CFG.halfScale
+        ? `On · ½ @ ±${HALF_Z}σ · full @ ±${CFG.entryZ.toFixed(1)}σ`
+        : 'Off · full size @ entry σ';
+    }
+
+    function refresh() {
+      CFG.lookback = +lb.value;
+      CFG.entryZ = +en.value / 10;
+      CFG.exitZ = +ex.value / 10;
+      CFG.notional = +no.value;
+      CFG.halfScale = hs.checked;
+      $('val-lookback').textContent = lookbackLabel(CFG.lookback);
+      $('val-entry').textContent = CFG.entryZ.toFixed(1) + ' σ';
+      $('val-exit').textContent = CFG.exitZ.toFixed(1) + ' σ';
+      $('val-notional').textContent = '$' + CFG.notional.toLocaleString();
+      refreshHalfLabel();
+      recompute();
+    }
+
+    [lb, en, ex, no].forEach(el => el.addEventListener('input', refresh));
+    hs.addEventListener('change', refresh);
+  }
+
+  function bindPlayback() {
+    $('slider').addEventListener('input', () => { tick = +$('slider').value; renderTick(); });
+    $('btn-reset').addEventListener('click', () => { tick = 0; $('slider').value = '0'; renderTick(); stopPlay(); });
+    $('btn-step-back').addEventListener('click', () => { tick = Math.max(0, tick - 1); $('slider').value = String(tick); renderTick(); });
+    $('btn-step-fwd').addEventListener('click', () => { tick = Math.min(DATA.bars.length - 1, tick + 1); $('slider').value = String(tick); renderTick(); });
+    $('btn-fit').addEventListener('click', fitCharts);
+    $('btn-play').addEventListener('click', togglePlay);
+  }
+
+  function stopPlay() {
+    if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    $('btn-play').textContent = 'Play ▶';
+  }
+
+  function togglePlay() {
+    if (playTimer) { stopPlay(); return; }
+    $('btn-play').textContent = 'Pause ⏸';
+    playTimer = setInterval(() => {
+      if (tick >= DATA.bars.length - 1) { stopPlay(); return; }
+      tick++;
+      $('slider').value = String(tick);
+      renderTick();
+    }, 80);
+  }
+
+  function load() {
+    const st = $('load-status');
+    try {
+      if (!window.__BZCL_ARB_DATA__) throw new Error('BZCL_sim.data.js missing');
+      DATA = window.__BZCL_ARB_DATA__;
+      const d = DATA.defaults;
+      CFG = { lookback: d.lookback, entryZ: d.entry_z, exitZ: d.exit_z, notional: d.notional_per_leg, halfScale: false };
+      $('cfg-lookback').value = CFG.lookback;
+      $('cfg-entry').value = Math.round(CFG.entryZ * 10);
+      $('cfg-exit').value = Math.round(CFG.exitZ * 10);
+      $('cfg-notional').value = CFG.notional;
+      $('cfg-half-scale').checked = false;
+      $('val-lookback').textContent = lookbackLabel(CFG.lookback);
+      $('val-entry').textContent = CFG.entryZ.toFixed(1) + ' σ';
+      $('val-exit').textContent = CFG.exitZ.toFixed(1) + ' σ';
+      $('val-notional').textContent = '$' + CFG.notional.toLocaleString();
+      $('val-half-scale').textContent = 'Off · full size @ entry σ';
+
+      st.textContent = `Loaded BZCL_sim.data.js · ${DATA.meta.bar_count} bars · ${shortTime(DATA.meta.start)} → ${shortTime(DATA.meta.end)}`;
+      st.className = 'load-status ok';
+      initFundingPeriods();
+      initCharts();
+      recompute();
+      bindConfig();
+      bindPlayback();
+      window.addEventListener('resize', () => requestAnimationFrame(resizeCharts));
+    } catch (e) {
+      st.textContent = 'Load failed: ' + e.message;
+      st.className = 'load-status err';
+    }
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>
