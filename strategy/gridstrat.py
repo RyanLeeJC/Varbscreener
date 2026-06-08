@@ -115,27 +115,17 @@ GRID_RWA_EQUITY_TICKERS: frozenset[str] = frozenset({"SPCX"})
 # Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
 # -----------------------------------------------------------------------------
 GRID_TRADING_TICKERS: Dict[str, float] = {
-    # Crypto
-    "AVAX": 2.0,
-    "FET": 3.0,
-    "ICP": 2.0,
-    "JUP": 2.5,
-    "RENDER": 3.0,
-    "LINK": 2.0,
-    "NEAR": 2.5,
-    "ONDO": 3.0,
-    "PENGU": 2.0,
-    "SEI": 2.5,
-    "SUI": 3.0,
-    "TAO": 3.0,
-    "VIRTUAL": 3.0,
-    "WLFI": 1.5,
-    "CHZ": 4.0,
-    # "PYTH": 3.0,
-    # "GRASS": 4.0,
-    # "DASH": 2.5,
-    # "POL": 3.0,
-    # "POPCAT": 2.5,
+    # Crypto — gridbot_48h_study.md (48h vol-pause hyperparam; bps ≥ −50)
+    "ENA": 3.0,
+    "XLM": 2.0,
+    "BCH": 2.5,
+    "AVAX": 2.5,
+    "LTC": 1.5,
+    "SYRUP": 1.5,
+    "OP": 3.0,
+    "ASTER": 3.0,
+    "ADA": 3.5,
+    "MON": 3.5,
 
     # RWA
     # "CL": 2.0,
