@@ -1,0 +1,457 @@
+[
+  {
+    "ticker": "AVAX",
+    "band_pct": 2.0,
+    "correlation": {
+      "corr_btc": 0.8083549938326814,
+      "corr_eth": 0.836860056816351,
+      "corr_market_avg": 0.8449820936730733
+    },
+    "baseline": {
+      "final_pnl": -88.26116799819962,
+      "realized_pnl": 11.343750000000021,
+      "unrealized_pnl": -99.60491799819964,
+      "max_drawdown": 117.39894122032183,
+      "max_long_notional": 405.8160796669292,
+      "max_short_notional": 315.50192697198156,
+      "final_inventory": 46.41611342410262,
+      "buy_fills": 25,
+      "sell_fills": 22,
+      "pause_count": 0,
+      "dump_pauses": 0,
+      "price_chg_pct": -25.396646787442336,
+      "pnl_delta_vs_baseline": 0.0,
+      "dd_delta_vs_baseline": 0.0
+    },
+    "global_rec": {
+      "final_pnl": -129.89468687578668,
+      "realized_pnl": -119.3194771600009,
+      "unrealized_pnl": -10.575209715785766,
+      "max_drawdown": 224.19756509713397,
+      "max_long_notional": 1258.9083298758949,
+      "max_short_notional": 315.50192697198156,
+      "final_inventory": 127.94056381964,
+      "buy_fills": 68,
+      "sell_fills": 59,
+      "pause_count": 3,
+      "dump_pauses": 3,
+      "price_chg_pct": -25.396646787442336,
+      "pnl_delta_vs_baseline": -41.63351887758705,
+      "dd_delta_vs_baseline": -106.79862387681214
+    },
+    "global_prod": {
+      "final_pnl": -144.5992732067215,
+      "realized_pnl": -116.26542191194348,
+      "unrealized_pnl": -28.333851294778032,
+      "max_drawdown": 224.19756509713397,
+      "max_long_notional": 1067.9709618184327,
+      "max_short_notional": 315.50192697198156,
+      "final_inventory": 158.85333360381267,
+      "buy_fills": 57,
+      "sell_fills": 44,
+      "pause_count": 2,
+      "dump_pauses": 2,
+      "price_chg_pct": -25.396646787442336,
+      "pnl_delta_vs_baseline": -56.33810520852188,
+      "dd_delta_vs_baseline": -106.79862387681214
+    },
+    "ticker_best": {
+      "final_pnl": -129.89468687578668,
+      "realized_pnl": -119.3194771600009,
+      "unrealized_pnl": -10.575209715785766,
+      "max_drawdown": 224.19756509713397,
+      "max_long_notional": 1258.9083298758949,
+      "max_short_notional": 315.50192697198156,
+      "final_inventory": 127.94056381964,
+      "buy_fills": 68,
+      "sell_fills": 59,
+      "pause_count": 3,
+      "dump_pauses": 3,
+      "price_chg_pct": -25.396646787442336,
+      "pnl_delta_vs_baseline": 0.0,
+      "dd_delta_vs_baseline": 0.0,
+      "score": -343.79193462941095
+    },
+    "ticker_best_params": {
+      "name": "AVAX_best",
+      "market_lb": 12,
+      "market_ret_thresh": -0.01,
+      "ticker_lb": 6,
+      "ticker_cum_thresh": -0.04,
+      "ticker_bar_thresh": -0.016,
+      "vol_lb": 36,
+      "vol_median_lb": 288,
+      "vol_ratio_pause": 1.8,
+      "resume_bars": 12,
+      "resume_market_ret": -0.005,
+      "resume_ticker_ret": -0.01,
+      "resume_vol_ratio": 1.3,
+      "require_market_and_ticker": true
+    },
+    "stress": {
+      "stress_bars": 26,
+      "ret_30m": {
+        "min": -0.04321850769035207,
+        "p10": -0.03850283785856734,
+        "median": -0.020771513353115667,
+        "p90": 0.0024158021884326253
+      },
+      "bar_5m": {
+        "min": -0.029900760407268967,
+        "p10": -0.014465408805031554,
+        "median": -0.004678196767791354,
+        "p90": 0.0068191504475068054
+      }
+    },
+    "suggested": {
+      "ticker_cum_thresh": -0.02,
+      "ticker_bar_thresh": -0.0096,
+      "vol_ratio_pause": 1.8,
+      "require_market_and_ticker": true,
+      "notes": [
+        "tight band \u2014 prefer require_market_and_ticker=1",
+        "global OR-pause underperformed; use per-ticker sweep or production conservative"
+      ]
+    }
+  },
+  {
+    "ticker": "JUP",
+    "band_pct": 2.5,
+    "correlation": {
+      "corr_btc": 0.7493891474114183,
+      "corr_eth": 0.7700105151831161,
+      "corr_market_avg": 0.7800144492646905
+    },
+    "baseline": {
+      "final_pnl": 26.930504787891408,
+      "realized_pnl": 40.60546875000015,
+      "unrealized_pnl": -13.67496396210874,
+      "max_drawdown": 116.52459586079053,
+      "max_long_notional": 101.08628500823721,
+      "max_short_notional": 853.0889621087313,
+      "final_inventory": 566.3097199341021,
+      "buy_fills": 42,
+      "sell_fills": 40,
+      "pause_count": 0,
+      "dump_pauses": 0,
+      "price_chg_pct": -15.760571114772103,
+      "pnl_delta_vs_baseline": 0.0,
+      "dd_delta_vs_baseline": 0.0
+    },
+    "global_rec": {
+      "final_pnl": 253.4969283342048,
+      "realized_pnl": 257.28282596084404,
+      "unrealized_pnl": -3.7858976266392266,
+      "max_drawdown": 137.42790880115203,
+      "max_long_notional": 643.1075057265953,
+      "max_short_notional": 1787.4769714014228,
+      "final_inventory": 2896.2071599361398,
+      "buy_fills": 114,
+      "sell_fills": 106,
+      "pause_count": 6,
+      "dump_pauses": 5,
+      "price_chg_pct": -15.760571114772103,
+      "pnl_delta_vs_baseline": 226.5664235463134,
+      "dd_delta_vs_baseline": -20.903312940361502
+    },
+    "global_prod": {
+      "final_pnl": 254.80701138625002,
+      "realized_pnl": 252.96064948517426,
+      "unrealized_pnl": 1.846361901075761,
+      "max_drawdown": 137.42790880115203,
+      "max_long_notional": 345.458228430571,
+      "max_short_notional": 1787.4769714014228,
+      "final_inventory": -1145.631444678952,
+      "buy_fills": 104,
+      "sell_fills": 100,
+      "pause_count": 6,
+      "dump_pauses": 5,
+      "price_chg_pct": -15.760571114772103,
+      "pnl_delta_vs_baseline": 227.87650659835862,
+      "dd_delta_vs_baseline": -20.903312940361502
+    },
+    "ticker_best": {
+      "final_pnl": 485.659525600645,
+      "realized_pnl": 418.1243896583039,
+      "unrealized_pnl": 67.53513594234107,
+      "max_drawdown": 193.26413626378383,
+      "max_long_notional": 0.0,
+      "max_short_notional": 2300.4888797405897,
+      "final_inventory": -11056.575982068802,
+      "buy_fills": 73,
+      "sell_fills": 91,
+      "pause_count": 19,
+      "dump_pauses": 12,
+      "price_chg_pct": -15.760571114772103,
+      "pnl_delta_vs_baseline": 0.0,
+      "dd_delta_vs_baseline": 0.0,
+      "score": 330.2804447946584
+    },
+    "ticker_best_params": {
+      "name": "JUP_best",
+      "market_lb": 12,
+      "market_ret_thresh": -0.015,
+      "ticker_lb": 6,
+      "ticker_cum_thresh": -0.025,
+      "ticker_bar_thresh": -0.01,
+      "vol_lb": 36,
+      "vol_median_lb": 288,
+      "vol_ratio_pause": 1.8,
+      "resume_bars": 18,
+      "resume_market_ret": -0.005,
+      "resume_ticker_ret": -0.01,
+      "resume_vol_ratio": 1.3,
+      "require_market_and_ticker": false
+    },
+    "stress": {
+      "stress_bars": 43,
+      "ret_30m": {
+        "min": -0.0730005367686527,
+        "p10": -0.04648760330578516,
+        "median": -0.03148425787106446,
+        "p90": -0.020499679692504658
+      },
+      "bar_5m": {
+        "min": -0.047960308710033095,
+        "p10": -0.01934235976789156,
+        "median": -0.005886200130804542,
+        "p90": 0.007407407407407529
+      }
+    },
+    "suggested": {
+      "ticker_cum_thresh": -0.0268,
+      "ticker_bar_thresh": -0.012,
+      "vol_ratio_pause": 1.8,
+      "require_market_and_ticker": false,
+      "notes": []
+    }
+  },
+  {
+    "ticker": "FET",
+    "band_pct": 3.0,
+    "correlation": {
+      "corr_btc": 0.661465574366644,
+      "corr_eth": 0.6738526411467678,
+      "corr_market_avg": 0.6851616737479634
+    },
+    "baseline": {
+      "final_pnl": 347.7392135574002,
+      "realized_pnl": 104.77893553852272,
+      "unrealized_pnl": 242.9602780188775,
+      "max_drawdown": 143.4263123111791,
+      "max_long_notional": 204.61433157099697,
+      "max_short_notional": 2040.7689765861035,
+      "final_inventory": -4283.893504531722,
+      "buy_fills": 66,
+      "sell_fills": 71,
+      "pause_count": 0,
+      "dump_pauses": 0,
+      "price_chg_pct": -21.45015105740181,
+      "pnl_delta_vs_baseline": 0.0,
+      "dd_delta_vs_baseline": 0.0
+    },
+    "global_rec": {
+      "final_pnl": 357.2855278512429,
+      "realized_pnl": 365.1455646493562,
+      "unrealized_pnl": -7.860036798113272,
+      "max_drawdown": 143.4263123111791,
+      "max_long_notional": 615.0565749161314,
+      "max_short_notional": 2040.7689765861035,
+      "final_inventory": -1053.7654910997867,
+      "buy_fills": 104,
+      "sell_fills": 103,
+      "pause_count": 5,
+      "dump_pauses": 5,
+      "price_chg_pct": -21.45015105740181,
+      "pnl_delta_vs_baseline": 9.54631429384267,
+      "dd_delta_vs_baseline": 0.0
+    },
+    "global_prod": {
+      "final_pnl": 296.61165162412334,
+      "realized_pnl": 353.33510661674194,
+      "unrealized_pnl": -56.7234549926186,
+      "max_drawdown": 143.4263123111791,
+      "max_long_notional": 204.61433157099697,
+      "max_short_notional": 2040.7689765861035,
+      "final_inventory": -5267.191578730168,
+      "buy_fills": 105,
+      "sell_fills": 109,
+      "pause_count": 3,
+      "dump_pauses": 3,
+      "price_chg_pct": -21.45015105740181,
+      "pnl_delta_vs_baseline": -51.127561933276866,
+      "dd_delta_vs_baseline": 0.0
+    },
+    "ticker_best": {
+      "final_pnl": 459.2980305057777,
+      "realized_pnl": 499.3332142015224,
+      "unrealized_pnl": -40.03518369574471,
+      "max_drawdown": 169.41842013686946,
+      "max_long_notional": 204.61433157099697,
+      "max_short_notional": 2361.317063739264,
+      "final_inventory": -3701.6921610299173,
+      "buy_fills": 120,
+      "sell_fills": 122,
+      "pause_count": 17,
+      "dump_pauses": 12,
+      "price_chg_pct": -21.45015105740181,
+      "pnl_delta_vs_baseline": 0.0,
+      "dd_delta_vs_baseline": 0.0,
+      "score": 405.613814854397
+    },
+    "ticker_best_params": {
+      "name": "FET_best",
+      "market_lb": 12,
+      "market_ret_thresh": -0.015,
+      "ticker_lb": 6,
+      "ticker_cum_thresh": -0.05,
+      "ticker_bar_thresh": -0.016,
+      "vol_lb": 36,
+      "vol_median_lb": 288,
+      "vol_ratio_pause": 1.8,
+      "resume_bars": 12,
+      "resume_market_ret": -0.005,
+      "resume_ticker_ret": -0.01,
+      "resume_vol_ratio": 1.3,
+      "require_market_and_ticker": false
+    },
+    "stress": {
+      "stress_bars": 48,
+      "ret_30m": {
+        "min": -0.062293534686172825,
+        "p10": -0.04325095057034223,
+        "median": -0.03253878168747637,
+        "p90": -0.018489170628631868
+      },
+      "bar_5m": {
+        "min": -0.052931596091205235,
+        "p10": -0.02202202202202208,
+        "median": -0.0036363636363636598,
+        "p90": 0.004468718967229446
+      }
+    },
+    "suggested": {
+      "ticker_cum_thresh": -0.0277,
+      "ticker_bar_thresh": -0.0144,
+      "vol_ratio_pause": 2.0,
+      "require_market_and_ticker": false,
+      "notes": [
+        "wide band \u2014 tolerate larger single-bar moves before pause"
+      ]
+    }
+  },
+  {
+    "ticker": "RENDER",
+    "band_pct": 3.0,
+    "correlation": {
+      "corr_btc": 0.7277378939045231,
+      "corr_eth": 0.7380998224587544,
+      "corr_market_avg": 0.7519342648379281
+    },
+    "baseline": {
+      "final_pnl": 360.03350848082516,
+      "realized_pnl": 94.13311595647544,
+      "unrealized_pnl": 265.90039252434974,
+      "max_drawdown": 226.18420446165186,
+      "max_long_notional": 102.87149705014751,
+      "max_short_notional": 2249.0781710914457,
+      "final_inventory": -659.1076696165192,
+      "buy_fills": 49,
+      "sell_fills": 67,
+      "pause_count": 0,
+      "dump_pauses": 0,
+      "price_chg_pct": -19.124877089478854,
+      "pnl_delta_vs_baseline": 0.0,
+      "dd_delta_vs_baseline": 0.0
+    },
+    "global_rec": {
+      "final_pnl": 555.4387218461563,
+      "realized_pnl": 533.3637570230445,
+      "unrealized_pnl": 22.074964823111873,
+      "max_drawdown": 194.2280133132905,
+      "max_long_notional": 102.87149705014751,
+      "max_short_notional": 2675.621867649381,
+      "final_inventory": -571.3518408230034,
+      "buy_fills": 92,
+      "sell_fills": 103,
+      "pause_count": 5,
+      "dump_pauses": 4,
+      "price_chg_pct": -19.124877089478854,
+      "pnl_delta_vs_baseline": 195.40521336533118,
+      "dd_delta_vs_baseline": 31.95619114836137
+    },
+    "global_prod": {
+      "final_pnl": 443.3831637951532,
+      "realized_pnl": 424.7154219850514,
+      "unrealized_pnl": 18.667741810101784,
+      "max_drawdown": 226.18420446165186,
+      "max_long_notional": 102.87149705014751,
+      "max_short_notional": 2270.652518026055,
+      "final_inventory": -564.5562074193597,
+      "buy_fills": 84,
+      "sell_fills": 99,
+      "pause_count": 3,
+      "dump_pauses": 3,
+      "price_chg_pct": -19.124877089478854,
+      "pnl_delta_vs_baseline": 83.34965531432806,
+      "dd_delta_vs_baseline": 0.0
+    },
+    "ticker_best": {
+      "final_pnl": 920.9456427844746,
+      "realized_pnl": 717.2559694724174,
+      "unrealized_pnl": 203.6896733120571,
+      "max_drawdown": 321.9640830562648,
+      "max_long_notional": 102.87149705014751,
+      "max_short_notional": 4047.16943694035,
+      "final_inventory": -1622.7059162404403,
+      "buy_fills": 83,
+      "sell_fills": 109,
+      "pause_count": 31,
+      "dump_pauses": 15,
+      "price_chg_pct": -19.124877089478854,
+      "pnl_delta_vs_baseline": 0.0,
+      "dd_delta_vs_baseline": 0.0,
+      "score": 726.2858855952486
+    },
+    "ticker_best_params": {
+      "name": "RENDER_best",
+      "market_lb": 12,
+      "market_ret_thresh": -0.02,
+      "ticker_lb": 6,
+      "ticker_cum_thresh": -0.04,
+      "ticker_bar_thresh": -0.01,
+      "vol_lb": 36,
+      "vol_median_lb": 288,
+      "vol_ratio_pause": 1.8,
+      "resume_bars": 12,
+      "resume_market_ret": -0.005,
+      "resume_ticker_ret": -0.01,
+      "resume_vol_ratio": 1.3,
+      "require_market_and_ticker": false
+    },
+    "stress": {
+      "stress_bars": 41,
+      "ret_30m": {
+        "min": -0.053842613897837066,
+        "p10": -0.046875,
+        "median": -0.033173076923076916,
+        "p90": -0.019753086419753152
+      },
+      "bar_5m": {
+        "min": -0.03716381418092907,
+        "p10": -0.013732833957553092,
+        "median": -0.0056022408963585235,
+        "p90": 0.007916872835230127
+      }
+    },
+    "suggested": {
+      "ticker_cum_thresh": -0.0282,
+      "ticker_bar_thresh": -0.0144,
+      "vol_ratio_pause": 2.0,
+      "require_market_and_ticker": false,
+      "notes": [
+        "wide band \u2014 tolerate larger single-bar moves before pause"
+      ]
+    }
+  }
+]

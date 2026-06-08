@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEAR Grid Vol Pause Study</title>
+<script src="NEAR_vol_pause_sim.data.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root { --bg:#0c1014; --panel:#151b22; --text:#d8dee6; --dim:#8b949e; --accent:#58a6ff; --bad:#f85149; --good:#3fb950; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--text); padding:16px; }
+  h1 { font-size:1.2rem; margin:0 0 8px; }
+  .sub { color:var(--dim); font-size:.85rem; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .card { background:var(--panel); border-radius:8px; padding:12px; }
+  .card h2 { font-size:.95rem; margin:0 0 8px; color:var(--accent); }
+  .stat { display:flex; justify-content:space-between; font-size:.85rem; margin:4px 0; }
+  #chart { height:360px; }
+  #pnl-chart { height:220px; }
+  table { width:100%; border-collapse:collapse; font-size:.75rem; }
+  th,td { text-align:left; padding:4px 6px; border-bottom:1px solid #21262d; }
+  .footnote { color:var(--dim); font-size:.75rem; margin-top:12px; }
+</style>
+</head>
+<body>
+<h1>NEAR grid — volatility pause study (1–7 Jun 2026)</h1>
+<p class="sub">Baseline paired grid vs BTC/ETH + NEAR stress pause. Double-click this file.</p>
+<div class="grid">
+  <div class="card"><h2>Baseline (no pause)</h2><div id="baseline-stats"></div></div>
+  <div class="card"><h2>Recommended pause</h2><div id="best-stats"></div></div>
+</div>
+<div class="card" style="margin-top:12px"><h2>NEAR price + pause windows</h2><div id="chart"></div></div>
+<div class="card" style="margin-top:12px"><h2>Equity curve</h2><div id="pnl-chart"></div></div>
+<div class="card" style="margin-top:12px"><h2>Top parameter sets</h2><div id="sweep-table"></div></div>
+<p class="footnote">Data: binancefetch/gridbot_study/gridbot_study_01-07JUN.sqlite</p>
+<script>
+const D = window.__NEAR_VOL_PAUSE_DATA__;
+function fmtUsd(x){ return (x>=0?'+':'')+x.toFixed(2); }
+function statCard(el, s, label){
+  el.innerHTML = `
+    <div class="stat"><span>Final PnL</span><span style="color:${s.final_pnl>=0?'var(--good)':'var(--bad)'}">${fmtUsd(s.final_pnl)}</span></div>
+    <div class="stat"><span>Max drawdown</span><span>${fmtUsd(-s.max_drawdown)}</span></div>
+    <div class="stat"><span>Max inv notional</span><span>$${s.max_inv_notional.toFixed(0)}</span></div>
+    <div class="stat"><span>Final inventory</span><span>${s.final_inventory.toFixed(2)} NEAR</span></div>
+    <div class="stat"><span>Buy / sell fills</span><span>${s.buy_fills} / ${s.sell_fills}</span></div>
+    <div class="stat"><span>Pause events</span><span>${s.pause_count}</span></div>
+    <div class="stat"><span>Label</span><span>${label}</span></div>`;
+}
+statCard(document.getElementById('baseline-stats'), D.baseline, 'no pause');
+statCard(document.getElementById('best-stats'), D.recommended, D.recommended.params.name);
+
+const priceData = D.near_prices.map(p=>({time:p.time_ms/1000, value:p.close}));
+const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+  layout:{background:{color:'#151b22'}, textColor:'#8b949e'},
+  grid:{vertLines:{color:'#21262d'}, horzLines:{color:'#21262d'}},
+  rightPriceScale:{borderColor:'#30363d'}, timeScale:{borderColor:'#30363d'},
+});
+const line = chart.addLineSeries({ color:'#58a6ff', lineWidth:2 });
+line.setData(priceData);
+D.recommended.pause_events.forEach(e=>{
+  if(e.type!=='pause') return;
+  line.setMarkers([...(line.markers||[]), {
+    time: e.time_ms/1000, position:'belowBar', color:'#f85149', shape:'arrowDown', text:'pause'
+  }]);
+});
+
+const pnlChart = LightweightCharts.createChart(document.getElementById('pnl-chart'), {
+  layout:{background:{color:'#151b22'}, textColor:'#8b949e'},
+  grid:{vertLines:{color:'#21262d'}, horzLines:{color:'#21262d'}},
+  rightPriceScale:{borderColor:'#30363d'}, timeScale:{borderColor:'#30363d'},
+});
+const bS = pnlChart.addLineSeries({ color:'#8b949e', lineWidth:1, title:'baseline' });
+const rS = pnlChart.addLineSeries({ color:'#3fb950', lineWidth:2, title:'paused' });
+bS.setData(D.baseline.series.map(p=>({time:p.time_ms/1000, value:p.total_pnl})));
+rS.setData(D.recommended.series.map(p=>({time:p.time_ms/1000, value:p.total_pnl})));
+
+const rows = D.sweep_top.slice(0, 12);
+document.getElementById('sweep-table').innerHTML = '<table><tr><th>Rank</th><th>Params</th><th>PnL</th><th>MaxDD</th><th>Pauses</th></tr>' +
+  rows.map((r,i)=>`<tr><td>${i+1}</td><td>${r.params.name}</td><td>${fmtUsd(r.final_pnl)}</td><td>${fmtUsd(-r.max_drawdown)}</td><td>${r.pause_count}</td></tr>`).join('') + '</table>';
+</script>
+</body>
+</html>

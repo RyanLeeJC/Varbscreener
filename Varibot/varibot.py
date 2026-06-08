@@ -1254,6 +1254,38 @@ def run_strategy_pick_tickers(
     )
 
 
+def _maybe_run_grid_vol_pause(
+    *,
+    ep: VariEndpoints,
+    args: argparse.Namespace,
+    strat_key: str,
+    cycle_index: int,
+) -> Set[str]:
+    """Cycle-start macro vol pause (dump + pump); uses CoinGecko until 60 cycles of history."""
+    if not _is_grid_like_strategy(strat_key):
+        return set()
+    try:
+        from grid_vol_pause import run_grid_vol_pause_cycle
+    except ImportError as e:
+        _log(f"grid_vol_pause: unavailable ({type(e).__name__}: {e})")
+        return set()
+    grid_syms = {str(s).strip().upper() for s in grid_trading_ticker_band_pcts().keys()}
+    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
+    try:
+        return run_grid_vol_pause_cycle(
+            ep,
+            cycle_index=int(cycle_index),
+            grid_tickers=grid_syms,
+            varibot_dir=_VARIBOT_DIR,
+            live=bool(args.live),
+            dry_run=rebalance_dry,
+            log=_log,
+        )
+    except Exception as e:
+        _log(f"grid_vol_pause: cycle error ({type(e).__name__}: {e})")
+        return set()
+
+
 def _maybe_run_ticker_pain_pause(
     *,
     ep: VariEndpoints,
@@ -2612,14 +2644,22 @@ def one_cycle(
     raw_pos = ep.get_positions()
     _log(_fmt_portfolio_snapshot_line(out))
 
+    vol_paused = _maybe_run_grid_vol_pause(
+        ep=ep,
+        args=args,
+        strat_key=strat_key,
+        cycle_index=int(cycle_index),
+    )
     paused_tickers, raw_pos = _maybe_run_ticker_pain_pause(
         ep=ep,
         positions_raw=raw_pos,
         args=args,
         strat_key=strat_key,
     )
+    if vol_paused:
+        paused_tickers = set(paused_tickers) | set(vol_paused)
     if paused_tickers:
-        _log(f"ticker_pause: active paused tickers: {', '.join(sorted(paused_tickers))}")
+        _log(f"paused tickers (vol+pain): {', '.join(sorted(paused_tickers))}")
 
     cycle_bulk_marks: Optional[Dict[str, float]] = None
     if bool(args.live) and _use_bulk_supported_assets_marks():
