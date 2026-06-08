@@ -44,8 +44,6 @@ DEFAULT_NOTIONAL_CAP_TRIM_FRACTION: float = 0.5
 # When IM usage ≥ rebalance trigger: reduce-only trim every open position by this fraction (default 50%).
 ENV_IM_HIGH_USAGE_TRIM_FRACTION = "VARIBOT_IM_HIGH_USAGE_TRIM_FRACTION"
 DEFAULT_IM_HIGH_USAGE_TRIM_FRACTION: float = 0.5
-# Book hedge legs (see book_hedge.py) — excluded from grid-style trims and interval risk.
-HEDGE_TICKERS: Tuple[str, ...] = ("BTC", "ETH", "SOL")
 # Each market leg: 2× indicative quote + 1× POST market (see VariEndpoints.quote_id_for_order_qty).
 MARKET_LEG_HTTP_CALLS: int = 3
 
@@ -157,8 +155,7 @@ def _market_leg_slippage_retry_cap(sym: str, *, leg_max_slippage: float) -> floa
     """
     Upper bound for slippage retries on a leg.
 
-    Book hedge uses a tight first-attempt slip (e.g. 0.05% SOL); retries may step up to
-    ``MAX_SLIPPAGE`` / ``MAX_SLIPPAGE_<ASSET>`` when that global cap is higher.
+    Retries may step up to ``MAX_SLIPPAGE`` / ``MAX_SLIPPAGE_<ASSET>`` when that global cap is higher.
     """
     per = _max_slippage_cap_for_asset(sym, default_cap=float(leg_max_slippage))
     global_cap = _max_slippage_cap_for_asset(sym, default_cap=_global_max_slippage_default())
@@ -303,16 +300,6 @@ def im_high_usage_trim_fraction() -> float:
     return _env_float(ENV_IM_HIGH_USAGE_TRIM_FRACTION, DEFAULT_IM_HIGH_USAGE_TRIM_FRACTION)
 
 
-def is_hedge_ticker(ticker: str) -> bool:
-    """True for BTC/ETH/SOL book-hedge legs (not grid inventory)."""
-    return str(ticker).strip().upper() in HEDGE_TICKERS
-
-
-def _positions_for_grid_trims(positions: Sequence[LivePosition]) -> List[LivePosition]:
-    """Grid book positions only — hedge legs are sized to offset book net, not grid rungs."""
-    return [p for p in positions if not is_hedge_ticker(p.ticker)]
-
-
 def _planned_trim_order(
     pos: LivePosition,
     *,
@@ -371,7 +358,7 @@ def plan_notional_cap_trims(
         return []
 
     out: List[PlannedTrimOrder] = []
-    for pos in _positions_for_grid_trims(positions):
+    for pos in positions:
         rung = grid_rung_usd_for_ticker(pos.ticker)
         if rung <= 0:
             continue
@@ -411,7 +398,7 @@ def plan_position_trims(
 
     threshold = float(mult) * float(rung)
     out: List[PlannedTrimOrder] = []
-    for pos in _positions_for_grid_trims(positions):
+    for pos in positions:
         planned = _planned_trim_order(
             pos, threshold=threshold, frac=frac, rung_usd=float(rung), min_usd=min_usd
         )
@@ -442,7 +429,7 @@ def plan_oversized_profit_flattens(
         return []
 
     out: List[PlannedTrimOrder] = []
-    for pos in _positions_for_grid_trims(positions):
+    for pos in positions:
         if pos.upnl_usd is None or float(pos.upnl_usd) <= float(min_upnl):
             continue
         rung = grid_rung_usd_for_ticker(pos.ticker)
@@ -471,7 +458,6 @@ def plan_im_high_usage_trims(
     Reduce-only trim of ``trim_fraction`` of qty on grid book positions (default 50%).
 
     Intended when portfolio IM usage is at or above ``VARIBOT_REBALANCE_IM_TRIGGER`` (default 80%).
-    BTC/ETH/SOL hedge legs are excluded — sized and adjusted only by ``book_hedge.py``.
     """
     frac = im_high_usage_trim_fraction() if trim_fraction is None else float(trim_fraction)
     _, _, _, min_usd = rebalance_constants()
@@ -482,7 +468,7 @@ def plan_im_high_usage_trims(
         return []
 
     out: List[PlannedTrimOrder] = []
-    for pos in _positions_for_grid_trims(positions):
+    for pos in positions:
         rung = grid_rung_usd_for_ticker(pos.ticker)
         planned = _planned_trim_order(
             pos,
@@ -680,7 +666,7 @@ def plan_portfolio_rebalance(
     if float(portfolio_value) <= 0 or float(max_leverage) <= 0:
         return None
 
-    live = [p for p in positions if p.mark_price > 0 and p.quantity > 0 and not is_hedge_ticker(p.ticker)]
+    live = [p for p in positions if p.mark_price > 0 and p.quantity > 0]
     n = len(live)
     if n == 0:
         return None
@@ -757,7 +743,7 @@ def plan_portfolio_rebalance(
     )
 
 
-# Market-leg retry (book_hedge, trims): same increment/attempts as varibot / multimarketorder.
+# Market-leg retry (trims): same increment/attempts as varibot / multimarketorder.
 MARKET_LEG_SLIPPAGE_RETRY_INCREMENT: float = 0.0005
 MARKET_LEG_MAX_ATTEMPTS: int = 6
 DEFAULT_MAX_SLIPPAGE: float = 0.002  # matches env.example MAX_SLIPPAGE when unset

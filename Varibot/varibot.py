@@ -125,7 +125,6 @@ if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
 from check_portfolio_stats import _build_out_dict  # noqa: E402
-from book_hedge import maybe_book_hedge  # noqa: E402
 from portfolio_rebalance import rebalance_portfolio  # noqa: E402
 from grid_limits_reconcile import (  # noqa: E402
     _position_qty_summary,
@@ -2590,39 +2589,6 @@ def _invert_extreme_topup_if_needed(
         )
 
 
-def _run_book_hedge_at_cycle_end(
-    *,
-    ep: VariEndpoints,
-    args: argparse.Namespace,
-    dry_run: bool,
-    cycle_bulk_marks: Optional[Dict[str, float]],
-) -> None:
-    """
-    Book hedge runs last in the cycle (after grid limit reconcile / cancellations)
-    so limit maintenance takes priority over BTC/ETH/SOL market hedges.
-    """
-    try:
-        _log("step: book hedge (end of cycle)...")
-        raw_pf = ep.get_portfolio(compute_margin=True)
-        snap_end = parse_portfolio_snapshot(raw_pf)
-        raw_pos_end = ep.get_positions()
-        if not has_open_positions(raw_pos_end):
-            return
-        maybe_book_hedge(
-            ep=ep,
-            snap=snap_end,
-            positions_raw=raw_pos_end,
-            live=bool(args.live),
-            dry_run=dry_run,
-            log=_log,
-            mark_fetcher=lambda sym: float(
-                _grid_mark_for_asset(ep, asset=sym, bulk_map=cycle_bulk_marks)
-            ),
-        )
-    except Exception as e:
-        _log(f"book_hedge: error ({type(e).__name__}: {e})")
-
-
 def one_cycle(
     *,
     ep: VariEndpoints,
@@ -2673,16 +2639,6 @@ def one_cycle(
 
     has_pos = has_open_positions(raw_pos)
     rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
-    hedge_dry = rebalance_dry
-
-    def _finish_cycle() -> bool:
-        _run_book_hedge_at_cycle_end(
-            ep=ep,
-            args=args,
-            dry_run=hedge_dry,
-            cycle_bulk_marks=cycle_bulk_marks,
-        )
-        return False
 
     if has_pos:
         try:
@@ -2806,11 +2762,11 @@ def one_cycle(
             else:
                 _log("gridlimits reconcile: skip (gridstrat emitted events this cycle).")
             _execute_grid_market_events(meta, args=args)
-            return _finish_cycle()
+            return False
 
         if not longs and not shorts:
             _log("strategy returned no tickers; skip multimarket.")
-            return _finish_cycle()
+            return False
 
         _log(f"step: running {args.multi_script} (many API calls possible)...")
         if args.usd is not None:
@@ -2847,7 +2803,7 @@ def one_cycle(
                 jobs_tag="flat entry",
                 usd=float(args.usd) if args.usd is not None else None,
             )
-        return _finish_cycle()
+        return False
 
     # --- have positions ---
     strat_norm = _strategy_key_normalized(strat_key)
@@ -2909,7 +2865,7 @@ def one_cycle(
                 else:
                     _log("gridlimits reconcile: skip (gridstrat emitted events this cycle).")
                 _execute_grid_market_events(meta_g, args=args)
-                return _finish_cycle()
+                return False
         except Exception as e:
             _log(f"WARNING: gridstrat cycle with open positions ({type(e).__name__}: {e})")
 
@@ -2984,7 +2940,7 @@ def one_cycle(
         ep=ep, args=args, snap=snap, positions_raw=raw_pos, cycle_index=int(cycle_index)
     )
 
-    return _finish_cycle()
+    return False
 
 
 def parse_args() -> argparse.Namespace:

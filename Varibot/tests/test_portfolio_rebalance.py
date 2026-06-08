@@ -433,8 +433,8 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
         self.assertEqual(trims, [])
 
 
-class TestHedgeTickerExclusion(unittest.TestCase):
-    def test_notional_cap_skips_btc_eth_sol(self) -> None:
+class TestMajorTickerTrims(unittest.TestCase):
+    def test_notional_cap_trims_btc_eth_sol(self) -> None:
         positions = [
             _pos("BTC", "short", 0.5, 67000.0),
             _pos("ETH", "short", 2.0, 3000.0),
@@ -446,9 +446,9 @@ class TestHedgeTickerExclusion(unittest.TestCase):
             trim_fraction=0.5,
             min_order_usd=5.0,
         )
-        self.assertEqual(trims, [])
+        self.assertEqual({t.ticker for t in trims}, {"BTC", "ETH", "SOL"})
 
-    def test_im_high_usage_skips_hedge_legs(self) -> None:
+    def test_im_high_usage_includes_all_positions(self) -> None:
         trims = plan_im_high_usage_trims(
             [
                 _pos("BTC", "short", 0.2, 67000.0),
@@ -457,10 +457,9 @@ class TestHedgeTickerExclusion(unittest.TestCase):
             trim_fraction=0.5,
             min_order_usd=5.0,
         )
-        self.assertEqual(len(trims), 1)
-        self.assertEqual(trims[0].ticker, "AVAX")
+        self.assertEqual({t.ticker for t in trims}, {"BTC", "AVAX"})
 
-    def test_interval_risk_ignores_hedge_only_book(self) -> None:
+    def test_interval_risk_includes_btc_eth_book(self) -> None:
         plan = plan_portfolio_rebalance(
             portfolio_value=1000.0,
             max_leverage=50.0,
@@ -471,7 +470,10 @@ class TestHedgeTickerExclusion(unittest.TestCase):
             ],
             margin_trigger=0.35,
         )
-        self.assertIsNone(plan)
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        self.assertEqual(plan.n_eff, 2)
+        self.assertEqual(set(plan.working_tickers), {"BTC", "ETH"})
 
 
 class TestMarketLegSlippageRetry(unittest.TestCase):
