@@ -1,0 +1,2715 @@
+{
+  "vari-crypto-universe": [
+    {
+      "asset": "0G",
+      "coingecko_id": "zero-gravity"
+    },
+    {
+      "asset": "1000000MOG",
+      "coingecko_id": "mog-coin"
+    },
+    {
+      "asset": "1000BONK",
+      "coingecko_id": "bonk"
+    },
+    {
+      "asset": "1000FLOKI",
+      "coingecko_id": "floki"
+    },
+    {
+      "asset": "1000PEPE",
+      "coingecko_id": "pepe"
+    },
+    {
+      "asset": "1INCH",
+      "coingecko_id": "1inch"
+    },
+    {
+      "asset": "1NEIRO",
+      "coingecko_id": "neiro-3"
+    },
+    {
+      "asset": "2Z",
+      "coingecko_id": "doublezero"
+    },
+    {
+      "asset": "4",
+      "coingecko_id": "4-2"
+    },
+    {
+      "asset": "A",
+      "coingecko_id": "vaulta"
+    },
+    {
+      "asset": "AAVE",
+      "coingecko_id": "aave"
+    },
+    {
+      "asset": "ACE",
+      "coingecko_id": "endurance"
+    },
+    {
+      "asset": "ACH",
+      "coingecko_id": "alchemy-pay"
+    },
+    {
+      "asset": "ACX",
+      "coingecko_id": "across-protocol"
+    },
+    {
+      "asset": "ADA",
+      "coingecko_id": "cardano"
+    },
+    {
+      "asset": "AERGO",
+      "coingecko_id": "aergo"
+    },
+    {
+      "asset": "AERO",
+      "coingecko_id": "aerodrome-finance"
+    },
+    {
+      "asset": "AEVO",
+      "coingecko_id": "aevo-exchange"
+    },
+    {
+      "asset": "AGI",
+      "coingecko_id": "delysium"
+    },
+    {
+      "asset": "AGLD",
+      "coingecko_id": "adventure-gold"
+    },
+    {
+      "asset": "AIOT",
+      "coingecko_id": "okzoo"
+    },
+    {
+      "asset": "AIOZ",
+      "coingecko_id": "aioz-network"
+    },
+    {
+      "asset": "AIXBT",
+      "coingecko_id": "aixbt"
+    },
+    {
+      "asset": "AKE",
+      "coingecko_id": "akedo"
+    },
+    {
+      "asset": "AKT",
+      "coingecko_id": "akash-network"
+    },
+    {
+      "asset": "ALCH",
+      "coingecko_id": "alchemist-ai"
+    },
+    {
+      "asset": "ALGO",
+      "coingecko_id": "algorand"
+    },
+    {
+      "asset": "ALICE",
+      "coingecko_id": "my-neighbor-alice"
+    },
+    {
+      "asset": "ALLORA",
+      "coingecko_id": "allora"
+    },
+    {
+      "asset": "ALPINE",
+      "coingecko_id": "alpine-f1-team-fan-token"
+    },
+    {
+      "asset": "ALT",
+      "coingecko_id": "altlayer"
+    },
+    {
+      "asset": "ANIME",
+      "coingecko_id": "anime"
+    },
+    {
+      "asset": "ANKR",
+      "coingecko_id": "ankr"
+    },
+    {
+      "asset": "APE",
+      "coingecko_id": "apecoin"
+    },
+    {
+      "asset": "APEX",
+      "coingecko_id": "apex-token-2"
+    },
+    {
+      "asset": "API3",
+      "coingecko_id": "api3"
+    },
+    {
+      "asset": "APRO",
+      "coingecko_id": "apro"
+    },
+    {
+      "asset": "APT",
+      "coingecko_id": "aptos"
+    },
+    {
+      "asset": "AR",
+      "coingecko_id": "arweave"
+    },
+    {
+      "asset": "ARB",
+      "coingecko_id": "arbitrum"
+    },
+    {
+      "asset": "ARCSOL",
+      "coingecko_id": "ai-rig-complex"
+    },
+    {
+      "asset": "ARK",
+      "coingecko_id": "ark"
+    },
+    {
+      "asset": "ARKM",
+      "coingecko_id": "arkham"
+    },
+    {
+      "asset": "ARPA",
+      "coingecko_id": "arpa"
+    },
+    {
+      "asset": "ASPECTA",
+      "coingecko_id": "aspecta"
+    },
+    {
+      "asset": "ASR",
+      "coingecko_id": "as-roma-fan-token"
+    },
+    {
+      "asset": "ASTER",
+      "coingecko_id": "aster-2"
+    },
+    {
+      "asset": "ASTR",
+      "coingecko_id": "astar"
+    },
+    {
+      "asset": "ATH",
+      "coingecko_id": "aethir"
+    },
+    {
+      "asset": "ATOM",
+      "coingecko_id": "cosmos"
+    },
+    {
+      "asset": "AUCTION",
+      "coingecko_id": "auction"
+    },
+    {
+      "asset": "AVA",
+      "coingecko_id": "concierge-io"
+    },
+    {
+      "asset": "AVAX",
+      "coingecko_id": "avalanche-2"
+    },
+    {
+      "asset": "AVNT",
+      "coingecko_id": "avantis"
+    },
+    {
+      "asset": "AXL",
+      "coingecko_id": "axelar"
+    },
+    {
+      "asset": "AXS",
+      "coingecko_id": "axie-infinity"
+    },
+    {
+      "asset": "AZTEC",
+      "coingecko_id": "aztec"
+    },
+    {
+      "asset": "B2",
+      "coingecko_id": "bsquared-network"
+    },
+    {
+      "asset": "B3",
+      "coingecko_id": "b3"
+    },
+    {
+      "asset": "BABYL",
+      "coingecko_id": "babylon"
+    },
+    {
+      "asset": "BANANAS31",
+      "coingecko_id": "banana-for-scale-2"
+    },
+    {
+      "asset": "BAND",
+      "coingecko_id": "band-protocol"
+    },
+    {
+      "asset": "BARD",
+      "coingecko_id": "lombard-protocol"
+    },
+    {
+      "asset": "BASED",
+      "coingecko_id": "based-one"
+    },
+    {
+      "asset": "BAT",
+      "coingecko_id": "basic-attention-token"
+    },
+    {
+      "asset": "BBIT",
+      "coingecko_id": "bouncebit"
+    },
+    {
+      "asset": "BCH",
+      "coingecko_id": "bitcoin-cash"
+    },
+    {
+      "asset": "BCHSV",
+      "coingecko_id": "bitcoin-cash-sv"
+    },
+    {
+      "asset": "BEAM",
+      "coingecko_id": "beam-2"
+    },
+    {
+      "asset": "BEAT",
+      "coingecko_id": "audiera"
+    },
+    {
+      "asset": "BEL",
+      "coingecko_id": "bella-protocol"
+    },
+    {
+      "asset": "BERA",
+      "coingecko_id": "berachain-bera"
+    },
+    {
+      "asset": "BICO",
+      "coingecko_id": "biconomy"
+    },
+    {
+      "asset": "BIGTIME",
+      "coingecko_id": "big-time"
+    },
+    {
+      "asset": "BIO",
+      "coingecko_id": "bio-protocol"
+    },
+    {
+      "asset": "BITLIGHT",
+      "coingecko_id": "bitlight"
+    },
+    {
+      "asset": "BLAST",
+      "coingecko_id": "blast"
+    },
+    {
+      "asset": "BLESS",
+      "coingecko_id": "bless-2"
+    },
+    {
+      "asset": "BLUR",
+      "coingecko_id": "blur"
+    },
+    {
+      "asset": "BMT",
+      "coingecko_id": "bubblemaps"
+    },
+    {
+      "asset": "BNB",
+      "coingecko_id": "binancecoin"
+    },
+    {
+      "asset": "BOBA",
+      "coingecko_id": "boba-network"
+    },
+    {
+      "asset": "BOME",
+      "coingecko_id": "book-of-meme"
+    },
+    {
+      "asset": "BR",
+      "coingecko_id": "bedrock-token"
+    },
+    {
+      "asset": "BRETT",
+      "coingecko_id": "based-brett"
+    },
+    {
+      "asset": "BREV",
+      "coingecko_id": "brevis"
+    },
+    {
+      "asset": "BROCCOLI",
+      "coingecko_id": "czs-dog"
+    },
+    {
+      "asset": "BSB",
+      "coingecko_id": "block-street"
+    },
+    {
+      "asset": "BTC",
+      "coingecko_id": "bitcoin"
+    },
+    {
+      "asset": "BTR0",
+      "coingecko_id": "bitlayer-bitvm"
+    },
+    {
+      "asset": "C",
+      "coingecko_id": "chainbase"
+    },
+    {
+      "asset": "C98",
+      "coingecko_id": "coin98"
+    },
+    {
+      "asset": "CAKE",
+      "coingecko_id": "pancakeswap-token"
+    },
+    {
+      "asset": "CARV",
+      "coingecko_id": "carv"
+    },
+    {
+      "asset": "CATI",
+      "coingecko_id": "catizen"
+    },
+    {
+      "asset": "CELO",
+      "coingecko_id": "celo"
+    },
+    {
+      "asset": "CETUS",
+      "coingecko_id": "cetus-protocol"
+    },
+    {
+      "asset": "CFX",
+      "coingecko_id": "conflux-token"
+    },
+    {
+      "asset": "CGPT",
+      "coingecko_id": "chaingpt"
+    },
+    {
+      "asset": "CHILLGUY",
+      "coingecko_id": "chill-guy"
+    },
+    {
+      "asset": "CHIP",
+      "coingecko_id": "chip-2"
+    },
+    {
+      "asset": "CHR",
+      "coingecko_id": "chromaway"
+    },
+    {
+      "asset": "CHZ",
+      "coingecko_id": "chiliz"
+    },
+    {
+      "asset": "CKB",
+      "coingecko_id": "nervos-network"
+    },
+    {
+      "asset": "CLANKER",
+      "coingecko_id": "tokenbot-2"
+    },
+    {
+      "asset": "COMP",
+      "coingecko_id": "compound-governance-token"
+    },
+    {
+      "asset": "COOKIE",
+      "coingecko_id": "cookie"
+    },
+    {
+      "asset": "CORE",
+      "coingecko_id": "coredaoorg"
+    },
+    {
+      "asset": "COTI",
+      "coingecko_id": "coti"
+    },
+    {
+      "asset": "COW",
+      "coingecko_id": "cow-protocol"
+    },
+    {
+      "asset": "CROSS",
+      "coingecko_id": "cross-2"
+    },
+    {
+      "asset": "CRV",
+      "coingecko_id": "curve-dao-token"
+    },
+    {
+      "asset": "CTC",
+      "coingecko_id": "creditcoin-2"
+    },
+    {
+      "asset": "CVC",
+      "coingecko_id": "civic"
+    },
+    {
+      "asset": "CVX",
+      "coingecko_id": "convex-finance"
+    },
+    {
+      "asset": "CYBER",
+      "coingecko_id": "cyberconnect"
+    },
+    {
+      "asset": "CYS",
+      "coingecko_id": "cysic"
+    },
+    {
+      "asset": "DASH",
+      "coingecko_id": "dash"
+    },
+    {
+      "asset": "DBR",
+      "coingecko_id": "debridge"
+    },
+    {
+      "asset": "DEEP",
+      "coingecko_id": "deep"
+    },
+    {
+      "asset": "DEXE",
+      "coingecko_id": "dexe"
+    },
+    {
+      "asset": "DIA",
+      "coingecko_id": "dia-data"
+    },
+    {
+      "asset": "DOGE",
+      "coingecko_id": "dogecoin"
+    },
+    {
+      "asset": "DOLO",
+      "coingecko_id": "dolomite"
+    },
+    {
+      "asset": "DOOD",
+      "coingecko_id": "doodles"
+    },
+    {
+      "asset": "DOT",
+      "coingecko_id": "polkadot"
+    },
+    {
+      "asset": "DRIFT",
+      "coingecko_id": "drift-protocol"
+    },
+    {
+      "asset": "DUSK",
+      "coingecko_id": "dusk-network"
+    },
+    {
+      "asset": "DYM",
+      "coingecko_id": "dymension"
+    },
+    {
+      "asset": "EDU",
+      "coingecko_id": "edu-coin"
+    },
+    {
+      "asset": "EGLD",
+      "coingecko_id": "elrond-erd-2"
+    },
+    {
+      "asset": "EIGEN",
+      "coingecko_id": "eigenlayer"
+    },
+    {
+      "asset": "ELSA",
+      "coingecko_id": "elsa"
+    },
+    {
+      "asset": "ENA",
+      "coingecko_id": "ethena"
+    },
+    {
+      "asset": "ENJ",
+      "coingecko_id": "enjincoin"
+    },
+    {
+      "asset": "ENS",
+      "coingecko_id": "ethereum-name-service"
+    },
+    {
+      "asset": "ENSO",
+      "coingecko_id": "enso"
+    },
+    {
+      "asset": "ERA",
+      "coingecko_id": "caldera"
+    },
+    {
+      "asset": "ES",
+      "coingecko_id": "eclipse-3"
+    },
+    {
+      "asset": "ESPORTS",
+      "coingecko_id": "yooldo-games"
+    },
+    {
+      "asset": "ESPRESSO",
+      "coingecko_id": "espresso"
+    },
+    {
+      "asset": "ETH",
+      "coingecko_id": "ethereum"
+    },
+    {
+      "asset": "ETHFI",
+      "coingecko_id": "ether-fi"
+    },
+    {
+      "asset": "EUL",
+      "coingecko_id": "euler"
+    },
+    {
+      "asset": "F",
+      "coingecko_id": "synfutures"
+    },
+    {
+      "asset": "FARTCOIN",
+      "coingecko_id": "fartcoin"
+    },
+    {
+      "asset": "FET",
+      "coingecko_id": "fetch-ai"
+    },
+    {
+      "asset": "FF0",
+      "coingecko_id": "falcon-finance-ff"
+    },
+    {
+      "asset": "FIDA",
+      "coingecko_id": "bonfida"
+    },
+    {
+      "asset": "FIL",
+      "coingecko_id": "filecoin"
+    },
+    {
+      "asset": "FLOCK",
+      "coingecko_id": "flock-2"
+    },
+    {
+      "asset": "FLOW",
+      "coingecko_id": "flow"
+    },
+    {
+      "asset": "FLR",
+      "coingecko_id": "flare-networks"
+    },
+    {
+      "asset": "FLUID",
+      "coingecko_id": "instadapp"
+    },
+    {
+      "asset": "FLUX",
+      "coingecko_id": "zelcash"
+    },
+    {
+      "asset": "FOGO",
+      "coingecko_id": "fogo"
+    },
+    {
+      "asset": "GALA",
+      "coingecko_id": "gala"
+    },
+    {
+      "asset": "GAS",
+      "coingecko_id": "gas"
+    },
+    {
+      "asset": "GENIUS",
+      "coingecko_id": "genius-3"
+    },
+    {
+      "asset": "GIGA",
+      "coingecko_id": "gigachad-2"
+    },
+    {
+      "asset": "GIGGLE",
+      "coingecko_id": "giggle-fund"
+    },
+    {
+      "asset": "GLM",
+      "coingecko_id": "golem"
+    },
+    {
+      "asset": "GMT",
+      "coingecko_id": "stepn"
+    },
+    {
+      "asset": "GMX",
+      "coingecko_id": "gmx"
+    },
+    {
+      "asset": "GOAT",
+      "coingecko_id": "goatseus-maximus"
+    },
+    {
+      "asset": "GODS",
+      "coingecko_id": "gods-unchained"
+    },
+    {
+      "asset": "GPS",
+      "coingecko_id": "goplus-security"
+    },
+    {
+      "asset": "GRASS",
+      "coingecko_id": "grass"
+    },
+    {
+      "asset": "GRT",
+      "coingecko_id": "the-graph"
+    },
+    {
+      "asset": "GUA",
+      "coingecko_id": "superfortune"
+    },
+    {
+      "asset": "GWEI",
+      "coingecko_id": "ethgas-2"
+    },
+    {
+      "asset": "H",
+      "coingecko_id": "humanity"
+    },
+    {
+      "asset": "HAEDAL",
+      "coingecko_id": "haedal"
+    },
+    {
+      "asset": "HBAR",
+      "coingecko_id": "hedera-hashgraph"
+    },
+    {
+      "asset": "HEI",
+      "coingecko_id": "heima"
+    },
+    {
+      "asset": "HEMI",
+      "coingecko_id": "hemi"
+    },
+    {
+      "asset": "HFT",
+      "coingecko_id": "hashflow"
+    },
+    {
+      "asset": "HIGH",
+      "coingecko_id": "highstreet"
+    },
+    {
+      "asset": "HMSTR",
+      "coingecko_id": "hamster-kombat"
+    },
+    {
+      "asset": "HNT",
+      "coingecko_id": "helium"
+    },
+    {
+      "asset": "HOLO",
+      "coingecko_id": "holoworld"
+    },
+    {
+      "asset": "HOME",
+      "coingecko_id": "home"
+    },
+    {
+      "asset": "HUMA",
+      "coingecko_id": "huma-finance"
+    },
+    {
+      "asset": "HUMIDIFI",
+      "coingecko_id": "humidifi"
+    },
+    {
+      "asset": "HYPE",
+      "coingecko_id": "hyperliquid"
+    },
+    {
+      "asset": "HYPER",
+      "coingecko_id": "hyperlane"
+    },
+    {
+      "asset": "ICNT",
+      "coingecko_id": "impossible-cloud-network-token"
+    },
+    {
+      "asset": "ICP",
+      "coingecko_id": "internet-computer"
+    },
+    {
+      "asset": "ICX",
+      "coingecko_id": "icon"
+    },
+    {
+      "asset": "ID",
+      "coingecko_id": "space-id"
+    },
+    {
+      "asset": "IDOL",
+      "coingecko_id": "meet48"
+    },
+    {
+      "asset": "ILV",
+      "coingecko_id": "illuvium"
+    },
+    {
+      "asset": "IMX",
+      "coingecko_id": "immutable-x"
+    },
+    {
+      "asset": "IN",
+      "coingecko_id": "infinit"
+    },
+    {
+      "asset": "INIT",
+      "coingecko_id": "initia"
+    },
+    {
+      "asset": "INJ",
+      "coingecko_id": "injective-protocol"
+    },
+    {
+      "asset": "IO",
+      "coingecko_id": "io"
+    },
+    {
+      "asset": "IOST",
+      "coingecko_id": "iostoken"
+    },
+    {
+      "asset": "IOTA",
+      "coingecko_id": "iota"
+    },
+    {
+      "asset": "IOTX",
+      "coingecko_id": "iotex"
+    },
+    {
+      "asset": "IP",
+      "coingecko_id": "story-2"
+    },
+    {
+      "asset": "IRYS",
+      "coingecko_id": "irys"
+    },
+    {
+      "asset": "JASMY",
+      "coingecko_id": "jasmycoin"
+    },
+    {
+      "asset": "JTO",
+      "coingecko_id": "jito-governance-token"
+    },
+    {
+      "asset": "JUP",
+      "coingecko_id": "jupiter-exchange-solana"
+    },
+    {
+      "asset": "KAIA",
+      "coingecko_id": "kaia"
+    },
+    {
+      "asset": "KAITO",
+      "coingecko_id": "kaito"
+    },
+    {
+      "asset": "KAS",
+      "coingecko_id": "kaspa"
+    },
+    {
+      "asset": "KAVA",
+      "coingecko_id": "kava"
+    },
+    {
+      "asset": "KERNEL",
+      "coingecko_id": "kernel-2"
+    },
+    {
+      "asset": "KGEN",
+      "coingecko_id": "kgen"
+    },
+    {
+      "asset": "KMNO",
+      "coingecko_id": "kamino"
+    },
+    {
+      "asset": "KNC",
+      "coingecko_id": "kyber-network-crystal"
+    },
+    {
+      "asset": "KOMA",
+      "coingecko_id": "koma-inu"
+    },
+    {
+      "asset": "KSM",
+      "coingecko_id": "kusama"
+    },
+    {
+      "asset": "LAGRANGE",
+      "coingecko_id": "lagrange"
+    },
+    {
+      "asset": "LDO",
+      "coingecko_id": "lido-dao"
+    },
+    {
+      "asset": "LIGHTER",
+      "coingecko_id": "lighter"
+    },
+    {
+      "asset": "LINEA",
+      "coingecko_id": "linea"
+    },
+    {
+      "asset": "LINK",
+      "coingecko_id": "chainlink"
+    },
+    {
+      "asset": "LPT",
+      "coingecko_id": "livepeer"
+    },
+    {
+      "asset": "LQTY",
+      "coingecko_id": "liquity"
+    },
+    {
+      "asset": "LRC",
+      "coingecko_id": "loopring"
+    },
+    {
+      "asset": "LSK",
+      "coingecko_id": "lisk"
+    },
+    {
+      "asset": "LTC",
+      "coingecko_id": "litecoin"
+    },
+    {
+      "asset": "LUMIA",
+      "coingecko_id": "lumia"
+    },
+    {
+      "asset": "LUNA2",
+      "coingecko_id": "terra-luna-2"
+    },
+    {
+      "asset": "MAGIC",
+      "coingecko_id": "magic"
+    },
+    {
+      "asset": "MAGMA",
+      "coingecko_id": "magma-finance"
+    },
+    {
+      "asset": "MANA",
+      "coingecko_id": "decentraland"
+    },
+    {
+      "asset": "MANTA",
+      "coingecko_id": "manta-network"
+    },
+    {
+      "asset": "MASK",
+      "coingecko_id": "mask-network"
+    },
+    {
+      "asset": "MAV",
+      "coingecko_id": "maverick-protocol"
+    },
+    {
+      "asset": "MAVIA",
+      "coingecko_id": "heroes-of-mavia"
+    },
+    {
+      "asset": "MBOX",
+      "coingecko_id": "mobox"
+    },
+    {
+      "asset": "ME",
+      "coingecko_id": "magic-eden"
+    },
+    {
+      "asset": "MEGA",
+      "coingecko_id": "megaeth"
+    },
+    {
+      "asset": "MELANIA",
+      "coingecko_id": "melania-meme"
+    },
+    {
+      "asset": "MERL",
+      "coingecko_id": "merlin-chain"
+    },
+    {
+      "asset": "METEORA",
+      "coingecko_id": "meteora"
+    },
+    {
+      "asset": "METIS",
+      "coingecko_id": "metis-token"
+    },
+    {
+      "asset": "MEW",
+      "coingecko_id": "cat-in-a-dogs-world"
+    },
+    {
+      "asset": "MINA",
+      "coingecko_id": "mina-protocol"
+    },
+    {
+      "asset": "MITO",
+      "coingecko_id": "mitosis"
+    },
+    {
+      "asset": "MLN",
+      "coingecko_id": "melon"
+    },
+    {
+      "asset": "MMT",
+      "coingecko_id": "momentum-3"
+    },
+    {
+      "asset": "MNT",
+      "coingecko_id": "mantle"
+    },
+    {
+      "asset": "MON",
+      "coingecko_id": "monad"
+    },
+    {
+      "asset": "MOODENG",
+      "coingecko_id": "moo-deng"
+    },
+    {
+      "asset": "MOVE",
+      "coingecko_id": "movement"
+    },
+    {
+      "asset": "MOVR",
+      "coingecko_id": "moonriver"
+    },
+    {
+      "asset": "MUBARAK",
+      "coingecko_id": "mubarak"
+    },
+    {
+      "asset": "MYX",
+      "coingecko_id": "myx-finance"
+    },
+    {
+      "asset": "NAORIS",
+      "coingecko_id": "naoris"
+    },
+    {
+      "asset": "NEAR",
+      "coingecko_id": "near"
+    },
+    {
+      "asset": "NEO",
+      "coingecko_id": "neo"
+    },
+    {
+      "asset": "NIL",
+      "coingecko_id": "nillion"
+    },
+    {
+      "asset": "NMR",
+      "coingecko_id": "numeraire"
+    },
+    {
+      "asset": "NOT",
+      "coingecko_id": "notcoin"
+    },
+    {
+      "asset": "NXPC",
+      "coingecko_id": "nexpace"
+    },
+    {
+      "asset": "OG",
+      "coingecko_id": "og-fan-token"
+    },
+    {
+      "asset": "ON",
+      "coingecko_id": "orochi-network"
+    },
+    {
+      "asset": "ONDO",
+      "coingecko_id": "ondo-finance"
+    },
+    {
+      "asset": "ONE",
+      "coingecko_id": "harmony"
+    },
+    {
+      "asset": "ONG",
+      "coingecko_id": "ong"
+    },
+    {
+      "asset": "ONT",
+      "coingecko_id": "ontology"
+    },
+    {
+      "asset": "OP",
+      "coingecko_id": "optimism"
+    },
+    {
+      "asset": "OPG",
+      "coingecko_id": "opengradient"
+    },
+    {
+      "asset": "OPN_OPINION",
+      "coingecko_id": "opinion"
+    },
+    {
+      "asset": "ORCA",
+      "coingecko_id": "orca"
+    },
+    {
+      "asset": "ORDER",
+      "coingecko_id": "orderly-network"
+    },
+    {
+      "asset": "ORDI",
+      "coingecko_id": "ordinals"
+    },
+    {
+      "asset": "OVERTAKE",
+      "coingecko_id": "overtake"
+    },
+    {
+      "asset": "PARTI",
+      "coingecko_id": "particle-network"
+    },
+    {
+      "asset": "PEAQ",
+      "coingecko_id": "peaq-2"
+    },
+    {
+      "asset": "PENDLE",
+      "coingecko_id": "pendle"
+    },
+    {
+      "asset": "PENGU",
+      "coingecko_id": "pudgy-penguins"
+    },
+    {
+      "asset": "PEOPLE",
+      "coingecko_id": "constitutiondao"
+    },
+    {
+      "asset": "PHA",
+      "coingecko_id": "pha"
+    },
+    {
+      "asset": "PIEVERSE",
+      "coingecko_id": "pieverse"
+    },
+    {
+      "asset": "PIXEL",
+      "coingecko_id": "pixels"
+    },
+    {
+      "asset": "PLUME",
+      "coingecko_id": "plume"
+    },
+    {
+      "asset": "PNUT",
+      "coingecko_id": "peanut-the-squirrel"
+    },
+    {
+      "asset": "POL",
+      "coingecko_id": "polygon-ecosystem-token"
+    },
+    {
+      "asset": "POLYX",
+      "coingecko_id": "polymesh"
+    },
+    {
+      "asset": "POPCAT",
+      "coingecko_id": "popcat"
+    },
+    {
+      "asset": "PORTAL",
+      "coingecko_id": "portal-2"
+    },
+    {
+      "asset": "POWER",
+      "coingecko_id": "power-protocol"
+    },
+    {
+      "asset": "POWR",
+      "coingecko_id": "power-ledger"
+    },
+    {
+      "asset": "PROMPT",
+      "coingecko_id": "wayfinder"
+    },
+    {
+      "asset": "PROVE",
+      "coingecko_id": "succinct"
+    },
+    {
+      "asset": "PTB",
+      "coingecko_id": "portal-to-bitcoin"
+    },
+    {
+      "asset": "PUFFER",
+      "coingecko_id": "puffer-finance"
+    },
+    {
+      "asset": "PUMPFUN",
+      "coingecko_id": "pump-fun"
+    },
+    {
+      "asset": "PUNDIX",
+      "coingecko_id": "pundi-x-2"
+    },
+    {
+      "asset": "PYR",
+      "coingecko_id": "vulcan-forged"
+    },
+    {
+      "asset": "PYTH",
+      "coingecko_id": "pyth-network"
+    },
+    {
+      "asset": "Q",
+      "coingecko_id": "quack-ai"
+    },
+    {
+      "asset": "QNT",
+      "coingecko_id": "quant-network"
+    },
+    {
+      "asset": "QTUM",
+      "coingecko_id": "qtum"
+    },
+    {
+      "asset": "RARE",
+      "coingecko_id": "superrare"
+    },
+    {
+      "asset": "RAVE",
+      "coingecko_id": "ravedao"
+    },
+    {
+      "asset": "RAY",
+      "coingecko_id": "raydium"
+    },
+    {
+      "asset": "RECALL",
+      "coingecko_id": "recall"
+    },
+    {
+      "asset": "RED",
+      "coingecko_id": "redstone-oracles"
+    },
+    {
+      "asset": "RENDER",
+      "coingecko_id": "render-token"
+    },
+    {
+      "asset": "REZ",
+      "coingecko_id": "renzo"
+    },
+    {
+      "asset": "RLC",
+      "coingecko_id": "iexec-rlc"
+    },
+    {
+      "asset": "ROAM",
+      "coingecko_id": "roam-token"
+    },
+    {
+      "asset": "ROSE",
+      "coingecko_id": "oasis-network"
+    },
+    {
+      "asset": "RPL",
+      "coingecko_id": "rocket-pool"
+    },
+    {
+      "asset": "RSR",
+      "coingecko_id": "reserve-rights-token"
+    },
+    {
+      "asset": "RUNE",
+      "coingecko_id": "thorchain"
+    },
+    {
+      "asset": "RVN",
+      "coingecko_id": "ravencoin"
+    },
+    {
+      "asset": "S",
+      "coingecko_id": "sonic-3"
+    },
+    {
+      "asset": "SAFE",
+      "coingecko_id": "safe"
+    },
+    {
+      "asset": "SAGA",
+      "coingecko_id": "saga-2"
+    },
+    {
+      "asset": "SAHARA",
+      "coingecko_id": "sahara-ai"
+    },
+    {
+      "asset": "SAND",
+      "coingecko_id": "the-sandbox"
+    },
+    {
+      "asset": "SANTOS",
+      "coingecko_id": "santos-fc-fan-token"
+    },
+    {
+      "asset": "SAPIEN",
+      "coingecko_id": "sapien-2"
+    },
+    {
+      "asset": "SC",
+      "coingecko_id": "siacoin"
+    },
+    {
+      "asset": "SCR",
+      "coingecko_id": "scroll"
+    },
+    {
+      "asset": "SCRT",
+      "coingecko_id": "secret"
+    },
+    {
+      "asset": "SEI",
+      "coingecko_id": "sei-network"
+    },
+    {
+      "asset": "SENTIENT",
+      "coingecko_id": "sentient"
+    },
+    {
+      "asset": "SFP",
+      "coingecko_id": "safepal"
+    },
+    {
+      "asset": "SHELL",
+      "coingecko_id": "myshell"
+    },
+    {
+      "asset": "SIGN",
+      "coingecko_id": "sign-global"
+    },
+    {
+      "asset": "SKL",
+      "coingecko_id": "skale"
+    },
+    {
+      "asset": "SKRS",
+      "coingecko_id": "seeker"
+    },
+    {
+      "asset": "SLP",
+      "coingecko_id": "smooth-love-potion"
+    },
+    {
+      "asset": "SNT",
+      "coingecko_id": "status"
+    },
+    {
+      "asset": "SNX",
+      "coingecko_id": "havven"
+    },
+    {
+      "asset": "SOL",
+      "coingecko_id": "solana"
+    },
+    {
+      "asset": "SOLV",
+      "coingecko_id": "solv-protocol"
+    },
+    {
+      "asset": "SOMI",
+      "coingecko_id": "somnia"
+    },
+    {
+      "asset": "SONIC",
+      "coingecko_id": "sonic-svm"
+    },
+    {
+      "asset": "SOON",
+      "coingecko_id": "soon-2"
+    },
+    {
+      "asset": "SOPHON",
+      "coingecko_id": "sophon"
+    },
+    {
+      "asset": "SOSO",
+      "coingecko_id": "sosovalue"
+    },
+    {
+      "asset": "SPELL",
+      "coingecko_id": "spell-token"
+    },
+    {
+      "asset": "SPK",
+      "coingecko_id": "spark-2"
+    },
+    {
+      "asset": "SPX",
+      "coingecko_id": "spx6900"
+    },
+    {
+      "asset": "SQD",
+      "coingecko_id": "subsquid"
+    },
+    {
+      "asset": "SSV",
+      "coingecko_id": "ssv-network"
+    },
+    {
+      "asset": "STBL",
+      "coingecko_id": "stbl"
+    },
+    {
+      "asset": "STEEM",
+      "coingecko_id": "steem"
+    },
+    {
+      "asset": "STG",
+      "coingecko_id": "stargate-finance"
+    },
+    {
+      "asset": "STO",
+      "coingecko_id": "stakestone"
+    },
+    {
+      "asset": "STORJ",
+      "coingecko_id": "storj"
+    },
+    {
+      "asset": "STRK",
+      "coingecko_id": "starknet"
+    },
+    {
+      "asset": "STX",
+      "coingecko_id": "blockstack"
+    },
+    {
+      "asset": "SUI",
+      "coingecko_id": "sui"
+    },
+    {
+      "asset": "SUN",
+      "coingecko_id": "sun-token"
+    },
+    {
+      "asset": "SUPER",
+      "coingecko_id": "superfarm"
+    },
+    {
+      "asset": "SUSHI",
+      "coingecko_id": "sushi"
+    },
+    {
+      "asset": "SWARMS",
+      "coingecko_id": "swarms"
+    },
+    {
+      "asset": "SXT",
+      "coingecko_id": "space-and-time"
+    },
+    {
+      "asset": "SYN",
+      "coingecko_id": "synapse-2"
+    },
+    {
+      "asset": "SYRUP",
+      "coingecko_id": "syrup"
+    },
+    {
+      "asset": "T",
+      "coingecko_id": "threshold-network-token"
+    },
+    {
+      "asset": "TA",
+      "coingecko_id": "trusta-ai"
+    },
+    {
+      "asset": "TAG",
+      "coingecko_id": "tagger"
+    },
+    {
+      "asset": "TAIKO",
+      "coingecko_id": "taiko"
+    },
+    {
+      "asset": "TAO",
+      "coingecko_id": "bittensor"
+    },
+    {
+      "asset": "THETA",
+      "coingecko_id": "theta-token"
+    },
+    {
+      "asset": "TIA",
+      "coingecko_id": "celestia"
+    },
+    {
+      "asset": "TLM",
+      "coingecko_id": "alien-worlds"
+    },
+    {
+      "asset": "TNSR",
+      "coingecko_id": "tensor"
+    },
+    {
+      "asset": "TOWNS",
+      "coingecko_id": "towns"
+    },
+    {
+      "asset": "TRADOOR",
+      "coingecko_id": "tradoor"
+    },
+    {
+      "asset": "TRB",
+      "coingecko_id": "tellor"
+    },
+    {
+      "asset": "TREE",
+      "coingecko_id": "treehouse"
+    },
+    {
+      "asset": "TRUST",
+      "coingecko_id": "intuition"
+    },
+    {
+      "asset": "TRX",
+      "coingecko_id": "tron"
+    },
+    {
+      "asset": "TURTLE",
+      "coingecko_id": "turtle-4"
+    },
+    {
+      "asset": "TUTORIAL",
+      "coingecko_id": "tutorial"
+    },
+    {
+      "asset": "TWT",
+      "coingecko_id": "trust-wallet-token"
+    },
+    {
+      "asset": "UAI",
+      "coingecko_id": "unifai-network"
+    },
+    {
+      "asset": "UMA",
+      "coingecko_id": "uma"
+    },
+    {
+      "asset": "UNI",
+      "coingecko_id": "uniswap"
+    },
+    {
+      "asset": "US",
+      "coingecko_id": "talus"
+    },
+    {
+      "asset": "USELESS",
+      "coingecko_id": "useless-3"
+    },
+    {
+      "asset": "USTC",
+      "coingecko_id": "terrausd"
+    },
+    {
+      "asset": "USUAL",
+      "coingecko_id": "usual"
+    },
+    {
+      "asset": "VANATOKEN",
+      "coingecko_id": "vana"
+    },
+    {
+      "asset": "VANRY",
+      "coingecko_id": "vanar-chain"
+    },
+    {
+      "asset": "VELO",
+      "coingecko_id": "velo"
+    },
+    {
+      "asset": "VELODROME",
+      "coingecko_id": "velodrome-finance"
+    },
+    {
+      "asset": "VELVET",
+      "coingecko_id": "velvet"
+    },
+    {
+      "asset": "VET",
+      "coingecko_id": "vechain"
+    },
+    {
+      "asset": "VINE",
+      "coingecko_id": "vine"
+    },
+    {
+      "asset": "VIRTUAL",
+      "coingecko_id": "virtual-protocol"
+    },
+    {
+      "asset": "VVV",
+      "coingecko_id": "venice-token"
+    },
+    {
+      "asset": "W",
+      "coingecko_id": "wormhole"
+    },
+    {
+      "asset": "WAL",
+      "coingecko_id": "walrus-2"
+    },
+    {
+      "asset": "WAVES",
+      "coingecko_id": "waves"
+    },
+    {
+      "asset": "WCT",
+      "coingecko_id": "connect-token-wct"
+    },
+    {
+      "asset": "WHITEWHALE",
+      "coingecko_id": "the-white-whale"
+    },
+    {
+      "asset": "WIF",
+      "coingecko_id": "dogwifcoin"
+    },
+    {
+      "asset": "WLD",
+      "coingecko_id": "worldcoin-wld"
+    },
+    {
+      "asset": "WLFI",
+      "coingecko_id": "world-liberty-financial"
+    },
+    {
+      "asset": "WOO",
+      "coingecko_id": "woo-network"
+    },
+    {
+      "asset": "XAN",
+      "coingecko_id": "anoma"
+    },
+    {
+      "asset": "XCN",
+      "coingecko_id": "chain-2"
+    },
+    {
+      "asset": "XION",
+      "coingecko_id": "xion-2"
+    },
+    {
+      "asset": "XLM",
+      "coingecko_id": "stellar"
+    },
+    {
+      "asset": "XNY",
+      "coingecko_id": "codatta"
+    },
+    {
+      "asset": "XPIN",
+      "coingecko_id": "xpin-network"
+    },
+    {
+      "asset": "XRP",
+      "coingecko_id": "ripple"
+    },
+    {
+      "asset": "XTZ",
+      "coingecko_id": "tezos"
+    },
+    {
+      "asset": "XVG",
+      "coingecko_id": "verge"
+    },
+    {
+      "asset": "YB",
+      "coingecko_id": "yield-basis"
+    },
+    {
+      "asset": "YFI",
+      "coingecko_id": "yearn-finance"
+    },
+    {
+      "asset": "YGG",
+      "coingecko_id": "yield-guild-games"
+    },
+    {
+      "asset": "ZAMA",
+      "coingecko_id": "zama"
+    },
+    {
+      "asset": "ZBCN",
+      "coingecko_id": "zebec-network"
+    },
+    {
+      "asset": "ZBT",
+      "coingecko_id": "zerobase"
+    },
+    {
+      "asset": "ZEN",
+      "coingecko_id": "zencash"
+    },
+    {
+      "asset": "ZEREBRO",
+      "coingecko_id": "zerebro"
+    },
+    {
+      "asset": "ZETA",
+      "coingecko_id": "zetachain"
+    },
+    {
+      "asset": "ZIL",
+      "coingecko_id": "zilliqa"
+    },
+    {
+      "asset": "ZK",
+      "coingecko_id": "zksync"
+    },
+    {
+      "asset": "ZKC",
+      "coingecko_id": "boundless"
+    },
+    {
+      "asset": "ZORA",
+      "coingecko_id": "zora"
+    },
+    {
+      "asset": "ZRO",
+      "coingecko_id": "layerzero"
+    },
+    {
+      "asset": "ZRX",
+      "coingecko_id": "0x"
+    }
+  ],
+  "vari-ai": [
+    {
+      "asset": "RENDER",
+      "coingecko_id": "render-token"
+    },
+    {
+      "asset": "VIRTUAL",
+      "coingecko_id": "virtual-protocol"
+    },
+    {
+      "asset": "IO",
+      "coingecko_id": "io"
+    },
+    {
+      "asset": "ELSA",
+      "coingecko_id": "elsa"
+    },
+    {
+      "asset": "IOTX",
+      "coingecko_id": "iotex"
+    },
+    {
+      "asset": "SHELL",
+      "coingecko_id": "myshell"
+    },
+    {
+      "asset": "CLANKER",
+      "coingecko_id": "tokenbot-2"
+    }
+  ],
+  "vari-defi": [
+    {
+      "asset": "ASTER",
+      "coingecko_id": "aster-2"
+    },
+    {
+      "asset": "AAVE",
+      "coingecko_id": "aave"
+    },
+    {
+      "asset": "AERO",
+      "coingecko_id": "aerodrome-finance"
+    },
+    {
+      "asset": "JTO",
+      "coingecko_id": "jito-governance-token"
+    },
+    {
+      "asset": "RSR",
+      "coingecko_id": "reserve-rights-token"
+    },
+    {
+      "asset": "ME",
+      "coingecko_id": "magic-eden"
+    },
+    {
+      "asset": "kAVA",
+      "coingecko_id": "concierge-io"
+    },
+    {
+      "asset": "BBIT",
+      "coingecko_id": "bouncebit"
+    },
+    {
+      "asset": "ORDER",
+      "coingecko_id": "orderly-network"
+    },
+    {
+      "asset": "REZ",
+      "coingecko_id": "renzo"
+    },
+    {
+      "asset": "PUNDIX",
+      "coingecko_id": "pundi-x-2"
+    },
+    {
+      "asset": "TRADOOR",
+      "coingecko_id": "tradoor"
+    },
+    {
+      "asset": "LUMIA",
+      "coingecko_id": "lumia"
+    },
+    {
+      "asset": "DRIFT",
+      "coingecko_id": "drift-protocol"
+    }
+  ],
+  "vari-infra": [
+    {
+      "asset": "SUI",
+      "coingecko_id": "sui"
+    },
+    {
+      "asset": "HBAR",
+      "coingecko_id": "hedera-hashgraph"
+    },
+    {
+      "asset": "ZRO",
+      "coingecko_id": "layerzero"
+    },
+    {
+      "asset": "QNT",
+      "coingecko_id": "quant-network"
+    },
+    {
+      "asset": "XPL",
+      "coingecko_id": "plasma"
+    },
+    {
+      "asset": "STX",
+      "coingecko_id": "blockstack"
+    },
+    {
+      "asset": "ZAMA",
+      "coingecko_id": "zama"
+    },
+    {
+      "asset": "EIGEN",
+      "coingecko_id": "eigenlayer"
+    },
+    {
+      "asset": "CFX",
+      "coingecko_id": "conflux-token"
+    },
+    {
+      "asset": "S",
+      "coingecko_id": "sonic-3"
+    },
+    {
+      "asset": "HNT",
+      "coingecko_id": "helium"
+    },
+    {
+      "asset": "FOGO",
+      "coingecko_id": "fogo"
+    },
+    {
+      "asset": "PLUME",
+      "coingecko_id": "plume"
+    },
+    {
+      "asset": "kSM",
+      "coingecko_id": "kusama"
+    },
+    {
+      "asset": "T",
+      "coingecko_id": "threshold-network-token"
+    },
+    {
+      "asset": "XVG",
+      "coingecko_id": "verge"
+    },
+    {
+      "asset": "SCR",
+      "coingecko_id": "scroll"
+    },
+    {
+      "asset": "FLUX",
+      "coingecko_id": "zelcash"
+    },
+    {
+      "asset": "ARPA",
+      "coingecko_id": "arpa"
+    }
+  ],
+  "vari-meme": [
+    {
+      "asset": "WIF",
+      "coingecko_id": "dogwifcoin"
+    },
+    {
+      "asset": "BANANAS31",
+      "coingecko_id": "banana-for-scale-2"
+    },
+    {
+      "asset": "BOME",
+      "coingecko_id": "book-of-meme"
+    },
+    {
+      "asset": "4",
+      "coingecko_id": "4-2"
+    }
+  ],
+  "vari_top60_CK": [
+    {
+      "asset": "AAVE",
+      "coingecko_id": "aave"
+    },
+    {
+      "asset": "ADA",
+      "coingecko_id": "cardano"
+    },
+    {
+      "asset": "AERO",
+      "coingecko_id": "aerodrome-finance"
+    },
+    {
+      "asset": "ALGO",
+      "coingecko_id": "algorand"
+    },
+    {
+      "asset": "APT",
+      "coingecko_id": "aptos"
+    },
+    {
+      "asset": "ARB",
+      "coingecko_id": "arbitrum"
+    },
+    {
+      "asset": "ASTER",
+      "coingecko_id": "aster-2"
+    },
+    {
+      "asset": "ATOM",
+      "coingecko_id": "cosmos"
+    },
+    {
+      "asset": "AVAX",
+      "coingecko_id": "avalanche-2"
+    },
+    {
+      "asset": "BNB",
+      "coingecko_id": "binancecoin"
+    },
+    {
+      "asset": "BTC",
+      "coingecko_id": "bitcoin"
+    },
+    {
+      "asset": "CAKE",
+      "coingecko_id": "pancakeswap-token"
+    },
+    {
+      "asset": "CRO",
+      "coingecko_id": "crypto-com-chain"
+    },
+    {
+      "asset": "CRV",
+      "coingecko_id": "curve-dao-token"
+    },
+    {
+      "asset": "DASH",
+      "coingecko_id": "dash"
+    },
+    {
+      "asset": "DOGE",
+      "coingecko_id": "dogecoin"
+    },
+    {
+      "asset": "DOT",
+      "coingecko_id": "polkadot"
+    },
+    {
+      "asset": "ENA",
+      "coingecko_id": "ethena"
+    },
+    {
+      "asset": "ETC",
+      "coingecko_id": "ethereum-classic"
+    },
+    {
+      "asset": "ETHFI",
+      "coingecko_id": "ether-fi"
+    },
+    {
+      "asset": "ETH",
+      "coingecko_id": "ethereum"
+    },
+    {
+      "asset": "FET",
+      "coingecko_id": "fetch-ai"
+    },
+    {
+      "asset": "FIL",
+      "coingecko_id": "filecoin"
+    },
+    {
+      "asset": "FLR",
+      "coingecko_id": "flare-networks"
+    },
+    {
+      "asset": "HBAR",
+      "coingecko_id": "hedera-hashgraph"
+    },
+    {
+      "asset": "HYPE",
+      "coingecko_id": "hyperliquid"
+    },
+    {
+      "asset": "ICP",
+      "coingecko_id": "internet-computer"
+    },
+    {
+      "asset": "JUP",
+      "coingecko_id": "jupiter-exchange-solana"
+    },
+    {
+      "asset": "KAS",
+      "coingecko_id": "kaspa"
+    },
+    {
+      "asset": "LINK",
+      "coingecko_id": "chainlink"
+    },
+    {
+      "asset": "LTC",
+      "coingecko_id": "litecoin"
+    },
+    {
+      "asset": "MNT",
+      "coingecko_id": "mantle"
+    },
+    {
+      "asset": "MON",
+      "coingecko_id": "monad"
+    },
+    {
+      "asset": "NEAR",
+      "coingecko_id": "near"
+    },
+    {
+      "asset": "ONDO",
+      "coingecko_id": "ondo-finance"
+    },
+    {
+      "asset": "PENGU",
+      "coingecko_id": "pudgy-penguins"
+    },
+    {
+      "asset": "POL",
+      "coingecko_id": "polygon-ecosystem-token"
+    },
+    {
+      "asset": "QNT",
+      "coingecko_id": "quant-network"
+    },
+    {
+      "asset": "RENDER",
+      "coingecko_id": "render-token"
+    },
+    {
+      "asset": "SEI",
+      "coingecko_id": "sei-network"
+    },
+    {
+      "asset": "SOL",
+      "coingecko_id": "solana"
+    },
+    {
+      "asset": "SUI",
+      "coingecko_id": "sui"
+    },
+    {
+      "asset": "TAO",
+      "coingecko_id": "bittensor"
+    },
+    {
+      "asset": "TRX",
+      "coingecko_id": "tron"
+    },
+    {
+      "asset": "UNI",
+      "coingecko_id": "uniswap"
+    },
+    {
+      "asset": "VET",
+      "coingecko_id": "vechain"
+    },
+    {
+      "asset": "VIRTUAL",
+      "coingecko_id": "virtual-protocol"
+    },
+    {
+      "asset": "WLD",
+      "coingecko_id": "worldcoin-wld"
+    },
+    {
+      "asset": "WLFI",
+      "coingecko_id": "world-liberty-financial"
+    },
+    {
+      "asset": "XLM",
+      "coingecko_id": "stellar"
+    },
+    {
+      "asset": "XRP",
+      "coingecko_id": "ripple"
+    },
+    {
+      "asset": "XTZ",
+      "coingecko_id": "tezos"
+    },
+    {
+      "asset": "ZEC",
+      "coingecko_id": "zcash"
+    },
+    {
+      "asset": "ZRO",
+      "coingecko_id": "layerzero"
+    }
+  ],
+  "vari-blacklist": [
+    {
+      "asset": "PI",
+      "coingecko_id": null
+    },
+    {
+      "asset": "NIGHT",
+      "coingecko_id": null
+    },
+    {
+      "asset": "SKY",
+      "coingecko_id": "sky"
+    },
+    {
+      "asset": "MORPHO",
+      "coingecko_id": "morpho"
+    },
+    {
+      "asset": "OKB",
+      "coingecko_id": null
+    },
+    {
+      "asset": "TRUMP",
+      "coingecko_id": "official-trump"
+    },
+    {
+      "asset": "RAIN",
+      "coingecko_id": null
+    },
+    {
+      "asset": "TON",
+      "coingecko_id": "the-open-network"
+    },
+    {
+      "asset": "CC",
+      "coingecko_id": "canton-network"
+    },
+    {
+      "asset": "XMR",
+      "coingecko_id": "monero"
+    },
+    {
+      "asset": "STABLE",
+      "coingecko_id": "stable-2"
+    },
+    {
+      "asset": "KITE",
+      "coingecko_id": null
+    },
+    {
+      "asset": "RIVER",
+      "coingecko_id": null
+    },
+    {
+      "asset": "M",
+      "coingecko_id": null
+    },
+    {
+      "asset": "JST",
+      "coingecko_id": null
+    },
+    {
+      "asset": "PAXG",
+      "coingecko_id": null
+    },
+    {
+      "asset": "XAUT",
+      "coingecko_id": null
+    },
+    {
+      "asset": "SIREN",
+      "coingecko_id": null
+    },
+    {
+      "asset": "ZEC",
+      "coingecko_id": "zcash"
+    },
+    {
+      "asset": "XPL",
+      "coingecko_id": "plasma"
+    },
+    {
+      "asset": "LAB",
+      "coingecko_id": null
+    },
+    {
+      "asset": "EDGE",
+      "coingecko_id": null
+    },
+    {
+      "asset": "CRO",
+      "coingecko_id": "crypto-com-chain"
+    },
+    {
+      "asset": "UB",
+      "coingecko_id": null
+    },
+    {
+      "asset": "ETC",
+      "coingecko_id": "ethereum-classic"
+    },
+    {
+      "asset": "XDC",
+      "coingecko_id": null
+    }
+  ],
+  "lighter-ai": [
+    {
+      "asset": "ARCSOL",
+      "lighter_asset": "ARC",
+      "coingecko_id": "ai-rig-complex"
+    },
+    {
+      "asset": "CHIP",
+      "coingecko_id": "chip-2"
+    },
+    {
+      "asset": "FIL",
+      "coingecko_id": "filecoin"
+    },
+    {
+      "asset": "GRASS",
+      "coingecko_id": "grass"
+    },
+    {
+      "asset": "ICP",
+      "coingecko_id": "internet-computer"
+    },
+    {
+      "asset": "KAITO",
+      "lighter_asset": "kAITO",
+      "coingecko_id": "kaito"
+    },
+    {
+      "asset": "NEAR",
+      "coingecko_id": "near"
+    },
+    {
+      "asset": "NMR",
+      "coingecko_id": "numeraire"
+    },
+    {
+      "asset": "TAO",
+      "coingecko_id": "bittensor"
+    },
+    {
+      "asset": "VIRTUAL",
+      "coingecko_id": "virtual-protocol"
+    },
+    {
+      "asset": "VVV",
+      "coingecko_id": "venice-token"
+    },
+    {
+      "asset": "WLD",
+      "coingecko_id": "worldcoin-wld"
+    }
+  ],
+  "lighter-defi": [
+    {
+      "asset": "AAVE",
+      "coingecko_id": "aave"
+    },
+    {
+      "asset": "AERO",
+      "coingecko_id": "aerodrome-finance"
+    },
+    {
+      "asset": "APEX",
+      "coingecko_id": "apex-token-2"
+    },
+    {
+      "asset": "APT",
+      "coingecko_id": "aptos"
+    },
+    {
+      "asset": "ASTER",
+      "coingecko_id": "aster-2"
+    },
+    {
+      "asset": "AVNT",
+      "coingecko_id": "avantis"
+    },
+    {
+      "asset": "CHIP",
+      "coingecko_id": "chip-2"
+    },
+    {
+      "asset": "CRV",
+      "coingecko_id": "curve-dao-token"
+    },
+    {
+      "asset": "DOLO",
+      "coingecko_id": "dolomite"
+    },
+    {
+      "asset": "EIGEN",
+      "coingecko_id": "eigenlayer"
+    },
+    {
+      "asset": "ENA",
+      "coingecko_id": "ethena"
+    },
+    {
+      "asset": "ETHFI",
+      "coingecko_id": "ether-fi"
+    },
+    {
+      "asset": "FF0",
+      "lighter_asset": "FF",
+      "coingecko_id": "falcon-finance-ff"
+    },
+    {
+      "asset": "FOGO",
+      "coingecko_id": "fogo"
+    },
+    {
+      "asset": "GMX",
+      "coingecko_id": "gmx"
+    },
+    {
+      "asset": "HYPE",
+      "coingecko_id": "hyperliquid"
+    },
+    {
+      "asset": "JTO",
+      "coingecko_id": "jito-governance-token"
+    },
+    {
+      "asset": "JUP",
+      "coingecko_id": "jupiter-exchange-solana"
+    },
+    {
+      "asset": "KAITO",
+      "lighter_asset": "kAITO",
+      "coingecko_id": "kaito"
+    },
+    {
+      "asset": "LDO",
+      "coingecko_id": "lido-dao"
+    },
+    {
+      "asset": "LINK",
+      "coingecko_id": "chainlink"
+    },
+    {
+      "asset": "LIGHTER",
+      "lighter_asset": "LIT",
+      "coingecko_id": "lighter"
+    },
+    {
+      "asset": "METEORA",
+      "lighter_asset": "MET",
+      "coingecko_id": "meteora"
+    },
+    {
+      "asset": "MORPHO",
+      "coingecko_id": "morpho"
+    },
+    {
+      "asset": "MYX",
+      "coingecko_id": "myx-finance"
+    },
+    {
+      "asset": "NMR",
+      "coingecko_id": "numeraire"
+    },
+    {
+      "asset": "ONDO",
+      "coingecko_id": "ondo-finance"
+    },
+    {
+      "asset": "PENDLE",
+      "coingecko_id": "pendle"
+    },
+    {
+      "asset": "PYTH",
+      "coingecko_id": "pyth-network"
+    },
+    {
+      "asset": "SEI",
+      "coingecko_id": "sei-network"
+    },
+    {
+      "asset": "SKY",
+      "coingecko_id": "sky"
+    },
+    {
+      "asset": "STBL",
+      "coingecko_id": "stbl"
+    },
+    {
+      "asset": "SYRUP",
+      "coingecko_id": "syrup"
+    },
+    {
+      "asset": "UNI",
+      "coingecko_id": "uniswap"
+    },
+    {
+      "asset": "VIRTUAL",
+      "coingecko_id": "virtual-protocol"
+    },
+    {
+      "asset": "VVV",
+      "coingecko_id": "venice-token"
+    }
+  ],
+  "lighter-l1": [
+    {
+      "asset": "XMR",
+      "coingecko_id": "monero"
+    },
+    {
+      "asset": "ZEC",
+      "coingecko_id": "zcash"
+    },
+    {
+      "asset": "ADA",
+      "coingecko_id": "cardano"
+    },
+    {
+      "asset": "AVAX",
+      "coingecko_id": "avalanche-2"
+    },
+    {
+      "asset": "BCH",
+      "coingecko_id": "bitcoin-cash"
+    },
+    {
+      "asset": "BERA",
+      "coingecko_id": "berachain-bera"
+    },
+    {
+      "asset": "BNB",
+      "coingecko_id": "binancecoin"
+    },
+    {
+      "asset": "BTC",
+      "coingecko_id": "bitcoin"
+    },
+    {
+      "asset": "CC",
+      "coingecko_id": "canton-network"
+    },
+    {
+      "asset": "CRO",
+      "coingecko_id": "crypto-com-chain"
+    },
+    {
+      "asset": "DOT",
+      "coingecko_id": "polkadot"
+    },
+    {
+      "asset": "DUSK",
+      "coingecko_id": "dusk-network"
+    },
+    {
+      "asset": "ETH",
+      "coingecko_id": "ethereum"
+    },
+    {
+      "asset": "FIL",
+      "coingecko_id": "filecoin"
+    },
+    {
+      "asset": "FOGO",
+      "coingecko_id": "fogo"
+    },
+    {
+      "asset": "HBAR",
+      "coingecko_id": "hedera-hashgraph"
+    },
+    {
+      "asset": "HYPE",
+      "coingecko_id": "hyperliquid"
+    },
+    {
+      "asset": "ICP",
+      "coingecko_id": "internet-computer"
+    },
+    {
+      "asset": "IP",
+      "coingecko_id": "story-2"
+    },
+    {
+      "asset": "LTC",
+      "coingecko_id": "litecoin"
+    },
+    {
+      "asset": "MON",
+      "coingecko_id": "monad"
+    },
+    {
+      "asset": "NEAR",
+      "coingecko_id": "near"
+    },
+    {
+      "asset": "S",
+      "coingecko_id": "sonic-3"
+    },
+    {
+      "asset": "SOL",
+      "coingecko_id": "solana"
+    },
+    {
+      "asset": "STABLE",
+      "coingecko_id": "stable-2"
+    },
+    {
+      "asset": "SUI",
+      "coingecko_id": "sui"
+    },
+    {
+      "asset": "TIA",
+      "coingecko_id": "celestia"
+    },
+    {
+      "asset": "TON",
+      "coingecko_id": "the-open-network"
+    },
+    {
+      "asset": "TRX",
+      "coingecko_id": "tron"
+    },
+    {
+      "asset": "XLM",
+      "coingecko_id": "stellar"
+    },
+    {
+      "asset": "XPL",
+      "coingecko_id": "plasma"
+    },
+    {
+      "asset": "0G",
+      "coingecko_id": "zero-gravity"
+    }
+  ],
+  "lighter-l2": [
+    {
+      "asset": "ARB",
+      "coingecko_id": "arbitrum"
+    },
+    {
+      "asset": "AZTEC",
+      "coingecko_id": "aztec"
+    },
+    {
+      "asset": "LINEA",
+      "coingecko_id": "linea"
+    },
+    {
+      "asset": "LIGHTER",
+      "lighter_asset": "LIT",
+      "coingecko_id": "lighter"
+    },
+    {
+      "asset": "MEGA",
+      "coingecko_id": "megaeth"
+    },
+    {
+      "asset": "MNT",
+      "coingecko_id": "mantle"
+    },
+    {
+      "asset": "OP",
+      "coingecko_id": "optimism"
+    },
+    {
+      "asset": "POL",
+      "coingecko_id": "polygon-ecosystem-token"
+    },
+    {
+      "asset": "STRK",
+      "coingecko_id": "starknet"
+    },
+    {
+      "asset": "ZK",
+      "coingecko_id": "zksync"
+    }
+  ],
+  "lighter-meme": [
+    {
+      "asset": "DOGE",
+      "coingecko_id": "dogecoin"
+    },
+    {
+      "asset": "FARTCOIN",
+      "coingecko_id": "fartcoin"
+    },
+    {
+      "asset": "1000BONK",
+      "lighter_asset": "kBONK",
+      "coingecko_id": "bonk"
+    },
+    {
+      "asset": "1000FLOKI",
+      "lighter_asset": "kFLOKI",
+      "coingecko_id": "floki"
+    },
+    {
+      "asset": "kNOT",
+      "coingecko_id": "notcoin"
+    },
+    {
+      "asset": "1000PEPE",
+      "lighter_asset": "kPEPE",
+      "coingecko_id": "pepe"
+    },
+    {
+      "asset": "PENGU",
+      "coingecko_id": "pudgy-penguins"
+    },
+    {
+      "asset": "POPCAT",
+      "coingecko_id": "popcat"
+    },
+    {
+      "asset": "PUMPFUN",
+      "lighter_asset": "PUMP",
+      "coingecko_id": "pump-fun"
+    },
+    {
+      "asset": "SPX",
+      "coingecko_id": "spx6900"
+    },
+    {
+      "asset": "TRUMP",
+      "coingecko_id": "official-trump"
+    },
+    {
+      "asset": "USELESS",
+      "coingecko_id": "useless-3"
+    },
+    {
+      "asset": "WIF",
+      "coingecko_id": "dogwifcoin"
+    }
+  ],
+  "lighter-missing": [
+    {
+      "asset": "DYDX",
+      "source_category": "lighter-defi",
+      "coingecko_id": null
+    },
+    {
+      "asset": "EDEN",
+      "source_category": "lighter-defi",
+      "coingecko_id": null
+    },
+    {
+      "asset": "RESOLV",
+      "source_category": "lighter-defi",
+      "coingecko_id": null
+    },
+    {
+      "asset": "CTR",
+      "source_category": "lighter-l2",
+      "coingecko_id": null
+    },
+    {
+      "asset": "kSHIB",
+      "source_category": "lighter-meme",
+      "coingecko_id": null
+    },
+    {
+      "asset": "kTOSHI",
+      "source_category": "lighter-meme",
+      "coingecko_id": null
+    },
+    {
+      "asset": "PIPPIN",
+      "source_category": "lighter-meme",
+      "coingecko_id": null
+    },
+    {
+      "asset": "ROBO",
+      "source_category": "lighter-ai",
+      "coingecko_id": null
+    }
+  ],
+  "_meta": {
+    "source": "GET /api/metadata/supported_assets",
+    "enriched_by": "scripts/enrich_vari_crypto_categories.py",
+    "enriched_at": "2026-06-04",
+    "lighter-defi_note": "39 tickers from Lighter DeFi UI screenshots; coingecko_id from Vari when listed",
+    "lighter-l1_note": "32 tickers from Lighter Layer 1 UI screenshots (last: 0G); coingecko_id from Vari when listed",
+    "lighter-l2_note": "11 tickers from Lighter Layer 2 UI screenshots (last: ZK); coingecko_id from Vari when listed",
+    "lighter-meme_note": "16 tickers from Lighter Memes UI screenshots (last: WIF); coingecko_id from Vari when listed",
+    "lighter-ai_note": "13 tickers from Lighter AI UI screenshots (last: WLD); coingecko_id from Vari when listed",
+    "lighter-missing_note": "Lighter symbols with no Vari perp match; excluded from trading categories",
+    "met_vari_note": "MET maps to Vari METEORA (user said METORA)",
+    "vari-blacklist_note": "Tickers excluded from vari_top60_CK (CoinGecko top-60 export)",
+    "vari_top60_CK_note": "54 tickers from CoinGecko top-60 market cap export; excludes vari-blacklist",
+    "vari-crypto-universe_note": "428 tickers: all Vari crypto perps (perpetual_future) from supported_assets; excludes RWA/tradfi/commodities (perpetual_rwa_future) and vari-blacklist",
+    "vari-crypto-universe_built_at": "2026-06-06"
+  }
+}
