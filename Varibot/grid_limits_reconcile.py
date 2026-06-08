@@ -18,6 +18,7 @@ from strategy.gridstrat_rearm import (
 )
 from strategy.gridstrat_remnant import (
     RemnantInferenceResult,
+    cold_start_post_rungs_from_meta,
     compute_venue_actions,
     infer_ladder_from_remnants,
 )
@@ -586,10 +587,12 @@ def _plan_remnant_rearm_one_ticker(
     pending_keys: Set[Tuple[str, str]],
     mark_f: float,
     log: Callable[[str], None],
+    has_position: bool = False,
 ) -> Optional[_RemnantRearmPlan]:
     """Infer remnant window and compute post/cancel actions (no venue I/O)."""
     tag = f"[{asset}]"
     is_init = not pending_keys
+    cold_start = bool(is_init and not has_position)
 
     configured_spacing = float(ameta.get("grid_spacing") or 0.0)
     lower = float(ameta.get("grid_lower") or 0.0)
@@ -614,6 +617,7 @@ def _plan_remnant_rearm_one_ticker(
         upper=upper,
         grid_num=grid_num,
         grid_band_pct=grid_band_pct,
+        cold_start=cold_start,
     )
 
     if is_init:
@@ -624,12 +628,32 @@ def _plan_remnant_rearm_one_ticker(
             f"(venue pending={len(pending_keys)}, mark={mark_f:g})"
         )
 
-    cancel_keys, post_rungs = compute_venue_actions(
-        asset=asset,
-        result=result,
-        venue_pending_keys=pending_keys,
-        mark=mark_f,
-    )
+    if cold_start:
+        post_rungs = cold_start_post_rungs_from_meta(ameta)
+        if post_rungs:
+            n_b = sum(1 for s, _ in post_rungs if s == "buy")
+            n_s = len(post_rungs) - n_b
+            log(
+                f"gridlimits{tag} init: cold start — posting gridstrat ladder "
+                f"({n_b} buy, {n_s} sell)"
+            )
+            cancel_keys: Set[Tuple[str, str]] = set()
+        else:
+            cancel_keys, post_rungs = compute_venue_actions(
+                asset=asset,
+                result=result,
+                venue_pending_keys=pending_keys,
+                mark=mark_f,
+                cold_start=True,
+            )
+    else:
+        cancel_keys, post_rungs = compute_venue_actions(
+            asset=asset,
+            result=result,
+            venue_pending_keys=pending_keys,
+            mark=mark_f,
+            cold_start=False,
+        )
     return _RemnantRearmPlan(
         asset=str(asset).strip().upper(),
         ameta=ameta,
@@ -708,6 +732,7 @@ def _remnant_rearm_one_ticker(
     mark_f: float,
     log: Callable[[str], None],
     place_limit: Callable[..., int],
+    has_position: bool = False,
 ) -> None:
     """
     Remnant-based re-arm (New Limits Logic, May 2026).
@@ -721,6 +746,7 @@ def _remnant_rearm_one_ticker(
         pending_keys=pending_keys,
         mark_f=mark_f,
         log=log,
+        has_position=has_position,
     )
     if plan is None:
         return
@@ -879,6 +905,7 @@ def _reconcile_one_ticker(
         mark_f=mark_f,
         log=log,
         place_limit=place_limit,
+        has_position=has_positions,
     )
 
 
@@ -934,6 +961,7 @@ def _run_remnant_reconcile_two_phase(
             pending_keys=pending_keys,
             mark_f=mark_f,
             log=log,
+            has_position=has_pos_asset,
         )
         if plan is not None:
             plans.append(plan)

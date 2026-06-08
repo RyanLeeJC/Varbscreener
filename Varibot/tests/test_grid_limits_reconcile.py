@@ -8,7 +8,9 @@ from unittest.mock import patch
 
 from grid_limits_reconcile import _drift_cancel_enabled, grid_limits_mark_indicative_enabled
 from strategy.gridstrat import breach_reanchors_on_breach, grid_leverage_for_asset, gridstrat_flat_rebalance_enabled
+from grid_limits_reconcile import _plan_remnant_rearm_one_ticker
 from strategy.gridstrat_remnant import (
+    cold_start_post_rungs_from_meta,
     compute_venue_actions,
     half_band_fraction,
     infer_ladder_from_remnants,
@@ -316,6 +318,71 @@ class TestRemnantProximityHug(unittest.TestCase):
         _, post = compute_venue_actions(asset="ETH", result=result, venue_pending_keys=pending, mark=100.0)
         sell_posts = [px for side, px in post if side == "sell"]
         self.assertGreaterEqual(len(sell_posts), 1)
+
+
+class TestColdStartPosting(unittest.TestCase):
+    def test_meta_ladder_posts_full_four_per_side(self) -> None:
+        ameta = {
+            "grid_spacing": 1.0,
+            "grid_lower": 90.0,
+            "grid_upper": 110.0,
+            "grid_num": 8,
+            "grid_band_pct": 2.0,
+            "grid_buy_rungs": [99.0, 98.0, 97.0, 96.0],
+            "grid_sell_rungs": [101.0, 102.0, 103.0, 104.0],
+        }
+        posts = cold_start_post_rungs_from_meta(ameta)
+        self.assertEqual(8, len(posts))
+        self.assertEqual(4, sum(1 for s, _ in posts if s == "buy"))
+        self.assertEqual(4, sum(1 for s, _ in posts if s == "sell"))
+
+    def test_cold_start_plan_bypasses_too_close(self) -> None:
+        ameta = {
+            "grid_spacing": 1.278,
+            "grid_lower": 199.355,
+            "grid_upper": 209.579,
+            "grid_num": 8,
+            "grid_band_pct": 2.5,
+            "grid_buy_rungs": [203.19, 201.91, 200.63, 199.36],
+            "grid_sell_rungs": [205.74, 207.02, 208.30, 209.58],
+            "grid_paired_limit_mode": True,
+        }
+        logs: list[str] = []
+        plan = _plan_remnant_rearm_one_ticker(
+            asset="BCH",
+            ameta=ameta,
+            pending_keys=set(),
+            mark_f=202.868,
+            log=logs.append,
+            has_position=False,
+        )
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        self.assertTrue(plan.is_init)
+        self.assertEqual(8, len(plan.post_rungs))
+        self.assertEqual(4, sum(1 for s, _ in plan.post_rungs if s == "buy"))
+        self.assertTrue(any("cold start" in line for line in logs))
+
+    def test_cold_start_false_keeps_too_close_filter(self) -> None:
+        mark = 202.868
+        spacing = 1.278
+        band_frac = 0.025
+        result = infer_ladder_from_remnants(
+            mark=mark,
+            venue_pending_keys=set(),
+            configured_spacing=spacing,
+            lower=199.355,
+            upper=209.579,
+            grid_num=8,
+            grid_band_pct=2.5,
+        )
+        _, post_normal = compute_venue_actions(
+            asset="BCH", result=result, venue_pending_keys=set(), mark=mark, cold_start=False
+        )
+        _, post_cold = compute_venue_actions(
+            asset="BCH", result=result, venue_pending_keys=set(), mark=mark, cold_start=True
+        )
+        self.assertLess(len(post_normal), len(post_cold))
 
 
 if __name__ == "__main__":

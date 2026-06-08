@@ -564,6 +564,28 @@ class RemnantInferenceResult:
         )
 
 
+def cold_start_post_rungs_from_meta(ameta: Dict[str, Any]) -> List[Tuple[str, float]]:
+    """
+    Flat init: post gridstrat's planned ladder (``grid_buy_rungs`` / ``grid_sell_rungs``).
+
+    Used when venue has zero pending limits and zero position — bypasses mark-window
+    clipping and too-close filtering so the full GRID_NUM/2 per side is posted.
+    """
+    posts: List[Tuple[str, float]] = []
+    for side, key in (("buy", "grid_buy_rungs"), ("sell", "grid_sell_rungs")):
+        raw = ameta.get(key) or []
+        if not isinstance(raw, list):
+            continue
+        for px in raw:
+            try:
+                pf = float(px)
+            except (TypeError, ValueError):
+                continue
+            if pf > 0:
+                posts.append((side, pf))
+    return posts
+
+
 def infer_ladder_from_remnants(
     *,
     mark: float,
@@ -574,6 +596,7 @@ def infer_ladder_from_remnants(
     grid_num: int,
     grid_band_pct: Optional[float] = None,
     nearest_n: Optional[int] = None,
+    cold_start: bool = False,
 ) -> RemnantInferenceResult:
     """
     Mark-centered window maintenance.
@@ -587,6 +610,7 @@ def infer_ladder_from_remnants(
     grid_num            : GRID_NUM env; used to default nearest_n.
     grid_band_pct       : configured ±band % from meta (e.g. ``3.0`` for TON ±3%).
     nearest_n           : override protected-window depth (defaults to GRID_NUM/2).
+    cold_start          : flat init — use pinned bounds for the window (not mark×band).
     """
     mark_f = float(mark)
     n = nearest_n if nearest_n is not None else _env_nearest_n(grid_num)
@@ -594,8 +618,12 @@ def infer_ladder_from_remnants(
     # Band around today's mark from configured grid_band_pct (or pinned bounds fallback).
     band_frac = half_band_fraction(grid_band_pct=grid_band_pct, lower=lower, upper=upper)
     band_tol = float(band_frac)
-    win_lower = mark_f * (1.0 - band_tol)
-    win_upper = mark_f * (1.0 + band_tol)
+    if cold_start and float(lower) > 0 and float(upper) > float(lower):
+        win_lower = float(lower)
+        win_upper = float(upper)
+    else:
+        win_lower = mark_f * (1.0 - band_tol)
+        win_upper = mark_f * (1.0 + band_tol)
 
     # Current in-band limits (strictly below/above mark)
     inband_buys: List[float] = []
@@ -699,6 +727,7 @@ def compute_venue_actions(
     result: RemnantInferenceResult,
     venue_pending_keys: Set[Tuple[str, str]],
     mark: float,
+    cold_start: bool = False,
 ) -> Tuple[Set[Tuple[str, str]], List[Tuple[str, float]]]:
     """
     Given the inference result and current venue pending keys, decide:
@@ -812,7 +841,12 @@ def compute_venue_actions(
         return prices
 
     def _append_posts(side: str, prices: List[float]) -> None:
-        for px in _filter_nearest_too_close(side, prices):
+        to_post = (
+            list(prices)
+            if cold_start
+            else _filter_nearest_too_close(side, prices)
+        )
+        for px in to_post:
             if not _far_enough(side, px):
                 continue
             post_rungs.append((side, px))
