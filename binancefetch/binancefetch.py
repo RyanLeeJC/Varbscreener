@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -92,6 +94,14 @@ def default_out_path(symbol: str, interval: str, days: int, *, funding: bool = F
     return ROOT / f"{symbol}_{interval}_last{days}d.json"
 
 
+def request_proxies() -> Optional[Dict[str, str]]:
+    """HTTPS_PROXY / HTTP_PROXY (same as Varibot Vari client)."""
+    u = (os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or "").strip()
+    if not u:
+        return None
+    return {"http": u, "https": u}
+
+
 def fetch_klines_range(
     symbol: str,
     interval: str,
@@ -100,8 +110,10 @@ def fetch_klines_range(
     *,
     base_url: str = BINANCE_KLINES,
     sleep_s: float = 0.1,
+    proxies: Optional[Dict[str, str]] = None,
 ) -> list[list]:
     """Binance klines with startTime inclusive, paginated (max 1000 per request)."""
+    px = proxies if proxies is not None else request_proxies()
     rows: list[list] = []
     cur = int(start_ms)
     end_ms = int(end_ms)
@@ -116,6 +128,7 @@ def fetch_klines_range(
                 "limit": 1000,
             },
             timeout=30,
+            proxies=px,
         )
         resp.raise_for_status()
         batch = resp.json()
@@ -138,6 +151,7 @@ def fetch_klines_window(
     *,
     base_url: str = BINANCE_KLINES,
     sleep_s: float = 0.1,
+    proxies: Optional[Dict[str, str]] = None,
 ) -> list[list]:
     return fetch_klines_range(
         symbol,
@@ -146,6 +160,7 @@ def fetch_klines_window(
         end_ms,
         base_url=base_url,
         sleep_s=sleep_s,
+        proxies=proxies,
     )
 
 

@@ -236,6 +236,15 @@ def _binance_futures_symbol(ticker: str) -> str:
     return f"{str(ticker).strip().upper()}USDT"
 
 
+def _binance_request_proxies() -> Optional[Dict[str, str]]:
+    import os
+
+    u = (os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or "").strip()
+    if not u:
+        return None
+    return {"http": u, "https": u}
+
+
 def _binance_klines_get(*, symbol: str, interval: str, limit: int) -> List[Any]:
     import requests
 
@@ -243,6 +252,7 @@ def _binance_klines_get(*, symbol: str, interval: str, limit: int) -> List[Any]:
         BINANCE_FAPI_KLINES,
         params={"symbol": symbol, "interval": str(interval), "limit": int(limit)},
         timeout=20,
+        proxies=_binance_request_proxies(),
     )
     resp.raise_for_status()
     rows = resp.json()
@@ -323,7 +333,11 @@ def fetch_binance_futures_prices(tickers: Sequence[str]) -> Dict[str, float]:
     if not want:
         return {}
     try:
-        resp = requests.get(BINANCE_FAPI_TICKER_PRICE, timeout=20)
+        resp = requests.get(
+            BINANCE_FAPI_TICKER_PRICE,
+            timeout=20,
+            proxies=_binance_request_proxies(),
+        )
         resp.raise_for_status()
         rows = resp.json()
     except Exception:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -12,9 +13,11 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 import requests
 
 from binancefetch.binancefetch import (
+    BINANCE_DATA_KLINES,
     BINANCE_FUTURES_KLINES,
     fetch_klines_window,
     kline_to_bar,
+    request_proxies,
 )
 from grid_vol_pause_backtest import (
     load_series,
@@ -25,7 +28,11 @@ from grid_vol_pause_backtest import (
 
 SGT = timezone(timedelta(hours=8))
 INTERVAL = "5m"
-DATA_HOST = BINANCE_FUTURES_KLINES
+DATA_HOSTS = (
+    (os.environ.get("GRID_ROTATION_BINANCE_KLINES_URL") or "").strip() or BINANCE_FUTURES_KLINES,
+    BINANCE_FUTURES_KLINES,
+    BINANCE_DATA_KLINES,
+)
 GATE_TICKERS = ["BTC", "ETH"]
 BAND_CANDIDATES = [1.5, 2.0, 2.5, 3.0, 3.5]
 WARMUP_BARS = 110
@@ -96,6 +103,11 @@ def _store_bars(conn: sqlite3.Connection, *, underlying: str, symbol: str, bars:
     return len(rows)
 
 
+def _binance_symbols(underlying: str) -> List[str]:
+    u = str(underlying).strip().upper()
+    return [f"{u}USDT"]
+
+
 def _fetch_symbol(
     conn: sqlite3.Connection,
     underlying: str,
@@ -103,28 +115,46 @@ def _fetch_symbol(
     start_ms: int,
     end_ms_val: int,
     sleep_s: float = 0.08,
+    progress: Optional[Callable[[str], None]] = None,
+    log_first_error: bool = False,
 ) -> bool:
-    symbol = f"{underlying}USDT"
-    try:
-        raw = fetch_klines_window(
-            symbol,
-            INTERVAL,
-            start_ms,
-            end_ms_val,
-            base_url=DATA_HOST,
-            sleep_s=sleep_s,
-        )
-    except requests.HTTPError:
-        return False
-    except Exception:
-        return False
+    last_err = ""
+    hosts = []
+    for h in DATA_HOSTS:
+        if h and h not in hosts:
+            hosts.append(h)
+    px = request_proxies()
 
-    bars = [kline_to_bar(k) for k in raw]
-    bars = [b for b in bars if start_ms <= int(b["open_time_ms"]) <= end_ms_val]
-    if not bars:
-        return False
-    _store_bars(conn, underlying=underlying, symbol=symbol, bars=bars)
-    return True
+    for symbol in _binance_symbols(underlying):
+        for host in hosts:
+            try:
+                raw = fetch_klines_window(
+                    symbol,
+                    INTERVAL,
+                    start_ms,
+                    end_ms_val,
+                    base_url=host,
+                    sleep_s=sleep_s,
+                    proxies=px,
+                )
+            except Exception as e:
+                last_err = f"{host} {symbol}: {type(e).__name__}: {e}"
+                if log_first_error and progress:
+                    progress(f"klines error sample — {last_err}")
+                    log_first_error = False
+                continue
+
+            bars = [kline_to_bar(k) for k in raw]
+            bars = [b for b in bars if start_ms <= int(b["open_time_ms"]) <= end_ms_val]
+            if not bars:
+                last_err = f"{host} {symbol}: 0 bars in window"
+                continue
+            _store_bars(conn, underlying=underlying, symbol=symbol, bars=bars)
+            return True
+
+    if log_first_error and progress and last_err:
+        progress(f"klines failed {underlying} — {last_err}")
+    return False
 
 
 def fetch_klines_48h5m(
@@ -168,7 +198,14 @@ def fetch_klines_48h5m(
         conn.commit()
 
         for i, sym in enumerate(all_syms):
-            ok = _fetch_symbol(conn, sym, start_ms=start_ms, end_ms_val=end_ms_val)
+            ok = _fetch_symbol(
+                conn,
+                sym,
+                start_ms=start_ms,
+                end_ms_val=end_ms_val,
+                progress=progress,
+                log_first_error=(i == 0),
+            )
             if ok:
                 fetched.append(sym)
             else:
@@ -189,6 +226,18 @@ def fetch_klines_48h5m(
         conn.commit()
     finally:
         conn.close()
+
+    if not fetched:
+        hosts_tried = list(dict.fromkeys(h for h in DATA_HOSTS if h))
+        proxy_set = bool(request_proxies())
+        hint = (
+            "All Binance kline fetches failed. On Render, fapi.binance.com is often blocked — "
+            f"set HTTPS_PROXY in the env group (proxy={'set' if proxy_set else 'not set'}). "
+            f"Hosts tried: {hosts_tried}."
+        )
+        if progress:
+            progress(hint)
+        raise RuntimeError(hint)
 
     return {
         "db": str(db_path),
