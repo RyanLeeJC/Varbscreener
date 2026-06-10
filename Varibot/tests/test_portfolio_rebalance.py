@@ -390,14 +390,14 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
                 _pos("XRP", "short", 1531.0, 1.34, upnl_usd=17.92),
                 _pos("BNB", "short", 5.6813, 674.9, upnl_usd=-84.05),
             ],
-            flatten_multiple=10.0,
+            flatten_multiple=5.0,
             min_order_usd=5.0,
         )
         tickers = {t.ticker for t in trims}
         self.assertEqual(tickers, {"AAVE", "XRP"})
         for t in trims:
             self.assertAlmostEqual(t.trim_fraction, 1.0)
-            self.assertAlmostEqual(t.threshold_notional, 2000.0)
+            self.assertAlmostEqual(t.threshold_notional, 1000.0)
         aave = next(t for t in trims if t.ticker == "AAVE")
         self.assertEqual(aave.order_side, "buy")
         self.assertAlmostEqual(aave.order_quantity, 39.293)
@@ -406,19 +406,19 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
     def test_skips_when_upnl_not_positive(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
             [_pos("BNB", "short", 5.6813, 674.9, upnl_usd=-84.05)],
-            flatten_multiple=10.0,
+            flatten_multiple=5.0,
             min_order_usd=5.0,
         )
         self.assertEqual(trims, [])
 
     @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
-    def test_skips_when_upnl_at_or_below_ten_dollars(self, _mock: object) -> None:
+    def test_skips_when_upnl_at_or_below_five_dollars(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
             [
-                _pos("AAVE", "short", 39.293, 82.71, upnl_usd=10.0),
-                _pos("XRP", "short", 1531.0, 1.34, upnl_usd=7.92),
+                _pos("AAVE", "short", 39.293, 82.71, upnl_usd=5.0),
+                _pos("XRP", "short", 1531.0, 1.34, upnl_usd=4.92),
             ],
-            flatten_multiple=10.0,
+            flatten_multiple=5.0,
             min_order_usd=5.0,
         )
         self.assertEqual(trims, [])
@@ -427,7 +427,7 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
     def test_skips_when_below_rung_multiple(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
             [_pos("AVAX", "long", 0.5, 2000.0, upnl_usd=10.0)],
-            flatten_multiple=10.0,
+            flatten_multiple=5.0,
             min_order_usd=5.0,
         )
         self.assertEqual(trims, [])

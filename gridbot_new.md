@@ -529,6 +529,14 @@ Write `gridstrat_rearm.py` first and test it standalone before touching the exch
 
 ---
 
+## Oversized profit flatten (every cycle)
+
+When any open position’s **value (notional) exceeds 5× grid rung USD** and **uPNL > $5**, Varibot places a **100% reduce-only market flatten** on that ticker (`VARIBOT_OVERSIZED_FLATTEN_MULTIPLE`, default `5`; `VARIBOT_OVERSIZED_FLATTEN_MIN_UPNL_USD`, default `5`). **Pending grid limits are not canceled** — only inventory is cut to free IM. Set `VARIBOT_OVERSIZED_FLATTEN_MULTIPLE=0` to disable.
+
+Rung USD = `GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM` (default 80×50/10 = **$400** → threshold **$2,000**).
+
+Runs at the **start of each `varibot.py` cycle** when positions exist (before notional-cap trim and IM rebalance).
+
 ## IM high usage trim (IM ≥ 80%)
 
 When **initial margin (IM) usage** is **≥ 80%** (same trigger as interval risk), Varibot first runs a **reduce-only market trim of 50% of each open position** (`VARIBOT_IM_HIGH_USAGE_TRIM_FRACTION`, default `0.5`; set `0` to disable and fall through to interval risk). Pending grid limits are **not** canceled. The equal-notional interval risk rebalance below does **not** run on the same cycle when this trim fires.
@@ -571,6 +579,8 @@ python3 rebalance_run.py
 | `VARI_RATE_LIMIT_MAX` / `VARI_RATE_LIMIT_WINDOW_S` | `10` / `10` | Per-IP cap used to compute default pacing (also enforced on every HTTP call) |
 | `MAX_SLIPPAGE` | `0.002` | Market order slippage cap |
 | `VARIBOT_FLATTEN_SLIPPAGE_EXTRA` | `0.001` | +0.10% added to reduce-only trim/flatten slippage (IM trim, notional cap, close-all path) |
+| `VARIBOT_OVERSIZED_FLATTEN_MULTIPLE` | `5` | 100% reduce-only flatten when position value > multiple × grid rung and uPNL > min (`0` = off) |
+| `VARIBOT_OVERSIZED_FLATTEN_MIN_UPNL_USD` | `5` | Minimum uPNL (USD) before oversized flatten runs |
 | `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE` | `30` | Per-ticker reduce-only trim when notional exceeds multiple × grid rung (`investment×lev/grid_num`; `0` = off) |
 | `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION` | `0.5` | Fraction of position qty to cut per trim (default 50%) |
 

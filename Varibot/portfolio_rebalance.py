@@ -33,9 +33,9 @@ DEFAULT_FLATTEN_SLIPPAGE_EXTRA: float = 0.001  # +0.10% on reduce-only trims / f
 DEFAULT_TRIM_MULTIPLE: float = 0.0  # <= 0 disables per-ticker position trim
 DEFAULT_TRIM_FRACTION: float = 0.5
 ENV_OVERSIZED_FLATTEN_MULTIPLE = "VARIBOT_OVERSIZED_FLATTEN_MULTIPLE"
-DEFAULT_OVERSIZED_FLATTEN_MULTIPLE: float = 10.0  # <= 0 disables oversized profit flatten
+DEFAULT_OVERSIZED_FLATTEN_MULTIPLE: float = 5.0  # <= 0 disables oversized profit flatten
 ENV_OVERSIZED_FLATTEN_MIN_UPNL_USD = "VARIBOT_OVERSIZED_FLATTEN_MIN_UPNL_USD"
-DEFAULT_OVERSIZED_FLATTEN_MIN_UPNL_USD: float = 10.0  # require uPNL above this before 100% flatten
+DEFAULT_OVERSIZED_FLATTEN_MIN_UPNL_USD: float = 5.0  # require uPNL above this before 100% flatten
 # Per-ticker reduce-only trim when position notional exceeds multiple × grid rung USD.
 ENV_NOTIONAL_CAP_TRIM_MULTIPLE = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE"
 ENV_NOTIONAL_CAP_TRIM_FRACTION = "VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION"
@@ -415,9 +415,10 @@ def plan_oversized_profit_flattens(
 ) -> List[PlannedTrimOrder]:
     """
     Flatten (100%% reduce-only) when abs notional exceeds ``flatten_multiple × rung_usd`` and
-    uPNL exceeds ``oversized_flatten_min_upnl_usd()`` (default $10, slippage buffer on close).
+    uPNL exceeds ``oversized_flatten_min_upnl_usd()`` (default $5, slippage buffer on close).
+    Pending grid limits are not canceled.
 
-    Default multiple is 10 (``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE``). Set <= 0 to disable.
+    Default multiple is 5 (``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE``). Set <= 0 to disable.
     """
     mult = oversized_flatten_multiple() if flatten_multiple is None else float(flatten_multiple)
     min_upnl = oversized_flatten_min_upnl_usd()
@@ -971,8 +972,8 @@ def rebalance_portfolio(
     Portfolio maintenance on each call when positions exist:
 
     0. **Oversized profit flatten** — 100%% reduce-only when abs notional exceeds
-       ``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE × grid_rung_usd`` (default 10×) and uPNL >
-       ``VARIBOT_OVERSIZED_FLATTEN_MIN_UPNL_USD`` (default $10).
+       ``VARIBOT_OVERSIZED_FLATTEN_MULTIPLE × grid_rung_usd`` (default 5×) and uPNL >
+       ``VARIBOT_OVERSIZED_FLATTEN_MIN_UPNL_USD`` (default $5). Grid limits stay intact.
     1. **Notional cap trim** — reduce-only market when position notional exceeds
        ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE × grid_rung_usd`` (default 30×) by
        ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION`` (default 50%).
