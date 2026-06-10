@@ -533,7 +533,7 @@ Write `gridstrat_rearm.py` first and test it standalone before touching the exch
 
 When any open position’s **value (notional) exceeds 5× grid rung USD** and **uPNL > $5**, Varibot places a **100% reduce-only market flatten** on that ticker (`VARIBOT_OVERSIZED_FLATTEN_MULTIPLE`, default `5`; `VARIBOT_OVERSIZED_FLATTEN_MIN_UPNL_USD`, default `5`). **Pending grid limits are not canceled** — only inventory is cut to free IM. Set `VARIBOT_OVERSIZED_FLATTEN_MULTIPLE=0` to disable.
 
-Rung USD = `GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM` (default 80×50/10 = **$400** → threshold **$2,000**).
+Rung USD = `GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM` (default 16×50/8 = **$100** → threshold **$500**).
 
 Runs at the **start of each `varibot.py` cycle** when positions exist (before notional-cap trim and IM rebalance).
 
@@ -584,7 +584,7 @@ python3 rebalance_run.py
 | `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE` | `30` | Per-ticker reduce-only trim when notional exceeds multiple × grid rung (`investment×lev/grid_num`; `0` = off) |
 | `VARIBOT_POSITION_NOTIONAL_CAP_TRIM_FRACTION` | `0.5` | Fraction of position qty to cut per trim (default 50%) |
 
-**Notional cap trim** runs every cycle when you have open positions (before IM rebalance): if any ticker’s position notional is **over 30× grid rung USD** (default 30× $400 = **$12,000** with 80×50/10), the bot places a **reduce-only market** order for **50%** of that position’s qty. Grid limits are not canceled.
+**Notional cap trim** runs every cycle when you have open positions (before IM rebalance): if any ticker’s position notional is **over 30× grid rung USD** (default 30× $100 = **$3,000** with 16×50/8), the bot places a **reduce-only market** order for **50%** of that position’s qty. Grid limits are not canceled.
 
 `varibot.py --live` calls the same logic at the **start of each cycle** when positions exist (no latch).
 

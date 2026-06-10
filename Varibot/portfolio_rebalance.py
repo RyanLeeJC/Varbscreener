@@ -241,9 +241,9 @@ def grid_rung_usd_notional(*, ticker: Optional[str] = None) -> float:
             per_rung_usd_notional,
         )
     except ImportError:
-        DEFAULT_GRID_INVESTMENT_USD = 80.0
+        DEFAULT_GRID_INVESTMENT_USD = 16.0
         DEFAULT_GRID_LEVERAGE = 50.0
-        DEFAULT_GRID_NUM = 10
+        DEFAULT_GRID_NUM = 8
 
         def grid_leverage_for_asset(_asset: str) -> float:  # type: ignore[misc]
             return float(DEFAULT_GRID_LEVERAGE)
@@ -341,7 +341,7 @@ def plan_notional_cap_trims(
     """
     Reduce-only trim when position notional exceeds ``cap_multiple × grid_rung_usd``.
 
-    Rung USD is ``GRID_INVESTMENT_USD × leverage / GRID_NUM`` per ticker (default 30× $400 = $12,000).
+    Rung USD is ``GRID_INVESTMENT_USD × leverage / GRID_NUM`` per ticker (default 30× $100 = $3,000).
     Trims ``trim_fraction`` of position qty (default 50%) via market order.
     Set ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE=0`` to disable.
     """
