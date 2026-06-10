@@ -1253,6 +1253,45 @@ def run_strategy_pick_tickers(
     )
 
 
+def _maybe_apply_grid_ticker_rotation(
+    *,
+    ep: VariEndpoints,
+    args: argparse.Namespace,
+    strat_key: str,
+    positions_raw: Any,
+) -> None:
+    """Apply pending roster swap from RotationStore; reconcile orphan tickers."""
+    if not _is_grid_like_strategy(strat_key):
+        return
+    try:
+        from grid_ticker_rotation import maybe_apply_grid_ticker_rotation
+    except ImportError as e:
+        _log(f"grid_rotation: unavailable ({type(e).__name__}: {e})")
+        return
+
+    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
+    max_slip = float(_resolve_max_slippage())
+
+    def _close(sym: str, qty_abs: float, close_side: str) -> None:
+        _close_reduce_only_with_slippage_steps(
+            ep=ep,
+            sym=sym,
+            qty_abs=float(qty_abs),
+            close_side=str(close_side),
+            max_slip=max_slip,
+        )
+
+    maybe_apply_grid_ticker_rotation(
+        ep,
+        live=bool(args.live),
+        dry_run=rebalance_dry,
+        log=_log,
+        close_position=_close,
+        varibot_dir=_VARIBOT_DIR,
+        positions_raw=positions_raw,
+    )
+
+
 def _maybe_run_grid_vol_pause(
     *,
     ep: VariEndpoints,
@@ -2609,6 +2648,13 @@ def one_cycle(
 
     raw_pos = ep.get_positions()
     _log(_fmt_portfolio_snapshot_line(out))
+
+    _maybe_apply_grid_ticker_rotation(
+        ep=ep,
+        args=args,
+        strat_key=strat_key,
+        positions_raw=raw_pos,
+    )
 
     vol_paused = _maybe_run_grid_vol_pause(
         ep=ep,

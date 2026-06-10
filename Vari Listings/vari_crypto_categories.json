@@ -2219,6 +2219,42 @@
     {
       "asset": "XDC",
       "coingecko_id": null
+    },
+    {
+      "asset": "BEAT",
+      "coingecko_id": null
+    },
+    {
+      "asset": "H",
+      "coingecko_id": null
+    },
+    {
+      "asset": "VELVET",
+      "coingecko_id": null
+    },
+    {
+      "asset": "MOVE",
+      "coingecko_id": null
+    },
+    {
+      "asset": "ALLORA",
+      "coingecko_id": null
+    },
+    {
+      "asset": "SAHARA",
+      "coingecko_id": null
+    },
+    {
+      "asset": "GWEI",
+      "coingecko_id": null
+    },
+    {
+      "asset": "ESPORTS",
+      "coingecko_id": null
+    },
+    {
+      "asset": "POWER",
+      "coingecko_id": null
     }
   ],
   "lighter-ai": [

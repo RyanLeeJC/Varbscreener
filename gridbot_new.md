@@ -698,6 +698,256 @@ Resolves `ownerId` from the service automatically. A full 24h run can take **~20
 
 ---
 
+## Grid ticker rotation (auto roster)
+
+Daily pipeline: rank top **40** Vari tickers by 24h volume (minus `vari-blacklist` in [`Vari Listings/vari_crypto_categories.json`](Vari%20Listings/vari_crypto_categories.json)) → 48h band hyperparam on Binance 5m → top **10** sim PnL candidates → replace bottom **10** of the live roster by **24h total PnL** (RPNL + uPNL from exports). Varibot **cancels limits and flattens** removed tickers; new bands live in `.grid_trading_roster.json`.
+
+**Do not** use `GRID_TRADING_TICKERS` env for daily updates (Render env requires redeploy). Roster file + Key Value handoff instead.
+
+| Component | Role |
+|-----------|------|
+| **Cron Job** (Render) or manual CLI | Heavy eval: volume → klines → hyperparam → write pending plan |
+| **Gridbot** (`varibot.py`) | Each cycle: read pending → exit removed tickers → save roster → reconcile orphans |
+| **Active roster** | `Varibot/.grid_trading_roster.json` (or path in `GRID_TRADING_ROSTER_PATH`) |
+| **Pending swap** | File (local) or Render Key Value (production) |
+
+Code: [`Varibot/grid_ticker_rotation.py`](Varibot/grid_ticker_rotation.py), sim: [`binancefetch/gridbot_study/grid_rotation_sim.py`](binancefetch/gridbot_study/grid_rotation_sim.py).
+
+### Env vars
+
+| Variable | Local default | Render | Meaning |
+|----------|---------------|--------|---------|
+| `GRID_TICKER_ROTATION_ENABLED` | `1` (see `.env`) | `1` | Master switch |
+| `GRID_ROTATION_STORE` | `file` | `keyvalue` | `file` = local JSON; `keyvalue` = Render Key Value |
+| `GRID_ROSTER_SIZE` | `20` | `20` | Target active tickers |
+| `GRID_ROTATION_CANDIDATE_POOL` | `40` | `40` | Volume-ranked universe before hyperparam |
+| `GRID_ROTATION_SWAP_COUNT` | `10` | `10` | Max replacements per day |
+| `GRID_TRADING_ROSTER_PATH` | `.grid_trading_roster.json` | same | Active roster (under `Varibot/`) |
+| `GRID_ROTATION_PENDING_PATH` | `.grid_rotation_pending.json` | — | Pending plan (file store only) |
+| `KEY_VALUE_URL` | — | **required** | Redis URL from Render Key Value |
+| `GRID_ROTATION_KEYVALUE_KEY` | `grid:rotation:pending` | same | Redis key for pending JSON |
+| `GRID_ROTATION_BLACKLIST_JSON` | `../Vari Listings/vari_crypto_categories.json` | same path in image | `vari-blacklist` source |
+
+Also scrubbed automatically: **BTC**, **ETH**, **RWA** tickers, non–crypto-perp rows from `supported_assets`.
+
+---
+
+### Enable locally (file store)
+
+**1. Install deps** (includes `redis` for optional Key Value; file store does not need Redis running):
+
+```bash
+cd /path/to/Vari
+python3 -m pip install -r requirements.txt
+```
+
+**2. Env** — already in `Varibot/.env` if you pulled latest:
+
+```bash
+GRID_TICKER_ROTATION_ENABLED=1
+GRID_ROTATION_STORE=file
+GRID_ROSTER_SIZE=20
+GRID_ROTATION_CANDIDATE_POOL=40
+GRID_ROTATION_SWAP_COUNT=10
+GRID_TRADING_ROSTER_PATH=.grid_trading_roster.json
+GRID_ROTATION_PENDING_PATH=.grid_rotation_pending.json
+GRID_ROTATION_BLACKLIST_JSON=../Vari Listings/vari_crypto_categories.json
+```
+
+**3. Dry-run eval** (no pending write; ~3–5 min, Binance + Vari API):
+
+```bash
+cd Varibot
+python3 grid_ticker_rotation.py --evaluate --json
+```
+
+Inspect `plan.remove`, `plan.add`, `plan.roster_after` in the JSON.
+
+**4. Write pending plan** (does not touch the venue):
+
+```bash
+cd Varibot
+python3 grid_ticker_rotation.py --evaluate --write-pending
+cat .grid_rotation_pending.json
+```
+
+**5. Apply manually once** (optional test before leaving it to varibot):
+
+```bash
+cd Varibot
+python3 grid_ticker_rotation.py --apply-pending --live   # live flatten + roster update
+# or without --live for dry-run log only
+```
+
+**6. Run bot** — each `one_cycle()` applies any unapplied pending file, then reconciles orphans:
+
+```bash
+cd Varibot
+python3 varibot.py --live
+```
+
+**7. Seed roster** — on first run, if `.grid_trading_roster.json` is missing, it is created from static `GRID_TRADING_TICKERS` in `strategy/gridstrat.py`. After rotation, `grid_trading_ticker_band_pcts()` reads the roster file (unless `GRID_TRADING_TICKERS` env override is set).
+
+**Local checklist**
+
+- [ ] `--evaluate --json` looks sane (no surprise evictions)
+- [ ] `--write-pending` then inspect `.grid_rotation_pending.json`
+- [ ] `--apply-pending` once in dry-run, then `--live` when ready
+- [ ] `varibot.py --live` with `GRID_TICKER_ROTATION_ENABLED=1`
+
+---
+
+### Enable on Render (step-by-step)
+
+Render splits **heavy eval** (Cron Job, ~3–5 min/day) from **light apply** (Gridbot web service, seconds per cycle). Cron and Gridbot **cannot share a disk**; use **Render Key Value** (Redis) to pass one JSON blob per day.
+
+#### Phase A — Prerequisites
+
+1. **Code on branch** — push commits that include `grid_ticker_rotation.py`, `grid_rotation_sim.py`, `render.yaml`, and updated `requirements.txt` (`redis` package).
+2. **Existing Gridbot** — your Production Docker service (`python3 Varibot/varibot.py --live`) in Singapore (or same region as Cron).
+3. **Blacklist file in image** — `Vari Listings/vari_crypto_categories.json` is in the repo and copied by `Dockerfile` (`COPY . .`), so Cron and Gridbot both see it at `/app/Vari Listings/vari_crypto_categories.json`. Set on both services:
+   ```bash
+   GRID_ROTATION_BLACKLIST_JSON=/app/Vari Listings/vari_crypto_categories.json
+   ```
+
+#### Phase B — Create Render Key Value
+
+1. Open [Render Dashboard](https://dashboard.render.com) → your **Production** environment (or create one).
+2. Click **+ New** → **Key Value** (Redis-compatible).
+3. Name it e.g. `gridbot-rotation-kv`, region **Singapore** (same as Gridbot).
+4. Create the instance. When ready, open it and copy the **Internal Redis URL** (or **External** if Cron/Gridbot require it — prefer **Internal** when both services are in the same Render account/region).
+5. Save the URL — looks like:
+   ```text
+   redis://red-xxxxxxxx:6379
+   ```
+   Render may also expose `REDIS_URL`; either works as `KEY_VALUE_URL`.
+
+#### Phase C — Environment Group (shared secrets)
+
+1. Dashboard → **Environment Groups** → **+ New Environment Group** (e.g. `gridbot-production`).
+2. Add variables (same values Gridbot already uses, plus rotation):
+
+   | Key | Value |
+   |-----|--------|
+   | `VR_WALLET_ADDRESS` | *(existing)* |
+   | `VR_TOKEN` | *(existing)* |
+   | `GRID_TICKER_ROTATION_ENABLED` | `1` |
+   | `GRID_ROTATION_STORE` | `keyvalue` |
+   | `KEY_VALUE_URL` | *(paste Redis URL from Phase B)* |
+   | `GRID_ROTATION_KEYVALUE_KEY` | `grid:rotation:pending` |
+   | `GRID_ROSTER_SIZE` | `20` |
+   | `GRID_ROTATION_CANDIDATE_POOL` | `40` |
+   | `GRID_ROTATION_SWAP_COUNT` | `10` |
+   | `GRID_ROTATION_BLACKLIST_JSON` | `/app/Vari Listings/vari_crypto_categories.json` |
+   | `GRID_TRADING_ROSTER_PATH` | `/app/Varibot/.grid_trading_roster.json` |
+
+3. **Do not** set `GRID_TRADING_TICKERS` for daily rotation (manual override only).
+4. Link this group to **both** Gridbot and the Cron Job (Phase D/E): service → **Environment** → **Link Environment Group**.
+
+**Optional — persistent roster on Gridbot:** attach a **Persistent Disk** to the **Gridbot web service only** (not Cron), mount e.g. at `/var/data`, set `GRID_TRADING_ROSTER_PATH=/var/data/.grid_trading_roster.json`. Cron still writes pending to Key Value only.
+
+#### Phase D — Update existing Gridbot web service
+
+1. Open service **Gridbot** → **Environment**.
+2. Confirm the Environment Group from Phase C is linked (or paste the same vars manually).
+3. Verify **Start Command**:
+   ```bash
+   python3 Varibot/varibot.py --live
+   ```
+4. **Deploy** (manual deploy or push to connected branch).
+5. After deploy, check **Logs** on first cycle — you should **not** see rotation apply until Cron writes pending (unless you manually seeded Key Value). Orphan reconcile runs only when `GRID_TICKER_ROTATION_ENABLED=1`.
+
+#### Phase E — Create Cron Job (daily eval)
+
+1. **+ New** → **Cron Job**.
+2. **Name:** `grid-rotation-eval`
+3. **Region:** Singapore (match Gridbot).
+4. **Source:** same Git repo + branch as Gridbot.
+5. **Runtime:** **Docker** (use repo `Dockerfile`, same as Gridbot).
+6. **Schedule:** `0 4 * * *` = 04:00 UTC daily (~12:00 SGT). Adjust:
+   - `0 20 * * *` = 04:00 SGT (UTC+8)
+7. **Command:**
+   ```bash
+   python3 Varibot/grid_ticker_rotation.py --evaluate --write-pending
+   ```
+8. **Instance type:** **Standard** (2 GB RAM) — enough for 40 tickers × 5 bands.
+9. **Environment:** link the **same Environment Group** as Gridbot (must include `VR_*`, `KEY_VALUE_URL`, `GRID_ROTATION_STORE=keyvalue`).
+10. **Create Cron Job**.
+
+Alternatively import [`render.yaml`](render.yaml) via Blueprint and merge with your existing Gridbot service (avoid duplicating the web service if one already exists).
+
+#### Phase F — First run (safe rollout)
+
+**Option 1 — Manual eval before enabling live apply**
+
+1. Locally (with production `VR_*` in env), dry-run:
+   ```bash
+   cd Varibot
+   python3 grid_ticker_rotation.py --evaluate --json
+   ```
+2. On Render, open Cron Job → **Trigger Run** (if available) or wait for schedule.
+3. Cron logs should end with universe count + `Wrote pending plan to store` (or `plan_skipped` if no changes).
+4. Within ~1 minute, Gridbot logs should show:
+   ```text
+   grid_rotation: applied swap remove=[...] add=[...] roster_size=20
+   ```
+5. If something looks wrong, set `GRID_TICKER_ROTATION_ENABLED=0` on Gridbot to stop apply (Cron can keep evaluating).
+
+**Option 2 — Staged enable**
+
+1. Deploy Cron + Key Value with `GRID_TICKER_ROTATION_ENABLED=0` on Gridbot.
+2. Run Cron once; inspect pending in Redis (CLI or temporary log line).
+3. Set `GRID_TICKER_ROTATION_ENABLED=1` on Gridbot and redeploy.
+
+#### Phase G — Daily operation
+
+```mermaid
+sequenceDiagram
+  participant Cron as Cron_04UTC
+  participant KV as Key_Value
+  participant Bot as Gridbot
+
+  Cron->>Cron: Top40 vol blacklist scrub
+  Cron->>Cron: Fetch 48h klines hyperparam
+  Cron->>Cron: Bottom10 live PnL evict
+  Cron->>KV: SET grid:rotation:pending
+  Bot->>KV: GET pending each cycle
+  Bot->>Bot: Cancel limits flatten removed
+  Bot->>Bot: Save roster JSON
+  Bot->>KV: Mark applied_at
+  Bot->>Bot: Trade new roster
+```
+
+| Time | What happens |
+|------|----------------|
+| Cron schedule | Eval runs 3–5 min, writes pending to Key Value |
+| Next Gridbot cycle (~1 min) | Applies swap: cancel + flatten removed tickers, updates roster |
+| Every cycle | Orphan check: any limit/position on non-roster ticker → exit |
+| Vol pause / pain pause | Unchanged; paused tickers skipped for eviction that day |
+
+#### Phase H — Troubleshooting
+
+| Symptom | Check |
+|---------|--------|
+| Cron fails immediately | Logs: missing `VR_*`, Binance rate limit, or `KEY_VALUE_URL` |
+| Gridbot never applies | `GRID_TICKER_ROTATION_ENABLED=1`, `GRID_ROTATION_STORE=keyvalue`, same `KEY_VALUE_URL`, pending has no `applied_at` |
+| Wrong tickers in universe | Edit `vari-blacklist` in repo; redeploy both services |
+| Roster not persisting across deploys | Add Persistent Disk on Gridbot + `GRID_TRADING_ROSTER_PATH` on disk |
+| Want to pause rotation | `GRID_TICKER_ROTATION_ENABLED=0` on Gridbot only |
+| Manual override roster | Set `GRID_TRADING_TICKERS=ENA:3,XLM:2,...` on Gridbot (disables roster file until unset) |
+
+#### Render checklist
+
+- [ ] Key Value created; `KEY_VALUE_URL` in Environment Group
+- [ ] Environment Group linked to **Gridbot** and **grid-rotation-eval** Cron
+- [ ] Cron command: `python3 Varibot/grid_ticker_rotation.py --evaluate --write-pending`
+- [ ] Cron schedule set (e.g. `0 4 * * *`)
+- [ ] Gridbot: `GRID_TICKER_ROTATION_ENABLED=1`, `GRID_ROTATION_STORE=keyvalue`
+- [ ] First Cron run logged; Gridbot applied swap on next cycle
+- [ ] Removed tickers: limits canceled, positions flat in Omni UI
+
+---
+
 Phase 2 development
 
 When doing gridbot trading on single ticker, or on 2 tickers, at this time, there's not way to hedge the inventory.

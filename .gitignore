@@ -13,6 +13,8 @@ Varibot/.varibot_position_latch.json
 Varibot/runs/
 Varibot/Bot_credentials/
 Varibot/.multimarket_last_result.json
+Varibot/.grid_trading_roster.json
+Varibot/.grid_rotation_pending.json
 
 # Strategy feed snapshots (Varibot; regenerated from venue indicative)
 Varibot/strategy_listing_snapshot.json

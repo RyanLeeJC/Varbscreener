@@ -296,11 +296,15 @@ def simulate(
     _, _, total = paired_totals(state, mark=float(t_c[-1]))
     price_start = float(t_c[sim_start_i])
     price_chg = (float(t_c[-1]) / price_start - 1.0) * 100.0 if price_start > 0 else 0.0
+    volume_usd = float(state.get("volume_usd") or 0.0)
+    bps = (total / volume_usd * 10_000.0) if volume_usd > 0 else 0.0
     return {
         "pnl": total,
         "dd": max_dd,
         "pauses": float(pause_count),
         "price_chg_pct": price_chg,
+        "volume_usd": volume_usd,
+        "bps": bps,
     }
 
 

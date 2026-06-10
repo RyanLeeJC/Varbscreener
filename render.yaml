@@ -1,0 +1,36 @@
+# Render Blueprint — Gridbot + daily ticker rotation Cron Job
+#
+# Create in Render dashboard or via `render blueprint apply`.
+# Share an Environment Group between both services with VR_* credentials and:
+#   GRID_TICKER_ROTATION_ENABLED=1
+#   GRID_ROTATION_STORE=keyvalue
+#   KEY_VALUE_URL=<from Render Key Value instance>
+#
+# Gridbot (Web Service): existing deploy — python3 Varibot/varibot.py --live
+# Rotation Cron: runs evaluate once daily, writes pending swap to Key Value.
+
+services:
+  - type: web
+    name: gridbot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python3 Varibot/varibot.py --live
+    plan: starter
+    region: singapore
+    envVars:
+      - key: GRID_TICKER_ROTATION_ENABLED
+        value: "1"
+      - key: GRID_ROTATION_STORE
+        value: keyvalue
+
+  - type: cron
+    name: grid-rotation-eval
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    schedule: "0 4 * * *"
+    dockerCommand: python3 Varibot/grid_ticker_rotation.py --evaluate --write-pending
+    plan: starter
+    region: singapore
+    envVars:
+      - key: GRID_ROTATION_STORE
+        value: keyvalue

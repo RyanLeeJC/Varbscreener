@@ -221,26 +221,20 @@ def _tickers_from_env_list(raw: str, *, default_band: float) -> Dict[str, float]
 
 
 def grid_trading_ticker_band_pcts() -> Dict[str, float]:
-    """Active tickers → default ±band % (uppercased keys)."""
+    """Active tickers → default ±band % (uppercased keys).
+
+    Resolution: ``GRID_TRADING_TICKERS`` env (manual override) → roster JSON file → static dict.
+    """
     env_tickers = (os.environ.get("GRID_TRADING_TICKERS") or "").strip()
     if env_tickers:
         band_default = env_grid_band_pct()
         parsed = _tickers_from_env_list(env_tickers, default_band=band_default)
         if parsed:
             return parsed
-    if not GRID_TRADING_TICKERS:
-        asset = (os.environ.get("GRID_ASSET") or DEFAULT_GRID_ASSET).strip().upper()
-        return {asset: float(DEFAULT_GRID_BAND_PCT)}
-    out: Dict[str, float] = {}
-    for k, v in GRID_TRADING_TICKERS.items():
-        sym = str(k).strip().upper()
-        if not sym:
-            continue
-        try:
-            out[sym] = float(v)
-        except (TypeError, ValueError):
-            continue
-    return out or {DEFAULT_GRID_ASSET: float(DEFAULT_GRID_BAND_PCT)}
+    roster_doc = load_grid_trading_roster()
+    if roster_doc and isinstance(roster_doc.get("tickers"), dict):
+        return dict(roster_doc["tickers"])
+    return grid_trading_ticker_band_pcts_from_static()
 
 
 def grid_band_pct_for_asset(asset: str) -> float:
@@ -308,6 +302,105 @@ def _default_state_path() -> str:
     if raw:
         return os.path.expanduser(raw)
     return os.path.join(_repo_root_from_here(), "Varibot", "gridstrat_state.json")
+
+
+ENV_GRID_TRADING_ROSTER_PATH: str = "GRID_TRADING_ROSTER_PATH"
+DEFAULT_GRID_TRADING_ROSTER_NAME: str = ".grid_trading_roster.json"
+ROSTER_SCHEMA_VERSION: int = 1
+
+
+def _default_roster_path() -> str:
+    raw = (os.environ.get(ENV_GRID_TRADING_ROSTER_PATH) or "").strip()
+    if raw:
+        return os.path.expanduser(raw)
+    return os.path.join(_repo_root_from_here(), "Varibot", DEFAULT_GRID_TRADING_ROSTER_NAME)
+
+
+def grid_trading_ticker_band_pcts_from_static() -> Dict[str, float]:
+    """Static dict + single-asset fallback (ignores env and roster file)."""
+    if not GRID_TRADING_TICKERS:
+        asset = (os.environ.get("GRID_ASSET") or DEFAULT_GRID_ASSET).strip().upper()
+        return {asset: float(DEFAULT_GRID_BAND_PCT)}
+    out: Dict[str, float] = {}
+    for k, v in GRID_TRADING_TICKERS.items():
+        sym = str(k).strip().upper()
+        if not sym:
+            continue
+        try:
+            out[sym] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return out or {DEFAULT_GRID_ASSET: float(DEFAULT_GRID_BAND_PCT)}
+
+
+def load_grid_trading_roster(*, path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Load runtime roster document, or None if missing / invalid."""
+    p = str(path or _default_roster_path())
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    tickers = doc.get("tickers")
+    if not isinstance(tickers, dict) or not tickers:
+        return None
+    out: Dict[str, float] = {}
+    for k, v in tickers.items():
+        sym = str(k).strip().upper()
+        if not sym:
+            continue
+        try:
+            out[sym] = float(v)
+        except (TypeError, ValueError):
+            continue
+    if not out:
+        return None
+    doc = dict(doc)
+    doc["tickers"] = out
+    return doc
+
+
+def save_grid_trading_roster(
+    tickers: Dict[str, float],
+    *,
+    path: Optional[str] = None,
+    roster_size: Optional[int] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Atomically write active roster JSON; returns path written."""
+    from datetime import datetime, timezone
+
+    p = str(path or _default_roster_path())
+    dirname = os.path.dirname(p) or "."
+    os.makedirs(dirname, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    doc: Dict[str, Any] = {
+        "schema": ROSTER_SCHEMA_VERSION,
+        "roster_size": int(roster_size) if roster_size is not None else len(tickers),
+        "tickers": {str(k).strip().upper(): float(v) for k, v in tickers.items() if str(k).strip()},
+        "updated_at": now,
+        "last_rotation_at": now,
+    }
+    if extra:
+        doc.update(extra)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2)
+    os.replace(tmp, p)
+    return p
+
+
+def seed_grid_trading_roster_if_missing(*, path: Optional[str] = None) -> Optional[str]:
+    """Create roster file from static ``GRID_TRADING_TICKERS`` when absent."""
+    p = str(path or _default_roster_path())
+    if os.path.isfile(p):
+        return None
+    tickers = grid_trading_ticker_band_pcts_from_static()
+    if not tickers:
+        return None
+    return save_grid_trading_roster(tickers, path=p)
 
 
 def _truthy_env(name: str) -> bool:
