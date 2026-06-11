@@ -11,7 +11,6 @@ import argparse
 import json
 import os
 import sys
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple
@@ -192,8 +191,7 @@ def fetch_live_snapshot_pnl(
     tickers: Sequence[str],
     hours: float = 24.0,
 ) -> Dict[str, float]:
-    from exports import build_export_payload, create_export, download_export_file, poll_export
-    from gridbotsnapshot import aggregate_rpnl, build_snapshot_rows, fetch_upnl_by_ticker
+    from gridbotsnapshot import aggregate_rpnl, build_snapshot_rows, fetch_export_csv, fetch_upnl_by_ticker
     from variationalbot.vari import VariClient
 
     client = ep.client if hasattr(ep, "client") else None
@@ -202,38 +200,16 @@ def fetch_live_snapshot_pnl(
 
     lte_dt = datetime.now(timezone.utc)
     gte_dt = lte_dt - timedelta(hours=float(hours))
-
-    def _iso_z(dt: datetime) -> str:
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        else:
-            dt = dt.astimezone(timezone.utc)
-        ms = int(dt.microsecond / 1000)
-        return dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{ms:03d}Z"
-
-    def _fetch(resource: str) -> List[Dict[str, str]]:
-        payload = build_export_payload(
-            resource=resource,
-            created_at_gte=_iso_z(gte_dt),
-            created_at_lte=_iso_z(lte_dt),
-            transfer_types=["realized_pnl"] if resource == "transfers" else None,
-        )
-        created = create_export(client, payload)
-        export_id = str(created.get("id") or "").strip()
-        completed = poll_export(client, export_id, timeout_s=120.0)
-        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-        try:
-            download_export_file(client, export_id=export_id, export=completed, out_path=tmp_path)
-            import csv
-
-            with tmp_path.open(newline="", encoding="utf-8") as f:
-                return list(csv.DictReader(f))
-        finally:
-            tmp_path.unlink(missing_ok=True)
+    export_timeout_s = float(os.environ.get("EXPORT_POLL_TIMEOUT_S", "120"))
 
     want = {str(t).strip().upper() for t in tickers if str(t).strip()}
-    rpnl_rows = _fetch("transfers")
+    rpnl_rows = fetch_export_csv(
+        client,
+        resource="transfers",
+        gte_dt=gte_dt,
+        lte_dt=lte_dt,
+        timeout_s=export_timeout_s,
+    )
     upnl_by = fetch_upnl_by_ticker(ep)
     rpnl_by = aggregate_rpnl(rpnl_rows)
     rows = build_snapshot_rows(
@@ -650,8 +626,15 @@ def run_evaluate(
     current = current_roster_tickers()
     _progress(f"current roster — {len(current)} tickers: {', '.join(sorted(current.keys()))}")
     _progress("fetching live 24h PnL exports (RPNL + uPNL)...")
-    live_pnl = fetch_live_snapshot_pnl(ep, tickers=list(current.keys()), hours=24.0)
-    _progress("live PnL export done")
+    try:
+        live_pnl = fetch_live_snapshot_pnl(ep, tickers=list(current.keys()), hours=24.0)
+        _progress("live PnL export done")
+    except Exception as e:
+        _progress(
+            f"live PnL export FAILED ({type(e).__name__}: {e}) — "
+            "continuing with zero live PnL for swap ranking"
+        )
+        live_pnl = {str(t).strip().upper(): 0.0 for t in current.keys()}
 
     paused: Set[str] = set()
     try:

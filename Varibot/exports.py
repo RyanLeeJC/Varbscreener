@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -12,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from variationalbot.config import load_config
 from variationalbot.vari import VariAuth, VariClient
+from variationalbot.vari.errors import VariUnexpectedResponse
 
 SGT = timezone(timedelta(hours=8))
 
@@ -94,12 +97,65 @@ def build_export_payload(
     return {"resource": resource, "filters": filters}
 
 
+def _looks_like_timeout(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return ("curl: (28)" in str(exc)) or ("operation timed out" in msg) or ("timeout" in msg)
+
+
+def _parse_export_ban_wait_seconds(exc: BaseException) -> Optional[float]:
+    """Seconds to sleep after HTTP 418 export-ban (``POST /api/exports``)."""
+    msg = str(exc)
+    if "418" not in msg and "banned" not in msg.lower():
+        return None
+    try:
+        idx = msg.index("{")
+        body = json.loads(msg[idx:])
+        if isinstance(body, dict):
+            w = body.get("wait_until_seconds")
+            if w is not None:
+                return max(1.0, float(w))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        pass
+    m = re.search(r"wait\s+(\d+)\s+seconds", msg, re.I)
+    if m:
+        return max(1.0, float(m.group(1)))
+    return 12.0
+
+
 def create_export(client: VariClient, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """POST /api/exports — returns {id, status, created_at}."""
-    resp = client.request_json("POST", "/api/exports", json_body=payload)
-    if not isinstance(resp, dict):
-        raise TypeError(f"Expected dict from POST /api/exports, got {type(resp).__name__}")
-    return resp
+    """POST /api/exports — returns {id, status, created_at}. Retries on timeout and 418 ban."""
+    timeout_s = int(os.getenv("EXPORT_CREATE_TIMEOUT_S", "60"))
+    max_attempts = int(os.getenv("EXPORT_CREATE_MAX_ATTEMPTS", "5"))
+    last_err: Optional[Exception] = None
+
+    for attempt in range(max_attempts):
+        try:
+            resp = client.request_json(
+                "POST",
+                "/api/exports",
+                json_body=payload,
+                timeout_s=timeout_s,
+                retries=0,
+            )
+            if not isinstance(resp, dict):
+                raise TypeError(f"Expected dict from POST /api/exports, got {type(resp).__name__}")
+            return resp
+        except VariUnexpectedResponse as e:
+            last_err = e
+            wait_s = _parse_export_ban_wait_seconds(e)
+            if wait_s is not None and attempt < max_attempts - 1:
+                time.sleep(wait_s + 0.5)
+                continue
+            raise
+        except Exception as e:
+            last_err = e
+            if _looks_like_timeout(e) and attempt < max_attempts - 1:
+                time.sleep(min(2.0 * (attempt + 1), 15.0))
+                continue
+            raise
+
+    assert last_err is not None
+    raise last_err
 
 
 def get_export(client: VariClient, export_id: str) -> Dict[str, Any]:
