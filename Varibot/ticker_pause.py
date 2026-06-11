@@ -1,7 +1,9 @@
 """
-Per-ticker grid pause when combined PnL breaches a fraction of position value.
+Per-ticker grid pause when loss thresholds breach.
 
-Trigger (default): ``uPnL + rPnL < -(VARIBOT_TICKER_PAUSE_PNL_FRAC × |position value|)``
+Triggers (any hit → pause):
+  - **Pain:** ``uPnL + rPnL < -(VARIBOT_TICKER_PAUSE_PNL_FRAC × |position value|)``
+  - **uPnL vs rung:** ``uPnL < -(VARIBOT_TICKER_PAUSE_UPNL_RUNG_MULT × grid_rung_usd)``
 
 On trigger (live): cancel pending limits → reduce-only flatten → record pause (skip grid).
 """
@@ -27,12 +29,14 @@ from variationalbot.vari.endpoints import VariEndpoints
 
 ENV_ENABLED = "VARIBOT_TICKER_PAUSE_ENABLED"
 ENV_PNL_FRAC = "VARIBOT_TICKER_PAUSE_PNL_FRAC"
+ENV_UPNL_RUNG_MULT = "VARIBOT_TICKER_PAUSE_UPNL_RUNG_MULT"
 ENV_MIN_VALUE_USD = "VARIBOT_TICKER_PAUSE_MIN_VALUE_USD"
 ENV_STATE_FILE = "VARIBOT_TICKER_PAUSE_STATE"
 ENV_CLEAR = "VARIBOT_TICKER_PAUSE_CLEAR"
 
 DEFAULT_ENABLED: bool = True
 DEFAULT_PNL_FRAC: float = 0.05
+DEFAULT_UPNL_RUNG_MULT: float = 0.5
 DEFAULT_MIN_VALUE_USD: float = 50.0
 DEFAULT_STATE_NAME: str = ".varibot_ticker_pause.json"
 
@@ -81,6 +85,11 @@ def ticker_pause_enabled() -> bool:
 
 def ticker_pause_pnl_frac() -> float:
     return max(0.0, _env_float(ENV_PNL_FRAC, DEFAULT_PNL_FRAC))
+
+
+def ticker_pause_upnl_rung_mult() -> float:
+    """uPnL loss threshold as multiple of per-ticker grid rung USD; <= 0 disables."""
+    return max(0.0, _env_float(ENV_UPNL_RUNG_MULT, DEFAULT_UPNL_RUNG_MULT))
 
 
 def ticker_pause_min_value_usd() -> float:
@@ -161,6 +170,105 @@ def evaluate_pain_candidates(
     return out
 
 
+def upnl_rung_triggered(
+    pos: PositionPnL,
+    *,
+    rung_mult: float,
+    rung_usd: float,
+) -> bool:
+    if float(rung_mult) <= 0 or float(rung_usd) <= 0:
+        return False
+    threshold = -float(rung_mult) * float(rung_usd)
+    return float(pos.upnl_usd) < float(threshold)
+
+
+def evaluate_upnl_rung_candidates(
+    positions_raw: Any,
+    *,
+    grid_tickers: Set[str],
+    rung_mult: float,
+    rung_usd_for_ticker: Callable[[str], float],
+) -> List[PositionPnL]:
+    out: List[PositionPnL] = []
+    if float(rung_mult) <= 0:
+        return out
+    for p in _positions_list(positions_raw):
+        row = _parse_position_pnl(p)
+        if row is None:
+            continue
+        if row.ticker not in grid_tickers:
+            continue
+        rung = float(rung_usd_for_ticker(row.ticker))
+        if upnl_rung_triggered(row, rung_mult=float(rung_mult), rung_usd=rung):
+            out.append(row)
+    out.sort(key=lambda r: r.upnl_usd)
+    return out
+
+
+@dataclass(frozen=True)
+class PauseCandidate:
+    pos: PositionPnL
+    reason: str
+    threshold_usd: float
+    rung_usd: Optional[float] = None
+    rung_mult: Optional[float] = None
+    pnl_frac: Optional[float] = None
+
+
+def collect_pause_candidates(
+    positions_raw: Any,
+    *,
+    grid_tickers: Set[str],
+    pnl_frac: float,
+    min_value_usd: float,
+    upnl_rung_mult: float,
+    rung_usd_for_ticker: Callable[[str], float],
+) -> List[PauseCandidate]:
+    seen: Set[str] = set()
+    out: List[PauseCandidate] = []
+
+    for pos in evaluate_pain_candidates(
+        positions_raw,
+        grid_tickers=grid_tickers,
+        pnl_frac=pnl_frac,
+        min_value_usd=min_value_usd,
+    ):
+        if pos.ticker in seen:
+            continue
+        seen.add(pos.ticker)
+        out.append(
+            PauseCandidate(
+                pos=pos,
+                reason="pnl_vs_value",
+                threshold_usd=-float(pnl_frac) * abs(float(pos.value_usd)),
+                pnl_frac=float(pnl_frac),
+            )
+        )
+
+    for pos in evaluate_upnl_rung_candidates(
+        positions_raw,
+        grid_tickers=grid_tickers,
+        rung_mult=upnl_rung_mult,
+        rung_usd_for_ticker=rung_usd_for_ticker,
+    ):
+        if pos.ticker in seen:
+            continue
+        seen.add(pos.ticker)
+        rung = float(rung_usd_for_ticker(pos.ticker))
+        out.append(
+            PauseCandidate(
+                pos=pos,
+                reason="upnl_vs_rung",
+                threshold_usd=-float(upnl_rung_mult) * rung,
+                rung_usd=rung,
+                rung_mult=float(upnl_rung_mult),
+            )
+        )
+
+    out.sort(key=lambda c: c.pos.combined_pnl_usd)
+    return out
+
+
 def load_pause_state(path: str) -> Dict[str, Any]:
     if not os.path.isfile(path):
         return {"paused": {}}
@@ -217,24 +325,30 @@ def record_pause(
     state: Dict[str, Any],
     *,
     ticker: str,
-    pos: PositionPnL,
-    pnl_frac: float,
+    candidate: PauseCandidate,
 ) -> None:
     paused = state.setdefault("paused", {})
     if not isinstance(paused, dict):
         paused = {}
         state["paused"] = paused
     sym = str(ticker).strip().upper()
-    paused[sym] = {
+    pos = candidate.pos
+    entry: Dict[str, Any] = {
         "paused_at": datetime.now(timezone.utc).isoformat(),
-        "reason": "pnl_vs_value",
-        "pnl_frac": float(pnl_frac),
+        "reason": str(candidate.reason),
         "upnl_usd": float(pos.upnl_usd),
         "rpnl_usd": float(pos.rpnl_usd),
         "combined_pnl_usd": float(pos.combined_pnl_usd),
         "value_usd": float(pos.value_usd),
-        "threshold_usd": -float(pnl_frac) * abs(float(pos.value_usd)),
+        "threshold_usd": float(candidate.threshold_usd),
     }
+    if candidate.pnl_frac is not None:
+        entry["pnl_frac"] = float(candidate.pnl_frac)
+    if candidate.rung_usd is not None:
+        entry["rung_usd"] = float(candidate.rung_usd)
+    if candidate.rung_mult is not None:
+        entry["rung_mult"] = float(candidate.rung_mult)
+    paused[sym] = entry
 
 
 def cancel_ticker_limits(
@@ -283,27 +397,40 @@ def run_ticker_pain_cycle(
         log(f"ticker_pause: cleared pause for {', '.join(sorted(cleared))}")
         save_pause_state(path, state)
 
+    from portfolio_rebalance import grid_rung_usd_for_ticker
+
     pnl_frac = ticker_pause_pnl_frac()
+    upnl_rung_mult = ticker_pause_upnl_rung_mult()
     min_val = ticker_pause_min_value_usd()
-    candidates = evaluate_pain_candidates(
+    candidates = collect_pause_candidates(
         positions_raw,
         grid_tickers=grid_tickers,
         pnl_frac=pnl_frac,
         min_value_usd=min_val,
+        upnl_rung_mult=upnl_rung_mult,
+        rung_usd_for_ticker=grid_rung_usd_for_ticker,
     )
 
     paused = paused_ticker_set(state)
     newly: Set[str] = set()
 
-    for pos in candidates:
+    for cand in candidates:
+        pos = cand.pos
         sym = pos.ticker
-        thresh = -pnl_frac * pos.value_usd
-        log(
-            f"ticker_pause[{sym}]: trigger uPnL+rPnL=${pos.combined_pnl_usd:.2f} "
-            f"(u=${pos.upnl_usd:.2f} r=${pos.rpnl_usd:.2f}) "
-            f"value=${pos.value_usd:.2f} threshold=${thresh:.2f} "
-            f"({'LIVE' if live and not dry_run else 'dry-run'})"
-        )
+        if cand.reason == "upnl_vs_rung":
+            log(
+                f"ticker_pause[{sym}]: trigger upnl_vs_rung uPnL=${pos.upnl_usd:.2f} "
+                f"rung=${cand.rung_usd:.2f}×{cand.rung_mult:g} "
+                f"threshold=${cand.threshold_usd:.2f} "
+                f"({'LIVE' if live and not dry_run else 'dry-run'})"
+            )
+        else:
+            log(
+                f"ticker_pause[{sym}]: trigger pnl_vs_value uPnL+rPnL=${pos.combined_pnl_usd:.2f} "
+                f"(u=${pos.upnl_usd:.2f} r=${pos.rpnl_usd:.2f}) "
+                f"value=${pos.value_usd:.2f} threshold=${cand.threshold_usd:.2f} "
+                f"({'LIVE' if live and not dry_run else 'dry-run'})"
+            )
 
         cancel_ticker_limits(ep, ticker=sym, log=log, live=bool(live and not dry_run))
 
@@ -321,7 +448,7 @@ def run_ticker_pain_cycle(
                     f"qty={qty_abs:g}"
                 )
 
-        record_pause(state, ticker=sym, pos=pos, pnl_frac=pnl_frac)
+        record_pause(state, ticker=sym, candidate=cand)
         paused.add(sym)
         newly.add(sym)
         time.sleep(0.25)

@@ -26,6 +26,37 @@ from exports import (
     poll_export,
 )
 
+_DEFAULT_ENV_PATH = Path(__file__).resolve().parent / ".env"
+
+
+def _wallet_token_pairs_from_env(env_path: Path = _DEFAULT_ENV_PATH) -> List[tuple[str, str]]:
+    """Return (wallet, token) pairs in file order; supports multiple VR_* blocks in .env."""
+    pairs: List[tuple[str, str]] = []
+    wallet: Optional[str] = None
+    if not env_path.is_file():
+        return pairs
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("VR_WALLET_ADDRESS="):
+            wallet = line.split("=", 1)[1].strip()
+        elif line.startswith("VR_TOKEN=") and wallet:
+            pairs.append((wallet, line.split("=", 1)[1].strip()))
+            wallet = None
+    return pairs
+
+
+def _apply_wallet_from_env(wallet: str, *, env_path: Path = _DEFAULT_ENV_PATH) -> None:
+    """Set VR_WALLET_ADDRESS and matching VR_TOKEN for ``wallet`` (case-insensitive)."""
+    target = wallet.strip().lower()
+    for w, t in _wallet_token_pairs_from_env(env_path):
+        if w.strip().lower() == target:
+            os.environ["VR_WALLET_ADDRESS"] = w.strip()
+            os.environ["VR_TOKEN"] = t
+            return
+    os.environ["VR_WALLET_ADDRESS"] = wallet.strip()
+
 
 def _instrument_label(p: Dict[str, Any]) -> str:
     inst = p.get("instrument")
@@ -223,9 +254,9 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.wallet:
-        os.environ["VR_WALLET_ADDRESS"] = args.wallet.strip()
+        _apply_wallet_from_env(args.wallet)
 
-    cfg = load_config()
+    cfg = load_config(env_path=str(_DEFAULT_ENV_PATH))
     lte_dt = _parse_iso(args.lte) if args.lte else datetime.now(timezone.utc)
     if args.gte:
         gte_dt = _parse_iso(args.gte)

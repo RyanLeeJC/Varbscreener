@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import unittest
 
-from ticker_pause import PositionPnL, pain_triggered, evaluate_pain_candidates
+from ticker_pause import (
+    PositionPnL,
+    collect_pause_candidates,
+    pain_triggered,
+    evaluate_pain_candidates,
+    evaluate_upnl_rung_candidates,
+    upnl_rung_triggered,
+)
 
 
 class TestTickerPausePain(unittest.TestCase):
@@ -57,6 +64,76 @@ class TestTickerPausePain(unittest.TestCase):
         )
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0].ticker, "NEAR")
+
+    def test_upnl_rung_trigger_below_half_rung(self) -> None:
+        pos = PositionPnL(ticker="WLD", qty=-100.0, upnl_usd=-55.0, rpnl_usd=2.0, value_usd=2000.0)
+        self.assertTrue(upnl_rung_triggered(pos, rung_mult=0.5, rung_usd=100.0))
+
+    def test_upnl_rung_no_trigger_at_threshold(self) -> None:
+        pos = PositionPnL(ticker="WLD", qty=-100.0, upnl_usd=-50.0, rpnl_usd=0.0, value_usd=2000.0)
+        self.assertFalse(upnl_rung_triggered(pos, rung_mult=0.5, rung_usd=100.0))
+
+    def test_upnl_rung_ignores_rpnl(self) -> None:
+        """uPnL vs rung uses uPnL only — positive rPnL does not offset."""
+        pos = PositionPnL(ticker="WLD", qty=-100.0, upnl_usd=-55.0, rpnl_usd=20.0, value_usd=2000.0)
+        self.assertTrue(upnl_rung_triggered(pos, rung_mult=0.5, rung_usd=100.0))
+
+    def test_upnl_rung_disabled_when_mult_zero(self) -> None:
+        pos = PositionPnL(ticker="WLD", qty=-100.0, upnl_usd=-200.0, rpnl_usd=0.0, value_usd=2000.0)
+        self.assertFalse(upnl_rung_triggered(pos, rung_mult=0.0, rung_usd=100.0))
+
+    def test_evaluate_upnl_rung_filters_grid_tickers(self) -> None:
+        raw = [
+            {
+                "instrument": {"underlying": "WLD"},
+                "qty": -100.0,
+                "value": 2000.0,
+                "unrealized_pnl": -60.0,
+            },
+            {
+                "instrument": {"underlying": "NEAR"},
+                "qty": -100.0,
+                "value": 2000.0,
+                "unrealized_pnl": -60.0,
+            },
+        ]
+        hits = evaluate_upnl_rung_candidates(
+            raw,
+            grid_tickers={"WLD"},
+            rung_mult=0.5,
+            rung_usd_for_ticker=lambda _t: 100.0,
+        )
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].ticker, "WLD")
+
+    def test_collect_pause_candidates_merges_rules(self) -> None:
+        raw = [
+            {
+                "instrument": {"underlying": "WLD"},
+                "qty": -100.0,
+                "value": 4000.0,
+                "unrealized_pnl": -60.0,
+                "realized_pnl": 0.0,
+            },
+            {
+                "instrument": {"underlying": "NEAR"},
+                "qty": -100.0,
+                "value": 4000.0,
+                "unrealized_pnl": -300.0,
+                "realized_pnl": -50.0,
+            },
+        ]
+        hits = collect_pause_candidates(
+            raw,
+            grid_tickers={"WLD", "NEAR"},
+            pnl_frac=0.05,
+            min_value_usd=50.0,
+            upnl_rung_mult=0.5,
+            rung_usd_for_ticker=lambda _t: 100.0,
+        )
+        reasons = {c.pos.ticker: c.reason for c in hits}
+        self.assertEqual(reasons["WLD"], "upnl_vs_rung")
+        self.assertEqual(reasons["NEAR"], "pnl_vs_value")
 
 
 if __name__ == "__main__":
