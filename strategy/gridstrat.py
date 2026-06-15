@@ -30,6 +30,11 @@ Configure via environment variables (override file-level ``DEFAULT_*`` constants
                                         # (manual pre-positions do not block fresh-book init)
   GRIDSTRAT_FLAT_REBALANCE=0         # default off: keep fixed ladder; fill/re-arm via paired sim path
                                         # set 1 to reinit whole ladder at mark each cycle while flat
+  GRID_DRIFT_PAUSE_ENABLED=1         # slow-drift pause (default on): upward move ≥ Y×band in Xh → flatten + pause
+  GRID_DRIFT_PAUSE_BAND_MULT=2       # Y (default 2× per-ticker grid band %)
+  GRID_DRIFT_PAUSE_LOOKBACK_HOURS=4  # X (default 4h rolling window on Binance 5m closes)
+  GRID_DRIFT_PAUSE_DIRECTION=up      # up (short-grid grind) | down | both
+  GRID_DRIFT_PAUSE_CLEAR=ALL         # optional: comma tickers or ALL — clear .grid_drift_pause.json
   GRID_RWA_TICKERS=XAU,CL,...    # optional override; default = ``GRID_RWA_COMMODITY_TICKERS`` below
                                     # (Omni ``perpetual_rwa_future`` + ``kind: commodity`` for API calls)
 
@@ -89,7 +94,7 @@ GRID_REARM_ON_BREACH_DEFAULT: str = "halt"
 # (Same idea as ``DEFAULT_GRID_BAND_PCT`` — leave bounds NaN to use ±band around mark.)
 # -----------------------------------------------------------------------------
 DEFAULT_GRID_ASSET: str = "BTC"
-DEFAULT_GRID_INVESTMENT_USD: float = 32.0
+DEFAULT_GRID_INVESTMENT_USD: float = 16.0
 DEFAULT_GRID_LEVERAGE: float = 50.0
 # Omni POST /api/settlement_pools/set_leverage rejects leverage > this (422).
 GRID_API_MAX_LEVERAGE: float = 50.0
@@ -109,33 +114,12 @@ GRID_RWA_COMMODITY_TICKERS: frozenset[str] = frozenset({"XAU", "CL", "XAG", "COP
 GRID_RWA_EQUITY_TICKERS: frozenset[str] = frozenset({"SPCX"})
 
 # -----------------------------------------------------------------------------
-# Multi-ticker grid — edit here: each ticker is managed independently (own state + gridlimits).
-# Shared (full notional each): GRID_INVESTMENT_USD, GRID_NUM, GRID_LEVERAGE via env / defaults above.
+# Multi-ticker grid — active roster is ``Varibot/.grid_trading_roster.json`` (20 tickers).
+# Written at bot startup (rotation bootstrap) and by daily ``grid-rotation-eval`` Cron.
+# Manual override: ``GRID_TRADING_TICKERS`` env or edit roster file.
 # Per-ticker leverage cap: GRID_TICKER_LEVERAGE (e.g. SPCX max 5x).
-# Per-ticker: symmetric ±band % around mark when GRID_LOWER/GRID_UPPER are unset.
 # -----------------------------------------------------------------------------
-GRID_TRADING_TICKERS: Dict[str, float] = {
-    # Crypto — gridbot_48h_study.md (48h vol-pause hyperparam; bps ≥ −50)
-    "ENA": 3.0,
-    "XLM": 2.0,
-    "BCH": 2.5,
-    "AVAX": 2.5,
-    "LTC": 1.5,
-    "SYRUP": 1.5,
-    "OP": 3.0,
-    "ASTER": 3.0,
-    "ADA": 3.5,
-    "MON": 3.5,
-
-    # RWA
-    # "CL": 2.0,
-    # "COPPER": 1.5,
-    # "SPCX": 1.5,
-    # "XAG": 2.0,
-    # "XAU": 1.5,
-    # "XPD": 1.5,
-    # "XPT": 1.0,
-}
+GRID_TRADING_TICKERS: Dict[str, float] = {}
 
 # Per-ticker leverage cap (defaults to GRID_LEVERAGE / DEFAULT_GRID_LEVERAGE when unset).
 GRID_TICKER_LEVERAGE: Dict[str, float] = {
@@ -223,7 +207,8 @@ def _tickers_from_env_list(raw: str, *, default_band: float) -> Dict[str, float]
 def grid_trading_ticker_band_pcts() -> Dict[str, float]:
     """Active tickers → default ±band % (uppercased keys).
 
-    Resolution: ``GRID_TRADING_TICKERS`` env (manual override) → roster JSON file → static dict.
+    Resolution: ``GRID_TRADING_TICKERS`` env (manual override) → roster JSON file →
+    single-asset ``GRID_ASSET`` fallback when roster unset.
     """
     env_tickers = (os.environ.get("GRID_TRADING_TICKERS") or "").strip()
     if env_tickers:
@@ -243,6 +228,117 @@ def grid_band_pct_for_asset(asset: str) -> float:
     if sym in tickers:
         return float(tickers[sym])
     return float(DEFAULT_GRID_BAND_PCT)
+
+
+# -----------------------------------------------------------------------------
+# Slow-drift pause — pause tickers when price drifts ≥ Y×band% over X hours (Binance 5m).
+# Varibot ``grid_drift_pause.py`` runs each cycle (cancel limits, flatten, pause);
+# ``pick_tickers`` skips ``paused_assets``.
+# -----------------------------------------------------------------------------
+DEFAULT_GRID_DRIFT_PAUSE_ENABLED: bool = True
+DEFAULT_GRID_DRIFT_PAUSE_BAND_MULT: float = 2.0
+DEFAULT_GRID_DRIFT_PAUSE_LOOKBACK_HOURS: float = 4.0
+DEFAULT_GRID_DRIFT_PAUSE_DIRECTION: str = "up"
+DEFAULT_GRID_DRIFT_PAUSE_STATE_NAME: str = ".grid_drift_pause.json"
+
+ENV_GRID_DRIFT_PAUSE_ENABLED: str = "GRID_DRIFT_PAUSE_ENABLED"
+ENV_GRID_DRIFT_PAUSE_BAND_MULT: str = "GRID_DRIFT_PAUSE_BAND_MULT"
+ENV_GRID_DRIFT_PAUSE_LOOKBACK_HOURS: str = "GRID_DRIFT_PAUSE_LOOKBACK_HOURS"
+ENV_GRID_DRIFT_PAUSE_DIRECTION: str = "GRID_DRIFT_PAUSE_DIRECTION"
+ENV_GRID_DRIFT_PAUSE_STATE: str = "GRID_DRIFT_PAUSE_STATE"
+ENV_GRID_DRIFT_PAUSE_CLEAR: str = "GRID_DRIFT_PAUSE_CLEAR"
+
+
+def _gridstrat_env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw not in ("0", "false", "no", "off")
+
+
+def _gridstrat_env_float(name: str, default: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def grid_drift_pause_enabled() -> bool:
+    return _gridstrat_env_bool(ENV_GRID_DRIFT_PAUSE_ENABLED, DEFAULT_GRID_DRIFT_PAUSE_ENABLED)
+
+
+def grid_drift_pause_band_mult() -> float:
+    return max(0.0, _gridstrat_env_float(ENV_GRID_DRIFT_PAUSE_BAND_MULT, DEFAULT_GRID_DRIFT_PAUSE_BAND_MULT))
+
+
+def grid_drift_pause_lookback_hours() -> float:
+    return max(0.25, _gridstrat_env_float(ENV_GRID_DRIFT_PAUSE_LOOKBACK_HOURS, DEFAULT_GRID_DRIFT_PAUSE_LOOKBACK_HOURS))
+
+
+def grid_drift_pause_direction() -> str:
+    raw = (os.environ.get(ENV_GRID_DRIFT_PAUSE_DIRECTION) or "").strip().lower()
+    if raw in ("up", "down", "both"):
+        return raw
+    return str(DEFAULT_GRID_DRIFT_PAUSE_DIRECTION).strip().lower() or "up"
+
+
+def drift_return_fraction(*, end_close: float, start_close: float) -> Optional[float]:
+    """Signed fractional return (e.g. 0.04 = +4%)."""
+    try:
+        s = float(start_close)
+        e = float(end_close)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(s) or not math.isfinite(e) or s <= 0:
+        return None
+    return (e - s) / s
+
+
+def drift_pause_threshold_fraction(*, band_pct: float, band_mult: Optional[float] = None) -> float:
+    """Pause threshold as fraction: (band_mult × band_pct / 100)."""
+    mult = grid_drift_pause_band_mult() if band_mult is None else float(band_mult)
+    return (float(band_pct) / 100.0) * float(mult)
+
+
+def drift_pause_threshold_pct(*, band_pct: float, band_mult: Optional[float] = None) -> float:
+    return drift_pause_threshold_fraction(band_pct=band_pct, band_mult=band_mult) * 100.0
+
+
+def should_pause_for_drift(
+    drift_frac: float,
+    *,
+    band_pct: float,
+    band_mult: Optional[float] = None,
+    direction: Optional[str] = None,
+) -> bool:
+    """
+    True when drift breaches Y×band in the configured direction.
+
+    ``up``: pause on upward drift (short inventory grind).
+    ``down``: pause on downward drift (long inventory grind).
+    ``both``: pause on either direction.
+    """
+    mult = grid_drift_pause_band_mult() if band_mult is None else float(band_mult)
+    if mult <= 0:
+        return False
+    thresh = drift_pause_threshold_fraction(band_pct=float(band_pct), band_mult=mult)
+    if thresh <= 0:
+        return False
+    d = float(drift_frac)
+    dirn = (direction or grid_drift_pause_direction()).strip().lower()
+    if dirn == "down":
+        return d <= -thresh
+    if dirn == "both":
+        return abs(d) >= thresh
+    return d >= thresh
+
+
+def grid_drift_pause_default_state_path(varibot_dir: str) -> str:
+    name = (os.environ.get(ENV_GRID_DRIFT_PAUSE_STATE) or "").strip() or DEFAULT_GRID_DRIFT_PAUSE_STATE_NAME
+    return os.path.join(str(varibot_dir), name)
 
 
 def grid_leverage_for_asset(asset: str) -> float:
@@ -282,7 +378,7 @@ def iter_grid_asset_metas(meta: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any
 
 
 # multimarketorder.py imports this as sizing divisor fallback when strategy import succeeds.
-DEFAULT_MAX_TICKER_ENTRIES: int = max(1, len(GRID_TRADING_TICKERS) or 1)
+DEFAULT_MAX_TICKER_ENTRIES: int = 20
 
 TRADE_THESIS: str = (
     "Default: paired arithmetic limit grid (sim-aligned) with optional breach re-anchor; "
@@ -393,14 +489,9 @@ def save_grid_trading_roster(
 
 
 def seed_grid_trading_roster_if_missing(*, path: Optional[str] = None) -> Optional[str]:
-    """Create roster file from static ``GRID_TRADING_TICKERS`` when absent."""
-    p = str(path or _default_roster_path())
-    if os.path.isfile(p):
-        return None
-    tickers = grid_trading_ticker_band_pcts_from_static()
-    if not tickers:
-        return None
-    return save_grid_trading_roster(tickers, path=p)
+    """No-op — roster is created by rotation bootstrap or daily eval (not static dict)."""
+    _ = path
+    return None
 
 
 def _truthy_env(name: str) -> bool:

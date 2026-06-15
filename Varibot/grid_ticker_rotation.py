@@ -24,11 +24,9 @@ for p in (str(_REPO_ROOT), str(_VARIBOT_DIR), str(_REPO_ROOT / "binancefetch" / 
 from strategy.gridstrat import (  # noqa: E402
     _default_roster_path,
     grid_trading_ticker_band_pcts,
-    grid_trading_ticker_band_pcts_from_static,
     is_rwa_ticker,
     load_grid_trading_roster,
     save_grid_trading_roster,
-    seed_grid_trading_roster_if_missing,
 )
 from strategy.gridstrat_state import load_state, save_state  # noqa: E402
 from strategy.gridstrat import _default_state_path  # noqa: E402
@@ -48,7 +46,7 @@ ENV_DATABASE_URL = "DATABASE_URL"
 DEFAULT_ENABLED = False
 DEFAULT_ROSTER_SIZE = 20
 DEFAULT_CANDIDATE_POOL = 40
-DEFAULT_SWAP_COUNT = 10
+DEFAULT_SWAP_COUNT = 5
 DEFAULT_STORE = "file"
 DEFAULT_PENDING_NAME = ".grid_rotation_pending.json"
 DEFAULT_KEYVALUE_KEY = "grid:rotation:pending"
@@ -178,11 +176,79 @@ def fetch_top_volume_universe(
 
 
 def current_roster_tickers() -> Dict[str, float]:
-    seed_grid_trading_roster_if_missing()
     doc = load_grid_trading_roster()
     if doc and isinstance(doc.get("tickers"), dict):
         return dict(doc["tickers"])
-    return grid_trading_ticker_band_pcts_from_static()
+    return {}
+
+
+def roster_is_initialized(*, min_tickers: Optional[int] = None) -> bool:
+    """True when roster JSON exists with at least *min_tickers* (default ``GRID_ROSTER_SIZE``)."""
+    doc = load_grid_trading_roster()
+    if not doc or not isinstance(doc.get("tickers"), dict):
+        return False
+    n = len(doc["tickers"])
+    need = int(min_tickers) if min_tickers is not None else roster_size()
+    return n >= need
+
+
+def ensure_grid_trading_roster_initialized(
+    ep: Any,
+    log: Callable[[str], None],
+    *,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Bootstrap active roster when missing: run rotation evaluate (same as grid-rotation-eval Cron)
+    and write ``roster_after`` to ``.grid_trading_roster.json``.
+
+    Returns True when a new roster was written (or would be in dry-run).
+    """
+    if roster_is_initialized():
+        return False
+    if not rotation_enabled():
+        log(
+            "grid_rotation: roster missing and GRID_TICKER_ROTATION_ENABLED=0 — "
+            "set rotation on or provide GRID_TRADING_ROSTER_PATH / GRID_TRADING_TICKERS"
+        )
+        return False
+
+    log(
+        f"grid_rotation: roster missing — running initial evaluate "
+        f"(target {roster_size()} tickers, pool={candidate_pool_size()})"
+    )
+    store = make_rotation_store()
+    try:
+        payload = run_evaluate(ep, store=store, write_pending=False)
+    except Exception as e:
+        log(f"grid_rotation: bootstrap evaluate failed ({type(e).__name__}: {e})")
+        return False
+
+    plan = payload.get("plan") or {}
+    roster_after = plan.get("roster_after")
+    if not isinstance(roster_after, dict) or not roster_after:
+        log("grid_rotation: bootstrap failed — evaluate returned empty roster_after")
+        return False
+
+    tickers = {str(k).strip().upper(): float(v) for k, v in roster_after.items() if str(k).strip()}
+    if len(tickers) < roster_size():
+        log(
+            f"grid_rotation: bootstrap roster has {len(tickers)} tickers "
+            f"(target {roster_size()}) — writing anyway"
+        )
+
+    names = ", ".join(sorted(tickers.keys()))
+    if dry_run:
+        log(f"grid_rotation: dry-run — would initialize roster ({len(tickers)}): {names}")
+        return True
+
+    save_grid_trading_roster(
+        tickers,
+        roster_size=roster_size(),
+        extra={"source": "bootstrap_eval"},
+    )
+    log(f"grid_rotation: initialized roster ({len(tickers)} tickers): {names}")
+    return True
 
 
 def fetch_live_snapshot_pnl(

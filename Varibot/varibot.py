@@ -1324,6 +1324,78 @@ def _maybe_run_grid_vol_pause(
         return set()
 
 
+def _maybe_run_grid_drift_pause(
+    *,
+    ep: VariEndpoints,
+    positions_raw: Any,
+    args: argparse.Namespace,
+    strat_key: str,
+    cycle_index: int,
+) -> Tuple[Set[str], Any]:
+    """Slow-drift pause: 4h move ≥ 2× grid band % → cancel limits, flatten, sticky-pause."""
+    if not _is_grid_like_strategy(strat_key):
+        return set(), positions_raw
+    try:
+        from grid_drift_pause import run_grid_drift_pause_cycle
+    except ImportError as e:
+        _log(f"grid_drift_pause: unavailable ({type(e).__name__}: {e})")
+        return set(), positions_raw
+    grid_syms = {str(s).strip().upper() for s in grid_trading_ticker_band_pcts().keys()}
+    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
+    max_slip = float(_resolve_max_slippage())
+
+    def _close(sym: str, qty_abs: float, close_side: str) -> None:
+        _close_reduce_only_with_slippage_steps(
+            ep=ep,
+            sym=sym,
+            qty_abs=float(qty_abs),
+            close_side=str(close_side),
+            max_slip=max_slip,
+        )
+
+    try:
+        paused = run_grid_drift_pause_cycle(
+            ep,
+            positions_raw,
+            cycle_index=int(cycle_index),
+            grid_tickers=grid_syms,
+            varibot_dir=_VARIBOT_DIR,
+            live=bool(args.live),
+            dry_run=rebalance_dry,
+            log=_log,
+            close_position=_close,
+        )
+    except Exception as e:
+        _log(f"grid_drift_pause: cycle error ({type(e).__name__}: {e})")
+        return set(), positions_raw
+    if bool(args.live) and paused:
+        try:
+            positions_raw = ep.get_positions()
+        except Exception as e:
+            _log(f"grid_drift_pause: refresh positions failed ({type(e).__name__}: {e})")
+    return paused, positions_raw
+
+
+def _maybe_initialize_grid_roster(
+    ep: VariEndpoints,
+    args: argparse.Namespace,
+) -> None:
+    """On first start: run rotation evaluate and write 20-ticker roster if JSON is missing."""
+    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
+    if not _is_grid_like_strategy(strat_key):
+        return
+    try:
+        from grid_ticker_rotation import ensure_grid_trading_roster_initialized
+    except ImportError as e:
+        _log(f"grid_rotation: bootstrap unavailable ({type(e).__name__}: {e})")
+        return
+    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
+    try:
+        ensure_grid_trading_roster_initialized(ep, _log, dry_run=rebalance_dry)
+    except Exception as e:
+        _log(f"grid_rotation: bootstrap error ({type(e).__name__}: {e})")
+
+
 def _maybe_run_ticker_pain_pause(
     *,
     ep: VariEndpoints,
@@ -2662,6 +2734,13 @@ def one_cycle(
         strat_key=strat_key,
         cycle_index=int(cycle_index),
     )
+    drift_paused, raw_pos = _maybe_run_grid_drift_pause(
+        ep=ep,
+        positions_raw=raw_pos,
+        args=args,
+        strat_key=strat_key,
+        cycle_index=int(cycle_index),
+    )
     paused_tickers, raw_pos = _maybe_run_ticker_pain_pause(
         ep=ep,
         positions_raw=raw_pos,
@@ -2670,8 +2749,10 @@ def one_cycle(
     )
     if vol_paused:
         paused_tickers = set(paused_tickers) | set(vol_paused)
+    if drift_paused:
+        paused_tickers = set(paused_tickers) | set(drift_paused)
     if paused_tickers:
-        _log(f"paused tickers (vol+pain): {', '.join(sorted(paused_tickers))}")
+        _log(f"paused tickers (vol+drift+pain): {', '.join(sorted(paused_tickers))}")
 
     cycle_bulk_marks: Optional[Dict[str, float]] = None
     if bool(args.live) and _use_bulk_supported_assets_marks():
@@ -3154,6 +3235,7 @@ def _child_main() -> int:
         return 2
     run_auth_or_exit()
     cfg, ep = build_endpoints()
+    _maybe_initialize_grid_roster(ep, args)
 
     # Session mode (strategies in STRATEGY_SESSION_CLOSEALL_KEYS):
     # - Enter immediately (strategy → multimarket if flat)

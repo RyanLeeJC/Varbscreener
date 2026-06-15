@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _VARIBOT = os.path.join(_REPO, "Varibot")
@@ -18,11 +19,12 @@ for p in (_REPO, _VARIBOT):
 from grid_ticker_rotation import (  # noqa: E402
     FileRotationStore,
     build_swap_plan,
+    ensure_grid_trading_roster_initialized,
+    roster_is_initialized,
 )
 from strategy.gridstrat import (  # noqa: E402
     ENV_GRID_TRADING_ROSTER_PATH,
     grid_trading_ticker_band_pcts,
-    grid_trading_ticker_band_pcts_from_static,
     load_grid_trading_roster,
     save_grid_trading_roster,
 )
@@ -118,6 +120,50 @@ class TestRosterFile(unittest.TestCase):
             finally:
                 os.environ.pop(ENV_GRID_TRADING_ROSTER_PATH, None)
                 os.environ.pop("GRID_TRADING_TICKERS", None)
+
+
+class TestBootstrapRoster(unittest.TestCase):
+    @patch("grid_ticker_rotation.run_evaluate")
+    @patch("grid_ticker_rotation.rotation_enabled", return_value=True)
+    def test_bootstrap_writes_roster_when_missing(self, _en: object, mock_eval: object) -> None:
+        mock_eval.return_value = {
+            "plan": {
+                "roster_after": {f"T{i}": 2.5 for i in range(20)},
+                "remove": [],
+                "add": [],
+            }
+        }
+        with tempfile.TemporaryDirectory() as td:
+            roster_path = os.path.join(td, "roster.json")
+            os.environ[ENV_GRID_TRADING_ROSTER_PATH] = roster_path
+            os.environ["GRID_ROSTER_SIZE"] = "20"
+            try:
+                self.assertFalse(roster_is_initialized())
+                logs: list[str] = []
+                ok = ensure_grid_trading_roster_initialized(MagicMock(), logs.append, dry_run=False)
+                self.assertTrue(ok)
+                self.assertTrue(roster_is_initialized())
+                tickers = grid_trading_ticker_band_pcts()
+                self.assertEqual(len(tickers), 20)
+            finally:
+                os.environ.pop(ENV_GRID_TRADING_ROSTER_PATH, None)
+                os.environ.pop("GRID_ROSTER_SIZE", None)
+
+    @patch("grid_ticker_rotation.rotation_enabled", return_value=True)
+    def test_bootstrap_skips_when_roster_exists(self, _en: object) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            roster_path = os.path.join(td, "roster.json")
+            save_grid_trading_roster({f"T{i}": 2.0 for i in range(20)}, path=roster_path, roster_size=20)
+            os.environ[ENV_GRID_TRADING_ROSTER_PATH] = roster_path
+            os.environ["GRID_ROSTER_SIZE"] = "20"
+            try:
+                logs: list[str] = []
+                ok = ensure_grid_trading_roster_initialized(MagicMock(), logs.append, dry_run=False)
+                self.assertFalse(ok)
+                self.assertEqual(logs, [])
+            finally:
+                os.environ.pop(ENV_GRID_TRADING_ROSTER_PATH, None)
+                os.environ.pop("GRID_ROSTER_SIZE", None)
 
 
 class TestFileRotationStore(unittest.TestCase):
