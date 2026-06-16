@@ -288,6 +288,13 @@ class VariEndpoints:
             path += "?compute_margin=true"
         return self.client.request_json("GET", path)
 
+    def get_balances_chart(self, range_key: str) -> Any:
+        """GET /api/portfolio/balances_chart/{range_key} — hourly/daily balance history."""
+        key = str(range_key).strip().strip("/")
+        if not key:
+            raise ValueError("range_key is empty")
+        return self.client.request_json("GET", f"/api/portfolio/balances_chart/{key}")
+
     def get_supported_assets(self) -> Dict[str, Any]:
         """
         GET /api/metadata/supported_assets — Omni UI bulk market metadata.
