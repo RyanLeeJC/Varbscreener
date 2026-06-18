@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Equity Funding Rate Arbitrage Screener</title>
+  <style>
+    :root {
+      --bg: #080808;
+      --panel: #0f0f0f;
+      --border: #1e1e1e;
+      --text: #e8e8e8;
+      --muted: #7a7a7a;
+      --green: #3ecf8e;
+      --green-dim: #1a3d2a;
+      --red: #f06464;
+      --red-dim: #3d1a1a;
+      --pin-bg: #101612;
+      --scroll-bg: #0c0c0c;
+      --star: #555;
+      --star-on: #e6c84a;
+      --w-star: 36px;
+      --w-sym: 92px;
+      --w-rank: 76px;
+      --w-arb: 92px;
+      --col-pin-w: 148px;
+      --col-left-w: calc(var(--w-star) + var(--w-sym) + var(--w-rank) + var(--w-arb));
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .app { min-height: 100vh; display: flex; flex-direction: column; }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+
+    .search-wrap { flex: 1; min-width: 200px; max-width: 420px; }
+    .search-wrap input {
+      width: 100%;
+      background: #141414;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 8px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+    .search-wrap input:focus { border-color: #333; }
+
+    .controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+    .tf-toggle {
+      display: flex;
+      background: #141414;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .tf-toggle button {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tf-toggle button.active {
+      background: #1a1a1a;
+      color: var(--text);
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 11px;
+      padding: 8px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .table-shell {
+      flex: 1;
+      overflow: auto;
+      position: relative;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: max-content;
+      min-width: 100%;
+    }
+
+    th, td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      text-align: left;
+    }
+
+    td.num { font-variant-numeric: tabular-nums; }
+
+    /* Left pinned block */
+    .col-star { width: var(--w-star); min-width: var(--w-star); text-align: center; }
+    .col-symbol { width: var(--w-sym); min-width: var(--w-sym); font-weight: 600; }
+    .col-rank { width: var(--w-rank); min-width: var(--w-rank); color: var(--muted); }
+    .col-arb { width: var(--w-arb); min-width: var(--w-arb); font-weight: 600; color: var(--green); }
+
+    .sticky-left { position: sticky; left: 0; z-index: 12; background: var(--panel); }
+    .sticky-left-2 { left: var(--w-star); }
+    .sticky-left-3 { left: calc(var(--w-star) + var(--w-sym)); }
+    .sticky-left-4 {
+      left: calc(var(--w-star) + var(--w-sym) + var(--w-rank));
+      box-shadow: 4px 0 8px rgba(0,0,0,.35);
+    }
+
+    th.sticky-left, th.sticky-left-2, th.sticky-left-3, th.sticky-left-4 { z-index: 25; }
+
+    /* Pinned exchange columns (Ondo + HL) */
+    .col-venue-pin {
+      min-width: var(--col-pin-w);
+      background: var(--pin-bg);
+    }
+    th.col-venue-pin { background: #121816; }
+    td.col-venue-pin { background: var(--pin-bg); }
+
+    .sticky-pin-1 { position: sticky; left: var(--col-left-w); z-index: 11; }
+    .sticky-pin-2 { position: sticky; left: calc(var(--col-left-w) + var(--col-pin-w)); z-index: 11; box-shadow: 4px 0 8px rgba(0,0,0,.35); }
+    th.sticky-pin-1, th.sticky-pin-2 { z-index: 24; }
+
+    .col-venue-scroll {
+      min-width: var(--col-pin-w);
+      background: var(--scroll-bg);
+    }
+    th.col-venue-scroll { background: #111; }
+
+    .venue-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .venue-logo {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 9px;
+      font-weight: 800;
+      color: #000;
+    }
+    .logo-ondo { background: #6ee7b7; }
+    .logo-hl { background: #97fbc0; }
+    .logo-vari { background: #a78bfa; color: #111; }
+
+    .venue-cell {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .venue-rates { display: flex; flex-direction: column; gap: 2px; }
+    .rate-main { font-size: 13px; font-weight: 500; }
+    .rate-main.pos { color: var(--green); }
+    .rate-main.neg { color: var(--red); }
+    .rate-main.missing { color: var(--muted); }
+    .rate-sub { font-size: 10px; color: var(--muted); }
+
+    .pill {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 4px 8px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+    .pill.buy { background: var(--green-dim); color: var(--green); border: 1px solid #2a5c40; }
+    .pill.sell { background: var(--red-dim); color: var(--red); border: 1px solid #5c2a2a; }
+    .pill.empty { visibility: hidden; }
+
+    .star {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--star);
+      font-size: 14px;
+      line-height: 1;
+      padding: 0;
+    }
+    .star.on { color: var(--star-on); }
+
+    tbody tr:hover td { background: #121212; }
+    tbody tr:hover td.col-venue-pin { background: #141a16; }
+    tbody tr:hover td.col-venue-scroll { background: #101010; }
+    tbody tr:hover .sticky-left,
+    tbody tr:hover .sticky-left-2,
+    tbody tr:hover .sticky-left-3,
+    tbody tr:hover .sticky-left-4 { background: #121212; }
+
+    .empty-state {
+      padding: 48px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 11px;
+      margin-left: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Equity Funding Rate Arbitrage Screener</h1>
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Search by symbol…" autocomplete="off" />
+      </div>
+      <div class="controls">
+        <div class="tf-toggle" id="tfToggle">
+          <button type="button" data-tf="8h" class="active">8H</button>
+          <button type="button" data-tf="24h">24H</button>
+          <button type="button" data-tf="ann">Ann.</button>
+        </div>
+      </div>
+    </header>
+    <div class="meta" id="meta">Loading…</div>
+    <div class="table-shell">
+      <table id="grid">
+        <thead>
+          <tr>
+            <th class="col-star sticky-left"></th>
+            <th class="col-symbol sticky-left sticky-left-2">Symbol</th>
+            <th class="col-rank sticky-left sticky-left-3">OI Rank</th>
+            <th class="col-arb sticky-left sticky-left-4">Max Arb</th>
+            <th class="col-venue-pin sticky-pin-1">
+              <div class="venue-head"><span class="venue-logo logo-ondo">O</span>Ondo Perps</div>
+            </th>
+            <th class="col-venue-pin sticky-pin-2">
+              <div class="venue-head"><span class="venue-logo logo-hl">H</span>Hyperliquid xyz</div>
+            </th>
+            <th class="col-venue-scroll">
+              <div class="venue-head"><span class="venue-logo logo-vari">V</span>Variational</div>
+            </th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="empty-state" id="empty" hidden>No symbols match your search.</div>
+    </div>
+  </div>
+
+  <script src="funding_screener.data.js"></script>
+  <script>
+    const TF_KEYS = { "8h": "pct8h", "24h": "pct24h", ann: "pctAnn" };
+    const TF_DECIMALS = { "8h": 5, "24h": 4, ann: 2 };
+    const STAR_KEY = "funding_screener_stars";
+
+    let timeframe = "8h";
+    let stars = new Set(JSON.parse(localStorage.getItem(STAR_KEY) || "[]"));
+
+    function pct(v, tf = timeframe) {
+      if (v == null || Number.isNaN(v)) return null;
+      const digits = TF_DECIMALS[tf] ?? 4;
+      return `${v.toFixed(digits)}%`;
+    }
+
+    function rateClass(v) {
+      if (v == null) return "missing";
+      if (v > 0) return "pos";
+      if (v < 0) return "neg";
+      return "";
+    }
+
+    function getRate(venue, tf) {
+      if (!venue) return null;
+      return venue[TF_KEYS[tf]];
+    }
+
+    function arbForRow(row, tf) {
+      const venues = [
+        ["ondo", row.venues.ondo],
+        ["hl", row.venues.hl],
+        ["vari", row.venues.vari],
+      ];
+      const present = venues
+        .map(([id, v]) => [id, getRate(v, tf)])
+        .filter(([, r]) => r != null);
+      if (present.length < 2) return { maxArb: null, sides: {} };
+      const vals = present.map(([, r]) => r);
+      const maxArb = Math.max(...vals) - Math.min(...vals);
+      const hi = present.reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+      const lo = present.reduce((a, b) => (b[1] < a[1] ? b : a))[0];
+      const sides = { ondo: null, hl: null, vari: null };
+      sides[hi] = "sell";
+      sides[lo] = "buy";
+      return { maxArb, sides };
+    }
+
+    function renderVenueCell(venue, side, tf) {
+      if (!venue || getRate(venue, tf) == null) {
+        return `<div class="venue-cell"><div class="venue-rates"><div class="rate-main missing">—</div></div><span class="pill empty">—</span></div>`;
+      }
+      const main = getRate(venue, tf);
+      const subParts = [];
+      if (tf !== "8h" && venue.pct8h != null) subParts.push(`8h ${pct(venue.pct8h, "8h")}`);
+      if (tf !== "24h" && venue.pct24h != null) subParts.push(`24h ${pct(venue.pct24h, "24h")}`);
+      if (tf !== "ann" && venue.pctAnn != null) subParts.push(`Ann ${pct(venue.pctAnn, "ann")}`);
+      const sub = subParts.length ? `<div class="rate-sub">${subParts.join(" · ")}</div>` : "";
+      const pill = side
+        ? `<span class="pill ${side}">${side === "buy" ? "Buy" : "Sell"}</span>`
+        : `<span class="pill empty">—</span>`;
+      return `<div class="venue-cell"><div class="venue-rates"><div class="rate-main ${rateClass(main)}">${pct(main)}</div>${sub}</div>${pill}</div>`;
+    }
+
+    function render() {
+      const data = window.__FUNDING_SCREENER__;
+      const q = document.getElementById("search").value.trim().toUpperCase();
+      const tbody = document.getElementById("tbody");
+      const empty = document.getElementById("empty");
+      const meta = document.getElementById("meta");
+
+      if (!data || !Array.isArray(data.rows)) {
+        meta.textContent = "Missing funding_screener.data.js — open this page from the same folder as the data file.";
+        tbody.innerHTML = "";
+        return;
+      }
+
+      const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "unknown";
+      meta.innerHTML = `<span>${data.rows.length} symbols</span><span class="hint">· Updated ${updated} UTC · Buy = long perp / Sell = short perp on that venue for max funding capture · Max arb uses ${timeframe.toUpperCase()} spread</span>`;
+
+      let rows = data.rows.slice();
+      if (q) rows = rows.filter((r) => r.symbol.includes(q));
+
+      rows.sort((a, b) => {
+        const fa = stars.has(a.symbol) ? 0 : 1;
+        const fb = stars.has(b.symbol) ? 0 : 1;
+        if (fa !== fb) return fa - fb;
+        const aa = arbForRow(a, timeframe).maxArb;
+        const bb = arbForRow(b, timeframe).maxArb;
+        if (aa == null && bb == null) return a.symbol.localeCompare(b.symbol);
+        if (aa == null) return 1;
+        if (bb == null) return -1;
+        return bb - aa || a.symbol.localeCompare(b.symbol);
+      });
+
+      tbody.innerHTML = rows
+        .map((row) => {
+          const { maxArb, sides } = arbForRow(row, timeframe);
+          const starOn = stars.has(row.symbol);
+          return `<tr data-symbol="${row.symbol}">
+            <td class="col-star sticky-left"><button type="button" class="star ${starOn ? "on" : ""}" data-star="${row.symbol}" aria-label="Pin ${row.symbol}">${starOn ? "★" : "☆"}</button></td>
+            <td class="col-symbol sticky-left sticky-left-2">${row.symbol}</td>
+            <td class="col-rank num sticky-left sticky-left-3">${row.oiRank ?? "—"}</td>
+            <td class="col-arb num sticky-left sticky-left-4">${maxArb != null ? pct(maxArb) : "—"}</td>
+            <td class="col-venue-pin sticky-pin-1">${renderVenueCell(row.venues.ondo, sides.ondo, timeframe)}</td>
+            <td class="col-venue-pin sticky-pin-2">${renderVenueCell(row.venues.hl, sides.hl, timeframe)}</td>
+            <td class="col-venue-scroll">${renderVenueCell(row.venues.vari, sides.vari, timeframe)}</td>
+          </tr>`;
+        })
+        .join("");
+
+      empty.hidden = rows.length > 0;
+
+      tbody.querySelectorAll("[data-star]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const sym = btn.dataset.star;
+          if (stars.has(sym)) stars.delete(sym);
+          else stars.add(sym);
+          localStorage.setItem(STAR_KEY, JSON.stringify([...stars]));
+          render();
+        });
+      });
+    }
+
+    document.getElementById("search").addEventListener("input", render);
+    document.getElementById("tfToggle").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-tf]");
+      if (!btn) return;
+      timeframe = btn.dataset.tf;
+      document.querySelectorAll("#tfToggle button").forEach((b) => b.classList.toggle("active", b === btn));
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>
