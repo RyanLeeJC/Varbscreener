@@ -21,10 +21,11 @@
       --star-on: #e6c84a;
       --w-star: 36px;
       --w-sym: 92px;
-      --w-rank: 76px;
-      --w-arb: 92px;
-      --col-pin-w: 148px;
-      --col-left-w: calc(var(--w-star) + var(--w-sym) + var(--w-rank) + var(--w-arb));
+      --w-price: 88px;
+      --w-arb: 120px;
+      --col-venue-w: 200px;
+      --col-venue-pad-x: 8px;
+      --col-left-w: calc(var(--w-star) + var(--w-sym) + var(--w-price) + var(--w-arb));
     }
 
     * { box-sizing: border-box; }
@@ -70,7 +71,141 @@
     }
     .search-wrap input:focus { border-color: #333; }
 
-    .controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+    .controls { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+
+    .exchanges-menu { position: relative; }
+    .exchanges-trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      background: #141414;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .exchanges-trigger:hover { border-color: #333; }
+    .exchanges-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      flex-shrink: 0;
+    }
+    .exchanges-dot.off { background: var(--muted); opacity: 0.45; }
+    .exchanges-chevron {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+    }
+    .exchanges-menu.open .exchanges-chevron::before { content: "⌃"; }
+    .exchanges-menu:not(.open) .exchanges-chevron::before { content: "⌄"; }
+
+    .exchanges-panel {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 40;
+      min-width: 220px;
+      padding: 8px;
+      background: #111;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    }
+    .exchanges-panel[hidden] { display: none; }
+
+    .exchange-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .exchange-option:hover { background: #1a1a1a; }
+    .exchange-option input {
+      width: 14px;
+      height: 14px;
+      margin: 0;
+      accent-color: var(--green);
+      flex-shrink: 0;
+    }
+    .exchange-option-name {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .ondo-only-toggle,
+    .max-lev-toggle,
+    .next-fr-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .ondo-only-label,
+    .max-lev-label,
+    .next-fr-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .ondo-only-toggle:has(input:checked) .ondo-only-label,
+    .max-lev-toggle:has(input:checked) .max-lev-label,
+    .next-fr-toggle:has(input:checked) .next-fr-label { color: var(--text); }
+    .ondo-only-toggle input,
+    .max-lev-toggle input,
+    .next-fr-toggle input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+    }
+    .ondo-only-slider {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+      background: #141414;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .ondo-only-slider::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      background: var(--muted);
+      border-radius: 50%;
+      transition: transform 0.15s, background 0.15s;
+    }
+    .ondo-only-toggle input:checked + .ondo-only-slider,
+    .max-lev-toggle input:checked + .max-lev-slider,
+    .next-fr-toggle input:checked + .next-fr-slider {
+      background: var(--green-dim);
+      border-color: #2a5c40;
+    }
+    .ondo-only-toggle input:checked + .ondo-only-slider::after,
+    .max-lev-toggle input:checked + .max-lev-slider::after,
+    .next-fr-toggle input:checked + .next-fr-slider::after {
+      transform: translateX(16px);
+      background: var(--green);
+    }
 
     .tf-toggle {
       display: flex;
@@ -110,7 +245,6 @@
       border-collapse: separate;
       border-spacing: 0;
       width: max-content;
-      min-width: 100%;
     }
 
     th, td {
@@ -138,41 +272,304 @@
     /* Left pinned block */
     .col-star { width: var(--w-star); min-width: var(--w-star); text-align: center; }
     .col-symbol { width: var(--w-sym); min-width: var(--w-sym); font-weight: 600; }
-    .col-rank { width: var(--w-rank); min-width: var(--w-rank); color: var(--muted); }
-    .col-arb { width: var(--w-arb); min-width: var(--w-arb); font-weight: 600; color: var(--green); }
+    .col-price {
+      width: var(--w-price);
+      min-width: var(--w-price);
+      max-width: var(--w-price);
+      color: var(--muted);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .col-arb {
+      width: var(--w-arb);
+      min-width: var(--w-arb);
+      max-width: var(--w-arb);
+      font-weight: 600;
+      color: var(--green);
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .sort-head {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      background: none;
+      border: none;
+      color: inherit;
+      font: inherit;
+      letter-spacing: inherit;
+      text-transform: inherit;
+      cursor: pointer;
+    }
+    .sort-head:hover { color: var(--text); }
+    .sort-head.active { color: var(--text); }
+    .sort-caret {
+      display: block;
+      font-size: 10px;
+      line-height: 1;
+      height: 10px;
+      color: var(--muted);
+      opacity: 0;
+    }
+    .sort-head.active .sort-caret { opacity: 1; color: var(--text); }
+    .sort-head.desc .sort-caret::before { content: "⌄"; }
+    .sort-head.asc .sort-caret::before { content: "⌃"; }
+
+    .arb-trigger,
+    .price-trigger,
+    .venue-rate-trigger {
+      cursor: default;
+      display: inline-block;
+      min-width: 10ch;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .price-trigger { min-width: 0; text-align: right; width: 100%; }
+
+    .arb-popup {
+      position: fixed;
+      z-index: 100;
+      min-width: 248px;
+      width: max-content;
+      max-width: 320px;
+      background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: 12px 14px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65);
+      pointer-events: none;
+    }
+    .arb-popup[hidden] { display: none; }
+
+    .arb-popup-head {
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .arb-popup-head strong { color: var(--text); font-weight: 700; }
+
+    .arb-popup-grid {
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      gap: 6px 8px;
+      align-items: baseline;
+      font-variant-numeric: tabular-nums;
+    }
+    .arb-popup-ntl {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .arb-popup-rows {
+      display: contents;
+    }
+    .arb-popup-row {
+      display: contents;
+    }
+    .arb-popup-tf {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .arb-popup-pct {
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 500;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .arb-popup-usd {
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 600;
+      text-align: right;
+      white-space: nowrap;
+      min-width: 52px;
+    }
+
+    .arb-popup-foot {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+    .arb-popup-foot-label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .arb-popup-route {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .arb-popup-route.single { justify-content: flex-start; }
+    .arb-popup-route .buy-side,
+    .arb-popup-route .sell-side {
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .arb-popup-route .buy-side { color: var(--green); }
+    .arb-popup-route .sell-side { color: var(--red); }
+
+    .price-popup-head {
+      margin-bottom: 4px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .price-popup-head strong { color: var(--text); font-weight: 700; }
+
+    .price-popup-spot {
+      color: #e6c84a;
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1.1;
+      margin-bottom: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .price-popup-grid {
+      display: grid;
+      grid-template-columns: 34px 1fr 1fr 1fr;
+      gap: 4px 8px;
+      align-items: baseline;
+      font-variant-numeric: tabular-nums;
+    }
+    .price-popup-col-head {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+      text-align: right;
+    }
+    .price-popup-row-label {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .price-popup-val {
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 500;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .price-popup-val.pct::after {
+      content: " %";
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .price-popup-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px 12px;
+      margin-top: 8px;
+      font-variant-numeric: tabular-nums;
+    }
+    .price-popup-metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .price-popup-metrics > :nth-child(2) {
+      text-align: right;
+    }
+    .price-popup-metric-val {
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 500;
+      text-align: right;
+    }
+    .price-popup-metrics > :nth-child(3) {
+      text-align: left;
+    }
+    .price-popup-metric-val.pct::after {
+      content: " %";
+      color: var(--muted);
+    }
+
+    .price-popup-lev {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .price-popup-lev-hint {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .price-popup-lev-safe { color: var(--text); }
+    .price-popup-lev-risk { color: var(--red); }
+    .price-popup-lev-safe.capped,
+    .price-popup-lev-risk.capped {
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .price-popup-foot-label {
+      text-align: center;
+    }
 
     .sticky-left { position: sticky; left: 0; z-index: 12; background: var(--panel); }
     .sticky-left-2 { left: var(--w-star); }
     .sticky-left-3 { left: calc(var(--w-star) + var(--w-sym)); }
     .sticky-left-4 {
-      left: calc(var(--w-star) + var(--w-sym) + var(--w-rank));
+      left: calc(var(--w-star) + var(--w-sym) + var(--w-price));
       box-shadow: 4px 0 8px rgba(0,0,0,.35);
     }
 
     th.sticky-left, th.sticky-left-2, th.sticky-left-3, th.sticky-left-4 { z-index: 25; }
 
-    /* Pinned exchange columns (Ondo + HL) */
-    .col-venue-pin {
-      min-width: var(--col-pin-w);
-      background: var(--pin-bg);
+    /* Venue columns — Ondo pinned tint; HL + Vari share scroll bg */
+    .col-venue-ondo,
+    .col-venue-scroll {
+      width: var(--col-venue-w);
+      min-width: var(--col-venue-w);
+      max-width: var(--col-venue-w);
+      padding-left: var(--col-venue-pad-x);
+      padding-right: var(--col-venue-pad-x);
+      text-align: center;
     }
-    th.col-venue-pin { background: #121816; }
-    td.col-venue-pin { background: var(--pin-bg); }
+    .col-venue-ondo { background: var(--pin-bg); }
+    th.col-venue-ondo { background: #121816; }
+    td.col-venue-ondo { background: var(--pin-bg); }
+
+    .col-venue-scroll { background: var(--scroll-bg); }
+    th.col-venue-scroll { background: #111; }
+    td.col-venue-scroll { background: var(--scroll-bg); }
 
     .sticky-pin-1 { position: sticky; left: var(--col-left-w); z-index: 11; }
-    .sticky-pin-2 { position: sticky; left: calc(var(--col-left-w) + var(--col-pin-w)); z-index: 11; box-shadow: 4px 0 8px rgba(0,0,0,.35); }
+    .sticky-pin-2 {
+      position: sticky;
+      left: calc(var(--col-left-w) + var(--col-venue-w));
+      z-index: 11;
+      box-shadow: 4px 0 8px rgba(0,0,0,.35);
+    }
     th.sticky-pin-1, th.sticky-pin-2 { z-index: 24; }
 
-    .col-venue-scroll {
-      min-width: var(--col-pin-w);
-      background: var(--scroll-bg);
-    }
-    th.col-venue-scroll { background: #111; }
-
     .venue-head {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 8px;
+      justify-content: center;
+      gap: 6px;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
     .venue-logo {
       width: 18px;
@@ -186,33 +583,60 @@
     }
     .logo-ondo { background: #6ee7b7; }
     .logo-hl { background: #97fbc0; }
+    .logo-lighter { background: #fbbf24; }
     .logo-vari { background: #a78bfa; color: #111; }
 
     .venue-cell {
+      position: relative;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 10px;
+      justify-content: center;
+      min-height: 24px;
     }
-    .venue-rates { display: flex; flex-direction: column; gap: 2px; }
-    .rate-main { font-size: 13px; font-weight: 500; }
+    .venue-rates {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    .rate-main { font-size: 13px; font-weight: 500; text-align: center; }
     .rate-main.pos { color: var(--green); }
     .rate-main.neg { color: var(--red); }
     .rate-main.missing { color: var(--muted); }
-    .rate-sub { font-size: 10px; color: var(--muted); }
 
     .pill {
-      font-size: 10px;
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 9px;
       font-weight: 700;
       letter-spacing: 0.04em;
-      padding: 4px 8px;
-      border-radius: 6px;
+      padding: 3px 6px;
+      border-radius: 5px;
       text-transform: uppercase;
       flex-shrink: 0;
     }
     .pill.buy { background: var(--green-dim); color: var(--green); border: 1px solid #2a5c40; }
     .pill.sell { background: var(--red-dim); color: var(--red); border: 1px solid #5c2a2a; }
     .pill.empty { visibility: hidden; }
+
+    .lev-badge {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--muted);
+      background: #161616;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 2px 5px;
+      line-height: 1.2;
+      white-space: nowrap;
+      pointer-events: none;
+    }
 
     .star {
       background: none;
@@ -226,7 +650,7 @@
     .star.on { color: var(--star-on); }
 
     tbody tr:hover td { background: #121212; }
-    tbody tr:hover td.col-venue-pin { background: #141a16; }
+    tbody tr:hover td.col-venue-ondo { background: #141a16; }
     tbody tr:hover td.col-venue-scroll { background: #101010; }
     tbody tr:hover .sticky-left,
     tbody tr:hover .sticky-left-2,
@@ -244,6 +668,45 @@
       font-size: 11px;
       margin-left: 8px;
     }
+
+    .refresh-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .refresh-btn {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      background: none;
+      border: none;
+      border-radius: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 15px;
+      line-height: 1;
+    }
+    .refresh-btn:hover:not(:disabled) {
+      color: var(--text);
+      background: #1a1a1a;
+    }
+    .refresh-btn:disabled {
+      opacity: 0.45;
+      cursor: wait;
+    }
+    .refresh-btn.spinning {
+      animation: refresh-spin 0.75s linear infinite;
+    }
+    @keyframes refresh-spin {
+      to { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
@@ -254,10 +717,58 @@
         <input id="search" type="search" placeholder="Search by symbol…" autocomplete="off" />
       </div>
       <div class="controls">
+        <label class="max-lev-toggle">
+          <span class="max-lev-label">Max Lev</span>
+          <input type="checkbox" id="maxLev" />
+          <span class="max-lev-slider ondo-only-slider" aria-hidden="true"></span>
+        </label>
+        <div class="exchanges-menu" id="exchangesMenu">
+          <button type="button" class="exchanges-trigger" id="exchangesTrigger" aria-expanded="false" aria-haspopup="true">
+            <span>Exchanges (<span id="exchangesCount">4</span>)</span>
+            <span class="exchanges-dot" id="exchangesDot" aria-hidden="true"></span>
+            <span class="exchanges-chevron" aria-hidden="true"></span>
+          </button>
+          <div class="exchanges-panel" id="exchangesPanel" hidden>
+            <label class="exchange-option">
+              <input type="checkbox" data-exchange="ondo" checked />
+              <span class="venue-logo logo-ondo">O</span>
+              <span class="exchange-option-name">Ondo</span>
+            </label>
+            <label class="exchange-option">
+              <input type="checkbox" data-exchange="hl" checked />
+              <span class="venue-logo logo-hl">H</span>
+              <span class="exchange-option-name">HL xyz</span>
+            </label>
+            <label class="exchange-option">
+              <input type="checkbox" data-exchange="lighter" checked />
+              <span class="venue-logo logo-lighter">L</span>
+              <span class="exchange-option-name">Lighter</span>
+            </label>
+            <label class="exchange-option">
+              <input type="checkbox" data-exchange="vari" checked />
+              <span class="venue-logo logo-vari">V</span>
+              <span class="exchange-option-name">Variational</span>
+            </label>
+          </div>
+        </div>
+        <label class="next-fr-toggle">
+          <span class="next-fr-label">Next FR</span>
+          <input type="checkbox" id="nextFr" />
+          <span class="next-fr-slider ondo-only-slider" aria-hidden="true"></span>
+        </label>
+        <label class="ondo-only-toggle">
+          <span class="ondo-only-label">Ondo Only</span>
+          <input type="checkbox" id="ondoOnly" />
+          <span class="ondo-only-slider" aria-hidden="true"></span>
+        </label>
         <div class="tf-toggle" id="tfToggle">
           <button type="button" data-tf="8h" class="active">8H</button>
           <button type="button" data-tf="24h">24H</button>
           <button type="button" data-tf="ann">Ann.</button>
+        </div>
+        <div class="refresh-control">
+          <span>Auto-refresh: <span id="refreshSec">60</span>s</span>
+          <button type="button" class="refresh-btn" id="refreshBtn" aria-label="Refresh now">↻</button>
         </div>
       </div>
     </header>
@@ -268,16 +779,12 @@
           <tr>
             <th class="col-star sticky-left"></th>
             <th class="col-symbol sticky-left sticky-left-2">Symbol</th>
-            <th class="col-rank sticky-left sticky-left-3">OI Rank</th>
-            <th class="col-arb sticky-left sticky-left-4">Max Arb</th>
-            <th class="col-venue-pin sticky-pin-1">
-              <div class="venue-head"><span class="venue-logo logo-ondo">O</span>Ondo Perps</div>
-            </th>
-            <th class="col-venue-pin sticky-pin-2">
-              <div class="venue-head"><span class="venue-logo logo-hl">H</span>Hyperliquid xyz</div>
-            </th>
-            <th class="col-venue-scroll">
-              <div class="venue-head"><span class="venue-logo logo-vari">V</span>Variational</div>
+            <th class="col-price sticky-left sticky-left-3">Price</th>
+            <th class="col-arb sticky-left sticky-left-4">
+              <button type="button" class="sort-head desc active" data-sort="maxArb">
+                <span>Max Arb</span>
+                <span class="sort-caret" aria-hidden="true"></span>
+              </button>
             </th>
           </tr>
         </thead>
@@ -287,14 +794,323 @@
     </div>
   </div>
 
+  <div id="arbPopup" class="arb-popup" hidden>
+    <div class="arb-popup-head">
+      <span id="arbPopupPrefix">Max Arb</span> <strong id="arbPopupSym"></strong>
+    </div>
+    <div class="arb-popup-grid">
+      <span></span>
+      <span></span>
+      <span class="arb-popup-ntl">$10k Ntl.</span>
+      <div class="arb-popup-rows" id="arbPopupRows"></div>
+    </div>
+    <div class="arb-popup-foot">
+      <div class="arb-popup-foot-label">Direction</div>
+      <div class="arb-popup-route" id="arbPopupRoute"></div>
+    </div>
+  </div>
+
+  <div id="pricePopup" class="arb-popup price-popup" hidden>
+    <div class="price-popup-head"><strong id="pricePopupSym"></strong> Price Technicals</div>
+    <div class="price-popup-spot" id="pricePopupSpot"></div>
+    <div class="price-popup-grid">
+      <span class="price-popup-row-label">5D:</span>
+      <span class="price-popup-col-head">Hi</span>
+      <span class="price-popup-col-head">Lo</span>
+      <span class="price-popup-col-head">Range</span>
+      <span></span>
+      <span class="price-popup-val" id="pricePopupHi"></span>
+      <span class="price-popup-val" id="pricePopupLo"></span>
+      <span class="price-popup-val pct" id="pricePopupRange"></span>
+    </div>
+    <div class="price-popup-metrics">
+      <span class="price-popup-metric-label">5D ATR</span>
+      <span class="price-popup-metric-label">1/2 Range</span>
+      <span class="price-popup-metric-val pct" id="pricePopupAtr"></span>
+      <span class="price-popup-metric-val pct" id="pricePopupHalfRange"></span>
+    </div>
+    <div class="arb-popup-foot">
+      <div class="arb-popup-foot-label price-popup-foot-label">Max Leverage to Use</div>
+      <div class="price-popup-lev">
+        <span class="price-popup-lev-hint">(Safe)</span>
+        <span class="price-popup-lev-safe" id="pricePopupLevSafe"></span>
+        <span class="price-popup-lev-risk" id="pricePopupLevRisk"></span>
+        <span class="price-popup-lev-hint">(Risk)</span>
+      </div>
+    </div>
+  </div>
+
   <script src="funding_screener.data.js"></script>
   <script>
     const TF_KEYS = { "8h": "pct8h", "24h": "pct24h", ann: "pctAnn" };
-    const TF_DECIMALS = { "8h": 5, "24h": 4, ann: 2 };
+    const NEXT_TF_KEYS = { "8h": "nextPct8h", "24h": "nextPct24h", ann: "nextPctAnn" };
+    const TF_DECIMALS = { "8h": 5, "24h": 4, "7d": 3, ann: 2 };
+    const VENUE_LABELS = { ondo: "Ondo", hl: "HL", lighter: "Lighter", vari: "Variational" };
+    const VENUE_DEFS = [
+      { id: "ondo", short: "Ondo", logo: "O", logoClass: "logo-ondo", colClass: "col-venue-ondo", pinned: true },
+      { id: "hl", short: "HL xyz", logo: "H", logoClass: "logo-hl", colClass: "col-venue-scroll", pinned: true },
+      { id: "lighter", short: "Lighter", logo: "L", logoClass: "logo-lighter", colClass: "col-venue-scroll", pinned: false },
+      { id: "vari", short: "Vari", logo: "V", logoClass: "logo-vari", colClass: "col-venue-scroll", pinned: false },
+    ];
+    const NOTIONAL = 10000;
     const STAR_KEY = "funding_screener_stars";
+    const ONDO_ONLY_KEY = "funding_screener_ondo_only";
+    const NEXT_FR_KEY = "funding_screener_next_fr";
+    const MAX_LEV_KEY = "funding_screener_max_lev";
+    const EXCHANGES_KEY = "funding_screener_exchanges";
+    const REFRESH_INTERVAL_S = 60;
 
     let timeframe = "8h";
+    let sortKey = "maxArb";
+    let sortDir = "desc";
+    let ondoOnly = localStorage.getItem(ONDO_ONLY_KEY) === "true";
+    let ondoNextFr = localStorage.getItem(NEXT_FR_KEY) === "true";
+    let showMaxLev = localStorage.getItem(MAX_LEV_KEY) === "true";
+    let selectedExchanges = loadSelectedExchanges();
     let stars = new Set(JSON.parse(localStorage.getItem(STAR_KEY) || "[]"));
+    let rowBySymbol = new Map();
+    let refreshSecondsLeft = REFRESH_INTERVAL_S;
+    let refreshTicker = null;
+    let refreshInFlight = false;
+
+    const exchangesMenu = document.getElementById("exchangesMenu");
+    const exchangesTrigger = document.getElementById("exchangesTrigger");
+    const exchangesPanel = document.getElementById("exchangesPanel");
+    const exchangesCount = document.getElementById("exchangesCount");
+    const exchangesDot = document.getElementById("exchangesDot");
+    const theadRow = document.querySelector("#grid thead tr");
+    const refreshSecEl = document.getElementById("refreshSec");
+    const refreshBtn = document.getElementById("refreshBtn");
+
+    function parseEmbeddedScreener(text) {
+      const m = text.match(/window\.__FUNDING_SCREENER__\s*=\s*(\{[\s\S]*\})\s*;?\s*$/);
+      if (!m) return null;
+      try {
+        return JSON.parse(m[1]);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function screenerApiUrls() {
+      const urls = [];
+      if (location.protocol.startsWith("http")) {
+        urls.push(new URL("/api/screener", location.origin).href);
+      }
+      urls.push("http://127.0.0.1:8765/api/screener");
+      return urls;
+    }
+
+    async function fetchLiveScreenerData() {
+      for (const url of screenerApiUrls()) {
+        try {
+          const resp = await fetch(url, { cache: "no-store" });
+          if (!resp.ok) continue;
+          const data = await resp.json();
+          if (data && Array.isArray(data.rows)) return data;
+        } catch (_) {
+          /* try next endpoint */
+        }
+      }
+      if (location.protocol.startsWith("http")) {
+        try {
+          const resp = await fetch(`funding_screener.data.js?t=${Date.now()}`, { cache: "no-store" });
+          if (resp.ok) {
+            const parsed = parseEmbeddedScreener(await resp.text());
+            if (parsed) return parsed;
+          }
+        } catch (_) {
+          /* keep embedded snapshot */
+        }
+      }
+      return null;
+    }
+
+    function updateRefreshLabel() {
+      if (refreshSecEl) refreshSecEl.textContent = String(refreshSecondsLeft);
+    }
+
+    function resetRefreshCountdown() {
+      refreshSecondsLeft = REFRESH_INTERVAL_S;
+      updateRefreshLabel();
+    }
+
+    async function refreshScreenerData() {
+      if (refreshInFlight) return false;
+      refreshInFlight = true;
+      refreshBtn.disabled = true;
+      refreshBtn.classList.add("spinning");
+      try {
+        const data = await fetchLiveScreenerData();
+        if (data) {
+          window.__FUNDING_SCREENER__ = data;
+          render();
+          return true;
+        }
+      } finally {
+        refreshInFlight = false;
+        refreshBtn.disabled = false;
+        refreshBtn.classList.remove("spinning");
+      }
+      return false;
+    }
+
+    function tickAutoRefresh() {
+      if (refreshSecondsLeft <= 0) {
+        refreshScreenerData().finally(resetRefreshCountdown);
+        return;
+      }
+      refreshSecondsLeft -= 1;
+      updateRefreshLabel();
+    }
+
+    function startAutoRefresh() {
+      if (refreshTicker) clearInterval(refreshTicker);
+      resetRefreshCountdown();
+      refreshTicker = setInterval(tickAutoRefresh, 1000);
+    }
+
+    function loadSelectedExchanges() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(EXCHANGES_KEY) || "null");
+        if (Array.isArray(raw) && raw.length) {
+          const valid = raw.filter((id) => VENUE_DEFS.some((v) => v.id === id));
+          if (valid.length) return new Set(valid);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      return new Set(VENUE_DEFS.map((v) => v.id));
+    }
+
+    function saveSelectedExchanges() {
+      localStorage.setItem(EXCHANGES_KEY, JSON.stringify([...selectedExchanges]));
+    }
+
+    function activeVenueDefs() {
+      return VENUE_DEFS.filter((v) => selectedExchanges.has(v.id));
+    }
+
+    function venueColClasses(venue, pinIndex) {
+      const classes = [venue.colClass];
+      if (venue.pinned && pinIndex != null) {
+        classes.push(pinIndex === 0 ? "sticky-pin-1" : "sticky-pin-2");
+      }
+      return classes.join(" ");
+    }
+
+    function updateExchangesUi() {
+      exchangesCount.textContent = String(selectedExchanges.size);
+      exchangesDot.classList.toggle("off", selectedExchanges.size === VENUE_DEFS.length);
+      exchangesPanel.querySelectorAll("[data-exchange]").forEach((input) => {
+        input.checked = selectedExchanges.has(input.dataset.exchange);
+      });
+    }
+
+    function setExchangesOpen(open) {
+      exchangesMenu.classList.toggle("open", open);
+      exchangesPanel.hidden = !open;
+      exchangesTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    function renderVenueHeaders() {
+      let pinSlot = 0;
+      return activeVenueDefs()
+        .map((venue) => {
+          let pinIndex = null;
+          if (venue.pinned && pinSlot < 2) {
+            pinIndex = pinSlot;
+            pinSlot += 1;
+          }
+          const active = sortKey === venue.id;
+          const sortCls = `sort-head${active ? ` ${sortDir} active` : ""}`;
+          return `<th class="${venueColClasses(venue, pinIndex)}">
+            <button type="button" class="${sortCls}" data-sort="${venue.id}">
+              <span class="venue-head"><span class="venue-logo ${venue.logoClass}">${venue.logo}</span>${venue.short}</span>
+              <span class="sort-caret" aria-hidden="true"></span>
+            </button>
+          </th>`;
+        })
+        .join("");
+    }
+
+    function renderVenueCells(row, sides, tf) {
+      let pinSlot = 0;
+      return activeVenueDefs()
+        .map((venue) => {
+          let pinIndex = null;
+          if (venue.pinned && pinSlot < 2) {
+            pinIndex = pinSlot;
+            pinSlot += 1;
+          }
+          const venueData = row.venues?.[venue.id];
+          const side = sides?.[venue.id] ?? null;
+          return `<td class="${venueColClasses(venue, pinIndex)}">${renderVenueCell(venueData, side, tf, venue.id, row.symbol)}</td>`;
+        })
+        .join("");
+    }
+
+    const arbPopup = document.getElementById("arbPopup");
+    const arbPopupPrefix = document.getElementById("arbPopupPrefix");
+    const arbPopupSym = document.getElementById("arbPopupSym");
+    const arbPopupRows = document.getElementById("arbPopupRows");
+    const arbPopupRoute = document.getElementById("arbPopupRoute");
+    const pricePopup = document.getElementById("pricePopup");
+    const pricePopupSym = document.getElementById("pricePopupSym");
+    const pricePopupSpot = document.getElementById("pricePopupSpot");
+    const pricePopupHi = document.getElementById("pricePopupHi");
+    const pricePopupLo = document.getElementById("pricePopupLo");
+    const pricePopupRange = document.getElementById("pricePopupRange");
+    const pricePopupAtr = document.getElementById("pricePopupAtr");
+    const pricePopupHalfRange = document.getElementById("pricePopupHalfRange");
+    const pricePopupLevSafe = document.getElementById("pricePopupLevSafe");
+    const pricePopupLevRisk = document.getElementById("pricePopupLevRisk");
+
+    function fmtPrice(v) {
+      if (v == null || Number.isNaN(v)) return "—";
+      const abs = Math.abs(v);
+      if (abs >= 1000) {
+        return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      }
+      if (abs >= 1) return `$${v.toFixed(2)}`;
+      return `$${v.toFixed(4)}`;
+    }
+
+    function fmtPopupSpotPrice(v) {
+      if (v == null || Number.isNaN(v)) return "—";
+      const abs = Math.abs(v);
+      if (abs >= 1000) {
+        return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      }
+      return `$${v.toFixed(2)}`;
+    }
+
+    function fmtPopupPrice(v) {
+      if (v == null || Number.isNaN(v)) return "—";
+      const abs = Math.abs(v);
+      if (abs >= 100) return `$${Math.round(v)}`;
+      if (abs >= 1) return `$${v.toFixed(2)}`;
+      return `$${v.toFixed(4)}`;
+    }
+
+    function fmtPopupPct(v) {
+      if (v == null || Number.isNaN(v)) return "—";
+      return String(Math.round(v));
+    }
+
+    function positionPopup(popup, anchor) {
+      popup.hidden = false;
+      const rect = anchor.getBoundingClientRect();
+      const popupRect = popup.getBoundingClientRect();
+      let left = rect.left + rect.width / 2 - popupRect.width / 2;
+      let top = rect.bottom + 8;
+      left = Math.max(8, Math.min(left, window.innerWidth - popupRect.width - 8));
+      if (top + popupRect.height > window.innerHeight - 8) {
+        top = rect.top - popupRect.height - 8;
+      }
+      popup.style.left = `${left}px`;
+      popup.style.top = `${top}px`;
+    }
 
     function pct(v, tf = timeframe) {
       if (v == null || Number.isNaN(v)) return null;
@@ -309,45 +1125,267 @@
       return "";
     }
 
-    function getRate(venue, tf) {
+    function getRate(venue, tf, venueId) {
       if (!venue) return null;
+      if (venueId === "ondo" && ondoNextFr) {
+        const nextKey = NEXT_TF_KEYS[tf];
+        if (nextKey && venue[nextKey] != null) return venue[nextKey];
+      }
       return venue[TF_KEYS[tf]];
     }
 
+    function hasOndoMarket(row) {
+      const ondo = row.venues?.ondo;
+      if (!ondo) return false;
+      return (
+        ondo.pct8h != null ||
+        ondo.pct24h != null ||
+        ondo.pctAnn != null ||
+        ondo.nextPct8h != null ||
+        ondo.nextPct24h != null ||
+        ondo.nextPctAnn != null
+      );
+    }
+
     function arbForRow(row, tf) {
-      const venues = [
-        ["ondo", row.venues.ondo],
-        ["hl", row.venues.hl],
-        ["vari", row.venues.vari],
-      ];
+      const venues = activeVenueDefs().map((venue) => [venue.id, row.venues?.[venue.id]]);
       const present = venues
-        .map(([id, v]) => [id, getRate(v, tf)])
+        .map(([id, v]) => [id, getRate(v, tf, id)])
         .filter(([, r]) => r != null);
-      if (present.length < 2) return { maxArb: null, sides: {} };
+      if (present.length < 2) {
+        const sides = Object.fromEntries(VENUE_DEFS.map((v) => [v.id, null]));
+        return { maxArb: null, sides };
+      }
       const vals = present.map(([, r]) => r);
       const maxArb = Math.max(...vals) - Math.min(...vals);
       const hi = present.reduce((a, b) => (b[1] > a[1] ? b : a))[0];
       const lo = present.reduce((a, b) => (b[1] < a[1] ? b : a))[0];
-      const sides = { ondo: null, hl: null, vari: null };
+      const sides = Object.fromEntries(VENUE_DEFS.map((v) => [v.id, null]));
       sides[hi] = "sell";
       sides[lo] = "buy";
-      return { maxArb, sides };
+      return { maxArb, sides, buyVenue: lo, sellVenue: hi };
     }
 
-    function renderVenueCell(venue, side, tf) {
-      if (!venue || getRate(venue, tf) == null) {
-        return `<div class="venue-cell"><div class="venue-rates"><div class="rate-main missing">—</div></div><span class="pill empty">—</span></div>`;
+    function fmtUsd(v) {
+      if (v == null || Number.isNaN(v)) return "—";
+      const abs = Math.abs(v);
+      if (abs >= 100) return `$${Math.round(v)}`;
+      return `$${v.toFixed(2)}`;
+    }
+
+    function fundingPopupLines(getPct) {
+      const pct8h = getPct("8h");
+      if (pct8h == null) return null;
+      const pct24h = getPct("24h");
+      const pctAnn = getPct("ann");
+      const pct7d = pct24h != null ? pct24h * 7 : null;
+      return [
+        { tf: "8h", pct: pct8h, tfKey: "8h" },
+        { tf: "24h", pct: pct24h, tfKey: "24h" },
+        { tf: "7d", pct: pct7d, tfKey: "7d" },
+        { tf: "APY", pct: pctAnn, tfKey: "ann" },
+      ]
+        .filter((line) => line.pct != null)
+        .map((line) => ({
+          ...line,
+          usd: (NOTIONAL * line.pct) / 100,
+        }));
+    }
+
+    function fillArbPopup({ prefix, symbol, lines, routeHtml, singleRoute = false }) {
+      arbPopupPrefix.textContent = prefix;
+      arbPopupSym.textContent = symbol;
+      arbPopupRows.innerHTML = lines
+        .map(
+          (line) => `<div class="arb-popup-row">
+            <span class="arb-popup-tf">${line.tf}</span>
+            <span class="arb-popup-pct">${pct(line.pct, line.tfKey)}</span>
+            <span class="arb-popup-usd">${fmtUsd(line.usd)}</span>
+          </div>`
+        )
+        .join("");
+      arbPopupRoute.classList.toggle("single", singleRoute);
+      arbPopupRoute.innerHTML = routeHtml;
+    }
+
+    function arbPopupDetails(row) {
+      const lines = fundingPopupLines((tf) => arbForRow(row, tf).maxArb);
+      if (!lines) return null;
+
+      const arb8h = arbForRow(row, "8h");
+      const buyLabel = VENUE_LABELS[arb8h.buyVenue] || arb8h.buyVenue;
+      const sellLabel = VENUE_LABELS[arb8h.sellVenue] || arb8h.sellVenue;
+      return {
+        symbol: row.symbol,
+        lines,
+        routeHtml: `
+        <span class="buy-side">BUY ${buyLabel}</span>
+        <span class="sell-side">SELL ${sellLabel}</span>`,
+      };
+    }
+
+    function venueRatePopupDetails(row, venueId) {
+      const venue = row.venues?.[venueId];
+      const lines = fundingPopupLines((tf) => getRate(venue, tf, venueId));
+      if (!lines) return null;
+
+      const side = arbForRow(row, "8h").sides?.[venueId];
+      const venueLabel = VENUE_LABELS[venueId] || venueId;
+      let routeHtml = `<span class="arb-popup-route-empty">—</span>`;
+      if (side === "buy") {
+        routeHtml = `<span class="buy-side">BUY ${venueLabel}</span>`;
+      } else if (side === "sell") {
+        routeHtml = `<span class="sell-side">SELL ${venueLabel}</span>`;
       }
-      const main = getRate(venue, tf);
-      const subParts = [];
-      if (tf !== "8h" && venue.pct8h != null) subParts.push(`8h ${pct(venue.pct8h, "8h")}`);
-      if (tf !== "24h" && venue.pct24h != null) subParts.push(`24h ${pct(venue.pct24h, "24h")}`);
-      if (tf !== "ann" && venue.pctAnn != null) subParts.push(`Ann ${pct(venue.pctAnn, "ann")}`);
-      const sub = subParts.length ? `<div class="rate-sub">${subParts.join(" · ")}</div>` : "";
+      return {
+        symbol: row.symbol,
+        lines,
+        routeHtml,
+        prefix: venueLabel,
+        singleRoute: side === "buy" || side === "sell",
+      };
+    }
+
+    function hideArbPopup() {
+      arbPopup.hidden = true;
+    }
+
+    function hidePricePopup() {
+      pricePopup.hidden = true;
+    }
+
+    function hidePopups() {
+      hideArbPopup();
+      hidePricePopup();
+    }
+
+    function showArbPopup(row, anchor) {
+      hidePricePopup();
+      const details = arbPopupDetails(row);
+      if (!details) {
+        hideArbPopup();
+        return;
+      }
+
+      fillArbPopup({
+        prefix: "Max Arb",
+        symbol: details.symbol,
+        lines: details.lines,
+        routeHtml: details.routeHtml,
+      });
+      positionPopup(arbPopup, anchor);
+    }
+
+    function showVenueRatePopup(row, venueId, anchor) {
+      hidePricePopup();
+      const details = venueRatePopupDetails(row, venueId);
+      if (!details) {
+        hideArbPopup();
+        return;
+      }
+
+      fillArbPopup({
+        prefix: details.prefix,
+        symbol: details.symbol,
+        lines: details.lines,
+        routeHtml: details.routeHtml,
+        singleRoute: details.singleRoute,
+      });
+      positionPopup(arbPopup, anchor);
+    }
+
+    function lowestSelectedVenueMaxLev(row) {
+      const levs = activeVenueDefs()
+        .map((venue) => row.venues?.[venue.id]?.maxLev)
+        .filter((v) => v != null && !Number.isNaN(Number(v)))
+        .map((v) => Number(v));
+      return levs.length ? Math.min(...levs) : null;
+    }
+
+    function popupLevDisplay(computed, venueCap) {
+      if (computed == null || Number.isNaN(Number(computed))) {
+        return { text: "—", capped: false };
+      }
+      const n = Number(computed);
+      if (venueCap != null && n > venueCap) {
+        return { text: `${venueCap}x`, capped: true };
+      }
+      return { text: `${n}x`, capped: false };
+    }
+
+    function setPopupLev(el, display) {
+      el.textContent = display.text;
+      el.classList.toggle("capped", display.capped);
+    }
+
+    function showPricePopup(row, anchor) {
+      hideArbPopup();
+      const t = row.technicals;
+      if (!t || row.price == null) {
+        hidePricePopup();
+        return;
+      }
+
+      pricePopupSym.textContent = row.symbol;
+      pricePopupSpot.textContent = fmtPopupSpotPrice(row.price);
+      pricePopupHi.textContent = fmtPopupPrice(t.hi5d);
+      pricePopupLo.textContent = fmtPopupPrice(t.lo5d);
+      pricePopupRange.textContent = fmtPopupPct(t.rangePct);
+      pricePopupAtr.textContent = fmtPopupPct(t.atr5dPct);
+      pricePopupHalfRange.textContent = fmtPopupPct(t.halfRangePct);
+      const venueLevCap = lowestSelectedVenueMaxLev(row);
+      setPopupLev(pricePopupLevSafe, popupLevDisplay(t.levSafe, venueLevCap));
+      setPopupLev(pricePopupLevRisk, popupLevDisplay(t.levRisk, venueLevCap));
+      positionPopup(pricePopup, anchor);
+    }
+
+    function sortValue(row, key) {
+      if (key === "maxArb") return arbForRow(row, timeframe).maxArb;
+      if (!selectedExchanges.has(key)) return null;
+      return getRate(row.venues?.[key], timeframe, key);
+    }
+
+    function compareRows(a, b) {
+      const fa = stars.has(a.symbol) ? 0 : 1;
+      const fb = stars.has(b.symbol) ? 0 : 1;
+      if (fa !== fb) return fa - fb;
+
+      const va = sortValue(a, sortKey);
+      const vb = sortValue(b, sortKey);
+      if (va == null && vb == null) return a.symbol.localeCompare(b.symbol);
+      if (va == null) return 1;
+      if (vb == null) return -1;
+
+      const diff = va - vb;
+      if (diff !== 0) return sortDir === "asc" ? diff : -diff;
+      return a.symbol.localeCompare(b.symbol);
+    }
+
+    function updateSortHeaders() {
+      document.querySelectorAll(".sort-head").forEach((btn) => {
+        const active = btn.dataset.sort === sortKey;
+        btn.classList.toggle("active", active);
+        btn.classList.toggle("asc", active && sortDir === "asc");
+        btn.classList.toggle("desc", active && sortDir === "desc");
+      });
+    }
+
+    function fmtMaxLev(v) {
+      if (v == null || Number.isNaN(Number(v))) return null;
+      return `${Number(v)}x`;
+    }
+
+    function renderVenueCell(venue, side, tf, venueId, symbol) {
+      const levLabel =
+        showMaxLev && venue?.maxLev != null ? `<span class="lev-badge">${fmtMaxLev(venue.maxLev)}</span>` : "";
+      if (!venue || getRate(venue, tf, venueId) == null) {
+        return `<div class="venue-cell">${levLabel}<div class="venue-rates"><div class="rate-main missing">—</div></div><span class="pill empty">—</span></div>`;
+      }
+      const main = getRate(venue, tf, venueId);
       const pill = side
         ? `<span class="pill ${side}">${side === "buy" ? "Buy" : "Sell"}</span>`
         : `<span class="pill empty">—</span>`;
-      return `<div class="venue-cell"><div class="venue-rates"><div class="rate-main ${rateClass(main)}">${pct(main)}</div>${sub}</div>${pill}</div>`;
+      return `<div class="venue-cell">${levLabel}<div class="venue-rates"><span class="rate-main venue-rate-trigger ${rateClass(main)}" data-venue-rate="${symbol}" data-venue="${venueId}">${pct(main)}</span></div>${pill}</div>`;
     }
 
     function render() {
@@ -363,23 +1401,33 @@
         return;
       }
 
-      const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "unknown";
-      meta.innerHTML = `<span>${data.rows.length} symbols</span><span class="hint">· Updated ${updated} UTC · Buy = long perp / Sell = short perp on that venue for max funding capture · Max arb uses ${timeframe.toUpperCase()} spread</span>`;
-
       let rows = data.rows.slice();
+      rowBySymbol = new Map(rows.map((r) => [r.symbol, r]));
+      if (ondoOnly) rows = rows.filter(hasOndoMarket);
       if (q) rows = rows.filter((r) => r.symbol.includes(q));
 
-      rows.sort((a, b) => {
-        const fa = stars.has(a.symbol) ? 0 : 1;
-        const fb = stars.has(b.symbol) ? 0 : 1;
-        if (fa !== fb) return fa - fb;
-        const aa = arbForRow(a, timeframe).maxArb;
-        const bb = arbForRow(b, timeframe).maxArb;
-        if (aa == null && bb == null) return a.symbol.localeCompare(b.symbol);
-        if (aa == null) return 1;
-        if (bb == null) return -1;
-        return bb - aa || a.symbol.localeCompare(b.symbol);
-      });
+      const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "unknown";
+      const countLabel = ondoOnly && !q
+        ? `${rows.length} of ${data.rows.length} symbols`
+        : `${rows.length} symbols`;
+      const ondoHint = ondoOnly ? " · Ondo only" : "";
+      const nextFrHint = ondoNextFr ? " · Ondo Next FR" : "";
+      meta.innerHTML = `<span>${countLabel}</span><span class="hint">· Updated ${updated} UTC${ondoHint}${nextFrHint} · Buy = long perp / Sell = short perp on that venue for max funding capture · Max arb uses ${timeframe.toUpperCase()} spread</span>`;
+
+      rows.sort(compareRows);
+      updateExchangesUi();
+      theadRow.innerHTML = `
+        <th class="col-star sticky-left"></th>
+        <th class="col-symbol sticky-left sticky-left-2">Symbol</th>
+        <th class="col-price sticky-left sticky-left-3">Price</th>
+        <th class="col-arb sticky-left sticky-left-4">
+          <button type="button" class="sort-head${sortKey === "maxArb" ? ` ${sortDir} active` : ""}" data-sort="maxArb">
+            <span>Max Arb</span>
+            <span class="sort-caret" aria-hidden="true"></span>
+          </button>
+        </th>
+        ${renderVenueHeaders()}`;
+      updateSortHeaders();
 
       tbody.innerHTML = rows
         .map((row) => {
@@ -388,11 +1436,17 @@
           return `<tr data-symbol="${row.symbol}">
             <td class="col-star sticky-left"><button type="button" class="star ${starOn ? "on" : ""}" data-star="${row.symbol}" aria-label="Pin ${row.symbol}">${starOn ? "★" : "☆"}</button></td>
             <td class="col-symbol sticky-left sticky-left-2">${row.symbol}</td>
-            <td class="col-rank num sticky-left sticky-left-3">${row.oiRank ?? "—"}</td>
-            <td class="col-arb num sticky-left sticky-left-4">${maxArb != null ? pct(maxArb) : "—"}</td>
-            <td class="col-venue-pin sticky-pin-1">${renderVenueCell(row.venues.ondo, sides.ondo, timeframe)}</td>
-            <td class="col-venue-pin sticky-pin-2">${renderVenueCell(row.venues.hl, sides.hl, timeframe)}</td>
-            <td class="col-venue-scroll">${renderVenueCell(row.venues.vari, sides.vari, timeframe)}</td>
+            <td class="col-price num sticky-left sticky-left-3">${
+              row.price != null && row.technicals
+                ? `<span class="price-trigger" data-price="${row.symbol}">${fmtPrice(row.price)}</span>`
+                : fmtPrice(row.price)
+            }</td>
+            <td class="col-arb num sticky-left sticky-left-4">${
+              maxArb != null
+                ? `<span class="arb-trigger" data-arb="${row.symbol}">${pct(maxArb)}</span>`
+                : "—"
+            }</td>
+            ${renderVenueCells(row, sides, timeframe)}
           </tr>`;
         })
         .join("");
@@ -408,9 +1462,90 @@
           render();
         });
       });
+
+      tbody.querySelectorAll("[data-arb]").forEach((el) => {
+        el.addEventListener("mouseenter", () => {
+          const row = rowBySymbol.get(el.dataset.arb);
+          if (row) showArbPopup(row, el);
+        });
+        el.addEventListener("mouseleave", hideArbPopup);
+      });
+
+      tbody.querySelectorAll("[data-venue-rate]").forEach((el) => {
+        el.addEventListener("mouseenter", () => {
+          const row = rowBySymbol.get(el.dataset.venueRate);
+          const venueId = el.dataset.venue;
+          if (row && venueId) showVenueRatePopup(row, venueId, el);
+        });
+        el.addEventListener("mouseleave", hideArbPopup);
+      });
+
+      tbody.querySelectorAll("[data-price]").forEach((el) => {
+        el.addEventListener("mouseenter", () => {
+          const row = rowBySymbol.get(el.dataset.price);
+          if (row) showPricePopup(row, el);
+        });
+        el.addEventListener("mouseleave", hidePricePopup);
+      });
     }
 
     document.getElementById("search").addEventListener("input", render);
+    exchangesTrigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setExchangesOpen(exchangesPanel.hidden);
+    });
+    exchangesPanel.addEventListener("click", (e) => e.stopPropagation());
+    exchangesPanel.addEventListener("change", (e) => {
+      const input = e.target.closest("[data-exchange]");
+      if (!input) return;
+      const id = input.dataset.exchange;
+      if (input.checked) {
+        selectedExchanges.add(id);
+      } else if (selectedExchanges.size <= 1) {
+        input.checked = true;
+        return;
+      } else {
+        selectedExchanges.delete(id);
+      }
+      if (!selectedExchanges.has(sortKey) && sortKey !== "maxArb") sortKey = "maxArb";
+      saveSelectedExchanges();
+      render();
+    });
+    document.addEventListener("click", (e) => {
+      if (!exchangesMenu.contains(e.target)) setExchangesOpen(false);
+    });
+    const nextFrInput = document.getElementById("nextFr");
+    nextFrInput.checked = ondoNextFr;
+    nextFrInput.addEventListener("change", () => {
+      ondoNextFr = nextFrInput.checked;
+      localStorage.setItem(NEXT_FR_KEY, ondoNextFr ? "true" : "false");
+      render();
+    });
+    const ondoOnlyInput = document.getElementById("ondoOnly");
+    ondoOnlyInput.checked = ondoOnly;
+    ondoOnlyInput.addEventListener("change", () => {
+      ondoOnly = ondoOnlyInput.checked;
+      localStorage.setItem(ONDO_ONLY_KEY, ondoOnly ? "true" : "false");
+      render();
+    });
+    const maxLevInput = document.getElementById("maxLev");
+    maxLevInput.checked = showMaxLev;
+    maxLevInput.addEventListener("change", () => {
+      showMaxLev = maxLevInput.checked;
+      localStorage.setItem(MAX_LEV_KEY, showMaxLev ? "true" : "false");
+      render();
+    });
+    document.querySelector("#grid thead").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-sort]");
+      if (!btn) return;
+      const key = btn.dataset.sort;
+      if (sortKey === key) sortDir = sortDir === "desc" ? "asc" : "desc";
+      else {
+        sortKey = key;
+        sortDir = "desc";
+      }
+      render();
+    });
     document.getElementById("tfToggle").addEventListener("click", (e) => {
       const btn = e.target.closest("button[data-tf]");
       if (!btn) return;
@@ -419,7 +1554,15 @@
       render();
     });
 
+    document.querySelector(".table-shell").addEventListener("scroll", hidePopups);
+    window.addEventListener("resize", hidePopups);
+
+    refreshBtn.addEventListener("click", () => {
+      refreshScreenerData().finally(resetRefreshCountdown);
+    });
+
     render();
+    startAutoRefresh();
   </script>
 </body>
 </html>

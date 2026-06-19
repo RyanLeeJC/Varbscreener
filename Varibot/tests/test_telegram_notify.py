@@ -41,13 +41,13 @@ def test_wallet_label_prefers_explicit_address(monkeypatch: pytest.MonkeyPatch) 
 
 def test_format_auth_alert() -> None:
     fixed = tn.datetime(2026, 6, 5, 15, 24, 4, tzinfo=tn._SGT)
-    with patch.object(tn, "_deployment_label", return_value="Gridbot"), patch.object(
+    with patch.object(tn, "_deployment_label", return_value="Varb"), patch.object(
         tn, "_wallet_label", return_value="0xbc31…9a59"
     ), patch("variationalbot.util.telegram_notify.datetime") as dt_mod:
         dt_mod.now.return_value = fixed
         text = tn._format_auth_alert(cycle_index=1380)
     assert text == (
-        "Auth failure on Vari>Gridbot (0xbc31…9a59)\n"
+        "Auth failure on Vari>Varb (0xbc31…9a59)\n"
         "Cycle: 1380\n"
         "Time: 15:24:04 SGT 5 Jun 2026\n"
         "Please update vr-token in Render."
@@ -56,7 +56,7 @@ def test_format_auth_alert() -> None:
 
 def test_maybe_notify_sends_via_webhook(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_WEBHOOK_URL", "https://example.test/hook")
-    monkeypatch.setenv("RENDER_SERVICE_NAME", "Gridbot")
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "Varb")
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     tn._LAST_SENT_MONO = 0.0
@@ -68,8 +68,8 @@ def test_maybe_notify_sends_via_webhook(monkeypatch: pytest.MonkeyPatch) -> None
         payload = post.call_args.kwargs["payload"]
         assert payload["cycle"] == 1380
         assert payload["cycle_index"] == 1380
-        assert payload["deployment"] == "Gridbot"
-        assert "Auth failure on Vari>Gridbot" in payload["text"]
+        assert payload["deployment"] == "Varb"
+        assert "Auth failure on Vari>Varb" in payload["text"]
         assert "Please update vr-token in Render." in payload["text"]
         assert "/api/portfolio" in payload["error"]
         assert "Cycle: 1380" in payload["text"]

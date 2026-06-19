@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 """
-Varibot orchestrator — implements the VariBotFlowchart workflow:
+Varibot orchestrator — Vari exchange workflow:
 
   Auth (validate_vr_token) -> every T minutes: portfolio snapshot ->
-  if positions -> PM / managers (see strategy); portfolio-wide TP close-all removed ->
-  if flat (or gridstrat with GRIDSTRAT_IGNORE_VENUE_POSITIONS) -> listing -> strategy -> grid limits
-  elif flat (non-grid) -> venue listing snapshot -> strategy -> multimarketorder
+  if positions -> optional IM rebalance ->
+  if flat -> listing snapshot -> strategy (VARIBOT_STRATEGY) -> multimarketorder
 
-Run from the Varibot directory (or any cwd; this file fixes imports):
+Run from the Varibot directory:
 
   cd .../Varibot && python3 varibot.py
-  python3 varibot.py --live              # default: IM-target sizing (see multimarketorder.DEFAULT_IM_TARGET_PCT)
-  python3 varibot.py --usd 20            # fixed USD per order instead
+  python3 varibot.py --live
+  python3 varibot.py --usd 20
 
-Dependencies: repo layout
-  ../strategy/gridstrat.py, ./validate_vr_token.py, check_portfolio_stats.py,
-  ./closeallpositions.py, ./multimarketorder.py (or *_cadence_1s.py)
+Set VARIBOT_STRATEGY to a module under strategy/ (e.g. funding_arb.py).
 """
 
 import argparse
@@ -39,7 +36,7 @@ from zoneinfo import ZoneInfo
 # Imports assume sibling scripts + variationalbot live under this directory.
 _VARIBOT_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_VARIBOT_DIR, ".."))
-# Grid / strategy JSON under Varibot (no ``Vari Listings`` pipeline).
+# Strategy JSON under Varibot (no ``Vari Listings`` pipeline).
 _STRATEGY_LISTING_SNAPSHOT_JSON = os.path.join(_VARIBOT_DIR, "strategy_listing_snapshot.json")
 _STRATEGY_MARKETSTATE_JSON = os.path.join(_VARIBOT_DIR, "strategy_marketstate.json")
 _DEFAULT_MARKETSTATE_JSON = _STRATEGY_MARKETSTATE_JSON
@@ -49,39 +46,13 @@ _POSITION_LATCH_PATH = os.path.join(_VARIBOT_DIR, ".varibot_position_latch.json"
 CHECK_INTERVAL_MIN: int = 1
 
 # --- User-tunable settings (surface here for quick edits) ---
-#
-# Portfolio Manager (PM) for strategy near_median:
-# - Each CHECK_INTERVAL_MIN, PM can close (long,short) pairs when combined uPnL% clears a threshold.
-# - Default threshold: portfolio_manager_pairs.PAIR_TP_THRESHOLD_PCT_DEFAULT (imported below as PM_PAIR_...).
-# - Optionally refill closed slots by refreshing the Varibot strategy listing snapshot and opening replacements.
 PM_REFILL_DEFAULT_ON: bool = True
 
-# Grid (``strategy/gridstrat``): after each ``grid_mode`` tick, ``grid_limits_reconcile`` runs remnant
-# re-arm (``VARIBOT_GRID_LIMITS_RECONCILE=0`` to disable live limit POST/cancel).
-# Live limit reconcile defaults ON (``grid_limits_reconcile.GRID_LIMITS_RECONCILE_DEFAULT``); no Railway env
-# required. Set ``VARIBOT_GRID_LIMITS_RECONCILE=0`` to disable. Drift refill auto-on with paired_limit;
-# drift cancel defaults on (keep-depth orphans; 418-safe pacing via pending_limit_cancel).
+_TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0
 
-# Strategies that use the "session" loop in _child_main: enter now, TP checks on CHECK_INTERVAL_MIN cadence,
-# then close-all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN (see seconds_until_next_wall_interval).
-#
-# NOTE (this branch): `near_median` no longer uses wall-clock close-all; exits are driven by the portfolio manager.
-STRATEGY_SESSION_CLOSEALL_KEYS: frozenset[str] = frozenset({"revert_near_median"})
-STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN: int = 360
+Strategy: str = os.getenv("VARIBOT_STRATEGY", "").strip()
 
-_TIME_IN_POSITION_POST_CLOSE_SLEEP_S: float = 15.0 # after a live time-in-position close, sleep this long then start the next cycle (skip wall-clock wait)
-
-# Strategy risk control: hard max hold time for position batches (invert_extreme only).
-# If the oldest open position's `position_info.opened_at` is >= this many hours, varibot will
-# close all positions (live only) at the start of the "have positions" cycle.
-TIME_KILL_POSITION_HOURS: float = 12.0
-
-# User setting: which strategy to run when flat.
-# You can put a module name (preferred) or a filename:
-#   "gridstrat" or "gridstrat.py" (Vari price-ladder grid; see strategy/gridstrat.py + GRID_* env)
-Strategy: str = os.getenv("VARIBOT_STRATEGY", "gridstrat.py").strip()
-if not Strategy:
-    Strategy = "gridstrat.py"
+DEFAULT_MAX_TICKER_ENTRIES: int = 40
 
 # Rolling log (wrapper mode): varibot.py can self-wrap to prefix lines and keep a rolling logfile,
 # so you can run just `python3 varibot.py --live` and still get the run_varibot_logged behavior.
@@ -126,14 +97,6 @@ if _VARIBOT_DIR not in sys.path:
 
 from check_portfolio_stats import _build_out_dict  # noqa: E402
 from portfolio_rebalance import rebalance_portfolio  # noqa: E402
-from grid_limits_reconcile import (  # noqa: E402
-    _position_qty_summary,
-    bulk_pending_fetch_enabled,
-    fetch_pending_limit_keys_by_assets,
-    fetch_pending_limit_keys_for_asset,
-    grid_limits_reconcile_enabled,
-    run_grid_limits_bootstrap,
-)
 from positions import _instrument_label  # noqa: E402
 from validate_vr_token import validate_vr_token  # noqa: E402
 from variationalbot.config import load_config  # noqa: E402
@@ -149,25 +112,25 @@ from multimarketorder import (  # noqa: E402
     USD_NOTIONAL_ROUND_STEP,
     _order_response_rejected,
 )
-import strategy.gridstrat as strategies_mod  # noqa: E402
-from strategy.gridstrat import (  # noqa: E402
-    DEFAULT_MAX_TICKER_ENTRIES as INVERT_EXTREME_MAX_TICKER_ENTRIES,
-    grid_leverage_for_asset,
-    grid_trading_ticker_band_pcts,
-    gridstrat_ignore_venue_positions,
-)
 from portfolio_manager_pairs import (
     PAIR_TP_THRESHOLD_PCT_DEFAULT as PM_PAIR_TP_THRESHOLD_PCT_DEFAULT,
-    PairCandidate,
-    LEG_SL_THRESHOLD_PCT_DEFAULT as PM_LEG_SL_THRESHOLD_PCT_DEFAULT,
-    LEG_TP_THRESHOLD_PCT_DEFAULT as PM_LEG_TP_THRESHOLD_PCT_DEFAULT,
-    filter_replacements,
-    filter_replacements_one_side,
-    select_legs_to_close,
-    positions_to_rows,
-    scan_best_winner_opposite_pair,
-    select_pairs_greedy_grid,
 )  # noqa: E402
+
+_strategy_module_cache: Dict[str, Any] = {}
+
+
+def _load_strategy_module(strategy_key: str) -> Any:
+    key = _strategy_key_normalized(strategy_key)
+    if not key:
+        raise RuntimeError("VARIBOT_STRATEGY is required (e.g. funding_arb.py under strategy/).")
+    if key in _strategy_module_cache:
+        return _strategy_module_cache[key]
+    mod_name = key if key.endswith(".py") else f"{key}.py"
+    if mod_name.endswith(".py"):
+        mod_name = mod_name[:-3]
+    mod = importlib.import_module(f"strategy.{mod_name}")
+    _strategy_module_cache[key] = mod
+    return mod
 
 
 def _strategy_key_normalized(strategy: str) -> str:
@@ -190,119 +153,6 @@ def _multimarket_effective_leverage() -> int:
         except Exception:
             pass
     return int(MULTIMARKET_DEFAULT_LEVERAGE)
-
-
-def _near_median_im_gap_metrics(
-    *,
-    snap: Any,
-    portfolio_value_usd: float,
-    leverage: int,
-    pos_notional_usd: Optional[float] = None,
-) -> Tuple[float, float, float, str]:
-    """
-    IM gap vs DEFAULT_IM_TARGET_PCT and available_position_value = gap_ratio × pv × lev.
-
-    Prefer snap.im_usage from GET /api/portfolio?compute_margin=true (parsed ratio 0..1).
-    If missing, fall back to pos_notional_usd / (pv × leverage).
-    """
-    den = float(portfolio_value_usd) * float(leverage)
-    cap_ratio = float(DEFAULT_IM_TARGET_PCT) / 100.0
-    if den <= 1e-12:
-        return 0.0, 0.0, 0.0, "none"
-
-    im_usage_snap = getattr(snap, "im_usage", None)
-    if im_usage_snap is not None:
-        im_ratio = float(im_usage_snap)
-        gap_ratio = max(0.0, cap_ratio - im_ratio)
-        available_pv_usd = gap_ratio * den
-        return im_ratio, gap_ratio, available_pv_usd, "im_usage"
-
-    if pos_notional_usd is not None:
-        im_ratio = max(0.0, float(pos_notional_usd) / den)
-        gap_ratio = max(0.0, cap_ratio - im_ratio)
-        available_pv_usd = gap_ratio * den
-        return im_ratio, gap_ratio, available_pv_usd, "pos_notional_fallback"
-
-    return 0.0, 0.0, 0.0, "none"
-
-
-def _near_median_usd_per_pair_budget(*, usd_per_leg: float) -> float:
-    """$/pair = 2 × usd_per_leg (paired long + short at multimarket leg size)."""
-    return 2.0 * float(usd_per_leg)
-
-
-def _near_median_max_pairs_from_available_position_value(
-    *, available_position_value_usd: float, usd_per_pair: float
-) -> int:
-    """How many new pairs fit at $/pair = 2 × usd_per_leg."""
-    cost = float(usd_per_pair)
-    if cost <= 1e-12 or available_position_value_usd <= 0:
-        return 0
-    return int(available_position_value_usd // cost)
-
-
-def _near_median_align_pair_candidates(
-    longs: List[str],
-    shorts: List[str],
-    *,
-    wanted_pairs: int,
-) -> Tuple[List[str], List[str], int]:
-    """
-    Pair long/short candidate lists to equal length (min of sides and budget). Used after
-    filter_replacements when one side has fewer fresh symbols than the planned pair count.
-    """
-    n = min(len(longs), len(shorts), int(wanted_pairs))
-    return longs[:n], shorts[:n], n
-
-
-def _near_median_slot_usd_per_leg(*, portfolio_value_usd: float, leverage: int) -> float:
-    """Per-leg USD slot: pv × leverage × (DEFAULT_IM_TARGET_PCT/100) / INVERT_EXTREME_MAX_TICKER_ENTRIES."""
-    im_frac = float(DEFAULT_IM_TARGET_PCT) / 100.0
-    raw = (float(portfolio_value_usd) * float(leverage) * im_frac) / float(INVERT_EXTREME_MAX_TICKER_ENTRIES)
-    step = float(USD_NOTIONAL_ROUND_STEP)
-    return float(math.ceil(raw / step) * step)
-
-
-def _near_median_pm_usd_for_multimarket(
-    *,
-    snap: Any,
-    args: argparse.Namespace,
-    jobs_tag: str,
-    book_pos_notional_usd: Optional[float] = None,
-) -> Optional[float]:
-    """
-    near_median PM refill / top-up: per-leg USD = (pv × leverage × DEFAULT_IM_TARGET_PCT/100) / DEFAULT_MAX_TICKER_ENTRIES.
-    Hard-cap behavior: if snap.im_usage >= DEFAULT_IM_TARGET_PCT, do not open new exposure.
-    (No "remaining IM"/gap budgeting for refills; sizing stays constant per slot.)
-    """
-    if args.usd is not None:
-        return float(args.usd)
-
-    pv = getattr(snap, "portfolio_value_usd", None)
-    if pv is None or float(pv) <= 0:
-        _log(f"PM(near_median): skip {jobs_tag} — portfolio_value_usd missing or non-positive.")
-        return None
-
-    im_usage = getattr(snap, "im_usage", None)
-    if im_usage is None:
-        _log(f"PM(near_median): skip {jobs_tag} — im_usage missing; cannot enforce IM hard cap.")
-        return None
-    cap_ratio = float(DEFAULT_IM_TARGET_PCT) / 100.0
-    if float(im_usage) >= cap_ratio:
-        _log(
-            f"PM(near_median): skip {jobs_tag} — IM hard cap "
-            f"(IM%={float(im_usage) * 100.0:.2f}%; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
-        )
-        return None
-
-    lev = _multimarket_effective_leverage()
-    slot = _near_median_slot_usd_per_leg(portfolio_value_usd=float(pv), leverage=int(lev))
-    _log(
-        f"PM(near_median): {jobs_tag} sizing — "
-        f"IM%={float(im_usage) * 100.0:.2f}% (cap {float(DEFAULT_IM_TARGET_PCT):g}%); "
-        f"usd_per_leg={slot:g} (pv×lev×({DEFAULT_IM_TARGET_PCT:g}%/100)/{INVERT_EXTREME_MAX_TICKER_ENTRIES})."
-    )
-    return float(slot)
 
 
 def _log(msg: str) -> None:
@@ -1048,19 +898,19 @@ def _fetch_venue_mark_for_asset(ep: VariEndpoints, *, asset: str) -> float:
     raise RuntimeError(f"Could not read a positive mark for {sym} from indicative quote.")
 
 
-def _grid_marks_source() -> str:
+def _marks_source() -> str:
     """``supported_assets`` (default) or ``indicative`` (per-ticker POST /api/quotes/indicative)."""
     return (os.getenv("VARIBOT_MARKS_SOURCE") or "supported_assets").strip().lower()
 
 
 def _use_bulk_supported_assets_marks() -> bool:
-    raw = _grid_marks_source()
+    raw = _marks_source()
     return raw not in ("indicative", "per_ticker", "quote", "quotes")
 
 
 def mark_price_from_supported_asset_entry(entry: Any) -> float:
     """
-    Grid/strategy mark from one ``supported_assets`` row.
+    Venue mark from one ``supported_assets`` row.
 
     Prefer ``price`` (tracks UI / indicative mark). ``index_price`` is fallback only.
     Order placement uses indicative quotes separately (``_fetch_venue_mark_for_asset``).
@@ -1099,13 +949,13 @@ def _fetch_supported_assets_mark_map(ep: VariEndpoints) -> Dict[str, float]:
     return out
 
 
-def _grid_mark_for_asset(
+def _mark_for_asset(
     ep: VariEndpoints,
     *,
     asset: str,
     bulk_map: Optional[Dict[str, float]] = None,
 ) -> float:
-    """Grid anchor: ``supported_assets`` bulk map when enabled, else indicative fallback."""
+    """``supported_assets`` bulk map when enabled, else indicative fallback."""
     sym = str(asset).strip().upper()
     if _use_bulk_supported_assets_marks():
         m = bulk_map if bulk_map is not None else _fetch_supported_assets_mark_map(ep)
@@ -1114,13 +964,13 @@ def _grid_mark_for_asset(
     return _fetch_venue_mark_for_asset(ep, asset=sym)
 
 
-def _fetch_grid_marks_for_assets(
+def _fetch_marks_for_assets(
     ep: VariEndpoints,
     assets: Iterable[str],
     *,
     bulk_map: Optional[Dict[str, float]] = None,
 ) -> Dict[str, float]:
-    """Marks for grid tickers (one bulk GET by default, per-ticker indicative fallback)."""
+    """Marks for tickers (one bulk GET by default, per-ticker indicative fallback)."""
     syms = [str(a).strip().upper() for a in assets if str(a).strip()]
     if not syms:
         return {}
@@ -1145,7 +995,7 @@ def _write_strategy_listing_snapshot_from_marks(
     source: str,
 ) -> str:
     if not marks:
-        raise RuntimeError("No grid ticker marks to write listing snapshot.")
+        raise RuntimeError("No ticker marks to write listing snapshot.")
     listings = [{"vari_ticker": sym, "mark_price": float(marks[sym])} for sym in sorted(marks.keys())]
     doc: Dict[str, Any] = {
         "fetched_at_unix": int(time.time()),
@@ -1160,44 +1010,43 @@ def _write_strategy_listing_snapshot_from_marks(
     return out_path
 
 
-def _grid_listing_snapshot_assets(*, asset_hint: Optional[str] = None) -> List[str]:
-    """Tickers to include in ``strategy_listing_snapshot.json`` (``GRID_TRADING_TICKERS`` keys)."""
-    tickers = grid_trading_ticker_band_pcts()
-    assets = [str(k).strip().upper() for k in tickers.keys() if str(k).strip()]
-    if not assets:
-        assets = [(asset_hint or os.getenv("GRID_ASSET") or "BTC").strip().upper()]
+def _listing_snapshot_assets(
+    ep: VariEndpoints,
+    *,
+    asset_hint: Optional[str] = None,
+    bulk_map: Optional[Dict[str, float]] = None,
+) -> List[str]:
+    """Tickers for strategy_listing_snapshot.json (env VARIBOT_LISTING_TICKERS or supported_assets)."""
     if asset_hint:
-        hint = str(asset_hint).strip().upper()
-        if hint and hint not in assets:
-            assets.append(hint)
-    return assets
+        return [str(asset_hint).strip().upper()]
+    raw = (os.getenv("VARIBOT_LISTING_TICKERS") or "").strip()
+    if raw:
+        return [t.strip().upper() for t in raw.split(",") if t.strip()]
+    if bulk_map:
+        return sorted(bulk_map.keys())
+    return sorted(_fetch_supported_assets_mark_map(ep).keys())
+
 
 
 def _refresh_strategy_listing_snapshot_from_venue(
     ep: VariEndpoints,
     *,
     asset_hint: Optional[str] = None,
-    grid_marks: Optional[Dict[str, float]] = None,
+    marks: Optional[Dict[str, float]] = None,
     bulk_map: Optional[Dict[str, float]] = None,
 ) -> str:
-    """
-    Write ``strategy_listing_snapshot.json`` with one row per grid ticker from
-    ``grid_trading_ticker_band_pcts()`` (``GRID_TRADING_TICKERS`` in gridstrat.py).
-
-    Default marks: one GET ``/api/metadata/supported_assets`` (``VARIBOT_MARKS_SOURCE``).
-    Set ``VARIBOT_MARKS_SOURCE=indicative`` for per-ticker POST /api/quotes/indicative.
-    """
-    assets = _grid_listing_snapshot_assets(asset_hint=asset_hint)
-    if grid_marks is None:
-        grid_marks = _fetch_grid_marks_for_assets(ep, assets, bulk_map=bulk_map)
-    if not grid_marks:
-        raise RuntimeError(f"Could not fetch any grid ticker marks for listing snapshot (assets={assets!r})")
+    """Write strategy_listing_snapshot.json from venue marks."""
+    assets = _listing_snapshot_assets(ep, asset_hint=asset_hint, bulk_map=bulk_map)
+    if marks is None:
+        marks = _fetch_marks_for_assets(ep, assets, bulk_map=bulk_map)
+    if not marks:
+        raise RuntimeError(f"Could not fetch any ticker marks for listing snapshot (assets={assets!r})")
     src = (
         "varibot_supported_assets"
         if _use_bulk_supported_assets_marks()
         else "varibot_indicative"
     )
-    return _write_strategy_listing_snapshot_from_marks(grid_marks, source=src)
+    return _write_strategy_listing_snapshot_from_marks(marks, source=src)
 
 
 def _prepare_varibot_strategy_feed(
@@ -1205,12 +1054,12 @@ def _prepare_varibot_strategy_feed(
     *,
     args: Optional[argparse.Namespace] = None,
     asset_hint: Optional[str] = None,
-    grid_marks: Optional[Dict[str, float]] = None,
+    marks: Optional[Dict[str, float]] = None,
     bulk_map: Optional[Dict[str, float]] = None,
 ) -> Tuple[str, str]:
     """Refresh listing snapshot + marketstate JSON under Varibot/. Returns (listing_json, marketstate_json)."""
     listing_path = _refresh_strategy_listing_snapshot_from_venue(
-        ep, asset_hint=asset_hint, grid_marks=grid_marks, bulk_map=bulk_map
+        ep, asset_hint=asset_hint, marks=marks, bulk_map=bulk_map
     )
     ms_path = _ensure_strategy_marketstate_json(_resolve_marketstate_json_path(args=args))
     return listing_path, ms_path
@@ -1237,7 +1086,10 @@ def run_strategy_pick_tickers(
             f"Strategy listing snapshot missing: {listing_json}. "
             "Call _prepare_varibot_strategy_feed(ep, ...) before run_strategy_pick_tickers."
         )
-    return strategies_mod.run_strategy(
+    mod = _load_strategy_module(strategy_key)
+    if not hasattr(mod, "run_strategy"):
+        raise AttributeError(f"strategy module {mod.__name__} missing run_strategy()")
+    return mod.run_strategy(
         strategy_key=strategy_key,
         listing_json=listing_json,
         marketstate_json=ms_path,
@@ -1251,360 +1103,6 @@ def run_strategy_pick_tickers(
         account_flat_by_asset=account_flat_by_asset,
         paused_assets=paused_assets,
     )
-
-
-def _maybe_apply_grid_ticker_rotation(
-    *,
-    ep: VariEndpoints,
-    args: argparse.Namespace,
-    strat_key: str,
-    positions_raw: Any,
-) -> None:
-    """Apply pending roster swap from RotationStore; reconcile orphan tickers."""
-    if not _is_grid_like_strategy(strat_key):
-        return
-    try:
-        from grid_ticker_rotation import maybe_apply_grid_ticker_rotation
-    except ImportError as e:
-        _log(f"grid_rotation: unavailable ({type(e).__name__}: {e})")
-        return
-
-    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
-    max_slip = float(_resolve_max_slippage())
-
-    def _close(sym: str, qty_abs: float, close_side: str) -> None:
-        _close_reduce_only_with_slippage_steps(
-            ep=ep,
-            sym=sym,
-            qty_abs=float(qty_abs),
-            close_side=str(close_side),
-            max_slip=max_slip,
-        )
-
-    maybe_apply_grid_ticker_rotation(
-        ep,
-        live=bool(args.live),
-        dry_run=rebalance_dry,
-        log=_log,
-        close_position=_close,
-        varibot_dir=_VARIBOT_DIR,
-        positions_raw=positions_raw,
-    )
-
-
-def _maybe_run_grid_vol_pause(
-    *,
-    ep: VariEndpoints,
-    args: argparse.Namespace,
-    strat_key: str,
-    cycle_index: int,
-) -> Set[str]:
-    """Cycle-start macro vol pause (dump + pump); uses CoinGecko until 60 cycles of history."""
-    if not _is_grid_like_strategy(strat_key):
-        return set()
-    try:
-        from grid_vol_pause import run_grid_vol_pause_cycle
-    except ImportError as e:
-        _log(f"grid_vol_pause: unavailable ({type(e).__name__}: {e})")
-        return set()
-    grid_syms = {str(s).strip().upper() for s in grid_trading_ticker_band_pcts().keys()}
-    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
-    try:
-        return run_grid_vol_pause_cycle(
-            ep,
-            cycle_index=int(cycle_index),
-            grid_tickers=grid_syms,
-            varibot_dir=_VARIBOT_DIR,
-            live=bool(args.live),
-            dry_run=rebalance_dry,
-            log=_log,
-        )
-    except Exception as e:
-        _log(f"grid_vol_pause: cycle error ({type(e).__name__}: {e})")
-        return set()
-
-
-def _maybe_run_grid_drift_pause(
-    *,
-    ep: VariEndpoints,
-    positions_raw: Any,
-    args: argparse.Namespace,
-    strat_key: str,
-    cycle_index: int,
-) -> Tuple[Set[str], Any]:
-    """Slow-drift pause: 4h move ≥ 2× grid band % → cancel limits, flatten, sticky-pause."""
-    if not _is_grid_like_strategy(strat_key):
-        return set(), positions_raw
-    try:
-        from grid_drift_pause import run_grid_drift_pause_cycle
-    except ImportError as e:
-        _log(f"grid_drift_pause: unavailable ({type(e).__name__}: {e})")
-        return set(), positions_raw
-    grid_syms = {str(s).strip().upper() for s in grid_trading_ticker_band_pcts().keys()}
-    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
-    max_slip = float(_resolve_max_slippage())
-
-    def _close(sym: str, qty_abs: float, close_side: str) -> None:
-        _close_reduce_only_with_slippage_steps(
-            ep=ep,
-            sym=sym,
-            qty_abs=float(qty_abs),
-            close_side=str(close_side),
-            max_slip=max_slip,
-        )
-
-    try:
-        paused = run_grid_drift_pause_cycle(
-            ep,
-            positions_raw,
-            cycle_index=int(cycle_index),
-            grid_tickers=grid_syms,
-            varibot_dir=_VARIBOT_DIR,
-            live=bool(args.live),
-            dry_run=rebalance_dry,
-            log=_log,
-            close_position=_close,
-        )
-    except Exception as e:
-        _log(f"grid_drift_pause: cycle error ({type(e).__name__}: {e})")
-        return set(), positions_raw
-    if bool(args.live) and paused:
-        try:
-            positions_raw = ep.get_positions()
-        except Exception as e:
-            _log(f"grid_drift_pause: refresh positions failed ({type(e).__name__}: {e})")
-    return paused, positions_raw
-
-
-def _maybe_initialize_grid_roster(
-    ep: VariEndpoints,
-    args: argparse.Namespace,
-) -> None:
-    """On first start: run rotation evaluate and write 20-ticker roster if JSON is missing."""
-    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
-    if not _is_grid_like_strategy(strat_key):
-        return
-    try:
-        from grid_ticker_rotation import ensure_grid_trading_roster_initialized
-    except ImportError as e:
-        _log(f"grid_rotation: bootstrap unavailable ({type(e).__name__}: {e})")
-        return
-    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
-    try:
-        ensure_grid_trading_roster_initialized(ep, _log, dry_run=rebalance_dry)
-    except Exception as e:
-        _log(f"grid_rotation: bootstrap error ({type(e).__name__}: {e})")
-
-
-def _maybe_run_ticker_pain_pause(
-    *,
-    ep: VariEndpoints,
-    positions_raw: Any,
-    args: argparse.Namespace,
-    strat_key: str,
-) -> Tuple[Set[str], Any]:
-    """Cancel limits, flatten, and pause tickers that breach uPnL+rPnL vs position value."""
-    if not _is_grid_like_strategy(strat_key):
-        return set(), positions_raw
-    try:
-        from ticker_pause import load_pause_state, default_state_path, run_ticker_pain_cycle, ticker_pause_enabled
-    except ImportError as e:
-        _log(f"ticker_pause: unavailable ({type(e).__name__}: {e})")
-        return set(), positions_raw
-    if not ticker_pause_enabled():
-        from ticker_pause import paused_ticker_set, apply_pause_clear, save_pause_state
-
-        path = default_state_path(_VARIBOT_DIR)
-        st = load_pause_state(path)
-        cleared = apply_pause_clear(st)
-        if cleared:
-            save_pause_state(path, st)
-            _log(f"ticker_pause: cleared pause for {', '.join(sorted(cleared))}")
-        return paused_ticker_set(st), positions_raw
-
-    grid_syms = {str(s).strip().upper() for s in grid_trading_ticker_band_pcts().keys()}
-    rebalance_dry = bool(getattr(args, "rebalance_dry_run", False)) or not bool(args.live)
-    max_slip = float(_resolve_max_slippage())
-
-    def _close(sym: str, qty_abs: float, close_side: str) -> None:
-        _close_reduce_only_with_slippage_steps(
-            ep=ep,
-            sym=sym,
-            qty_abs=float(qty_abs),
-            close_side=str(close_side),
-            max_slip=max_slip,
-        )
-
-    paused = run_ticker_pain_cycle(
-        ep,
-        positions_raw,
-        grid_tickers=grid_syms,
-        varibot_dir=_VARIBOT_DIR,
-        live=bool(args.live),
-        dry_run=rebalance_dry,
-        log=_log,
-        close_position=_close,
-    )
-    if bool(args.live):
-        try:
-            positions_raw = ep.get_positions()
-        except Exception as e:
-            _log(f"ticker_pause: refresh positions failed ({type(e).__name__}: {e})")
-    return paused, positions_raw
-
-
-def _fetch_cycle_pending_by_asset(
-    ep: VariEndpoints,
-    *,
-    assets: Iterable[str],
-) -> Optional[Dict[str, Set[Tuple[str, str]]]]:
-    """
-    One paginated pending sweep for all grid tickers (pass 1 + pass 2 reuse).
-
-    Returns None when bulk is disabled or the request fails (caller falls back per-ticker).
-    """
-    if not bulk_pending_fetch_enabled():
-        return None
-    syms = [str(a).strip().upper() for a in assets if str(a).strip()]
-    if not syms:
-        return {}
-    try:
-        by_asset = fetch_pending_limit_keys_by_assets(ep, assets=syms)
-        n_limits = sum(len(v) for v in by_asset.values())
-        _log(
-            f"step: pending bulk fetch OK — {n_limits} limit(s) across {len(by_asset)} ticker(s) "
-            f"(paginated GET /api/orders/v2?status=pending)"
-        )
-        return by_asset
-    except Exception as e:
-        _log(
-            f"step: pending bulk fetch failed ({type(e).__name__}: {e}); "
-            "falling back to per-ticker pending GETs"
-        )
-        return None
-
-
-def _fetch_venue_pending_for_grid(
-    ep: VariEndpoints, *, asset: str
-) -> Optional[Set[Tuple[str, str]]]:
-    """Pending limit keys for one grid ticker (live paired_limit venue sync)."""
-    sym = str(asset).strip().upper()
-    try:
-        return fetch_pending_limit_keys_for_asset(ep, asset=sym)
-    except Exception as e:
-        _log(f"gridlimits[{sym}]: pending fetch before strategy failed ({type(e).__name__}: {e})")
-        return None
-
-
-def _grid_venue_inputs_for_cycle(
-    ep: VariEndpoints,
-    *,
-    args: argparse.Namespace,
-    positions_raw: Any,
-    ignore_venue_positions: bool = False,
-    venue_marks_by_asset: Optional[Dict[str, float]] = None,
-    venue_pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
-    bulk_map: Optional[Dict[str, float]] = None,
-) -> Tuple[Dict[str, float], Dict[str, Set[Tuple[str, str]]], Dict[str, bool]]:
-    """Per-ticker venue marks, pending limit keys, and flat flags for ``pick_tickers``."""
-    marks: Dict[str, float] = {}
-    pending_by: Dict[str, Set[Tuple[str, str]]] = {}
-    flat_by: Dict[str, bool] = {}
-    tickers = grid_trading_ticker_band_pcts()
-    if bool(args.live) and venue_marks_by_asset is None and _use_bulk_supported_assets_marks():
-        bulk_map = bulk_map if bulk_map is not None else _fetch_supported_assets_mark_map(ep)
-    for asset in tickers:
-        if bool(args.live):
-            if venue_marks_by_asset is not None and asset in venue_marks_by_asset:
-                marks[asset] = float(venue_marks_by_asset[asset])
-            else:
-                try:
-                    marks[asset] = float(
-                        _grid_mark_for_asset(ep, asset=asset, bulk_map=bulk_map)
-                    )
-                except Exception as e:
-                    _log(f"gridlimits[{asset}]: venue mark failed ({type(e).__name__}: {e})")
-            if venue_pending_by_asset is not None:
-                if asset in venue_pending_by_asset:
-                    pending_by[asset] = set(venue_pending_by_asset[asset])
-            else:
-                pk = _fetch_venue_pending_for_grid(ep, asset=asset)
-                # Fetch failure → omit key (gridstrat sees pending=None). Do not use set() or
-                # fresh_flat_start wrongly assumes an empty venue book (RWA instrument query 400).
-                if pk is not None:
-                    pending_by[asset] = pk
-        else:
-            pending_by[asset] = set()
-        if ignore_venue_positions:
-            # Grid session is flat-path; pending limits must not block flat rebalance logic.
-            flat_by[asset] = True
-        else:
-            pos_s = _position_qty_summary(positions_raw or {}, asset=asset)
-            flat_by[asset] = not bool(pos_s.get("has_position"))
-    return marks, pending_by, flat_by
-
-
-def _meta_flag_any_asset(meta: Dict[str, Any], key: str) -> bool:
-    if bool(meta.get(key)):
-        return True
-    by = meta.get("grid_by_asset")
-    if isinstance(by, dict):
-        for am in by.values():
-            if isinstance(am, dict) and bool(am.get(key)):
-                return True
-    return False
-
-
-def _log_gridstrat_paired_step(meta: Dict[str, Any], *, prefix: str) -> None:
-    by_asset = meta.get("grid_by_asset")
-    if isinstance(by_asset, dict) and by_asset:
-        for sym, am in by_asset.items():
-            if not isinstance(am, dict):
-                continue
-            logs = am.get("grid_paired_step_logs")
-            if not isinstance(logs, list) or not logs:
-                continue
-            for line in logs[-6:]:
-                _log(f"{prefix}[{sym}]: {line}")
-        return
-    logs = meta.get("grid_paired_step_logs")
-    if not isinstance(logs, list) or not logs:
-        return
-    for line in logs[-8:]:
-        _log(f"{prefix}: {line}")
-
-
-def _log_gridstrat_step_summary(meta: Dict[str, Any], *, positions_label: str) -> None:
-    by_asset = meta.get("grid_by_asset")
-    if isinstance(by_asset, dict) and by_asset:
-        for sym, am in by_asset.items():
-            if not isinstance(am, dict):
-                continue
-            n_b = len(am.get("grid_buy_rungs") or [])
-            n_s = len(am.get("grid_sell_rungs") or [])
-            _log(
-                f"step: gridstrat[{sym}] ({positions_label}) rungs buy={n_b} sell={n_s} "
-                f"mark={am.get('grid_mark')!r} band=±{am.get('grid_band_pct')}% "
-                f"source={am.get('grid_mark_source')!r}"
-            )
-            if am.get("grid_bounds_explicit"):
-                _log(
-                    f"step: gridstrat[{sym}] bounds explicit lower={am.get('grid_lower')} "
-                    f"upper={am.get('grid_upper')}"
-                )
-            elif am.get("grid_band_pct") is not None:
-                _log(
-                    f"step: gridstrat[{sym}] bounds ±{am.get('grid_band_pct')}% (pinned) "
-                    f"lower={am.get('grid_lower')} upper={am.get('grid_upper')}"
-                )
-        return
-    if meta.get("grid_paired_limit_mode"):
-        n_b = len(meta.get("grid_buy_rungs") or [])
-        n_s = len(meta.get("grid_sell_rungs") or [])
-        _log(
-            f"step: gridstrat paired_limit open_rungs buy={n_b} sell={n_s} "
-            f"mark={meta.get('grid_mark')!r} source={meta.get('grid_mark_source')!r}"
-        )
 
 
 def _top_n_for_strategy(strategy_key: str) -> int:
@@ -1678,23 +1176,11 @@ def run_multimarket(
         cmd_args.append("--live")
     # Ensure the child script uses the same sizing divisor as the strategy (do not rely on its ability to import).
     # This keeps slot sizing stable when DEFAULT_MAX_TICKER_ENTRIES is edited.
-    cmd_args.extend(["--max-ticker-entries", str(int(INVERT_EXTREME_MAX_TICKER_ENTRIES))])
+    cmd_args.extend(["--max-ticker-entries", str(int(DEFAULT_MAX_TICKER_ENTRIES))])
     if extra_args:
         cmd_args.extend(extra_args)
     _log(f"Invoking {multi_script} longs={len(longs)} shorts={len(shorts)} live={live}")
     return _run_script(script, cwd=_VARIBOT_DIR, args=cmd_args, timeout_s=None)
-
-
-def _is_grid_like_strategy(key: str) -> bool:
-    """Strategy keys that use strategy/gridstrat.py (mark-ladder grid)."""
-    return _strategy_key_normalized(key) in ("gridstrat", "vari_grid", "invert_extreme")
-
-
-def _gridstrat_ignores_venue_positions(strat_key: str) -> bool:
-    """Grid-only: treat venue positions as irrelevant for orchestration (see gridstrat env)."""
-    if not gridstrat_ignore_venue_positions():
-        return False
-    return _strategy_key_normalized(strat_key) in ("gridstrat", "vari_grid")
 
 
 def run_multimarket_asset_side(
@@ -1737,153 +1223,11 @@ def run_multimarket_asset_side(
         ]
     if live:
         cmd_args.append("--live")
-    cmd_args.extend(["--max-ticker-entries", str(int(INVERT_EXTREME_MAX_TICKER_ENTRIES))])
+    cmd_args.extend(["--max-ticker-entries", str(int(DEFAULT_MAX_TICKER_ENTRIES))])
     if extra_args:
         cmd_args.extend(extra_args)
     _log(f"Invoking {multi_script} asset={sym} side={sd} {'qty=' + cmd_args[1] if qty is not None else 'usd=' + str(usd)} live={live}")
     return _run_script(script, cwd=_VARIBOT_DIR, args=cmd_args, timeout_s=None)
-
-
-def _grid_limits_place_limit_fn(
-    ep: VariEndpoints,
-    args: argparse.Namespace,
-) -> Callable[..., int]:
-    slip = float(_resolve_max_slippage())
-
-    def place_limit(
-        asset: str,
-        side: str,
-        usd: float,
-        px: float,
-        use_mark: bool,
-        lq: Optional[str],
-    ) -> int:
-        sym = str(asset).strip().upper()
-        sd = str(side).strip().lower()
-        if sd not in ("buy", "sell"):
-            return 1
-        inst = Instrument.for_underlying(sym)
-        lev = int(grid_leverage_for_asset(sym))
-        try:
-            ep.set_leverage(asset=sym, leverage=lev)
-        except Exception as e:
-            _log(f"gridlimits reconcile: set_leverage failed ({type(e).__name__}: {e})")
-        try:
-            if lq is not None and str(lq).strip():
-                raw_q = float(str(lq).strip())
-            else:
-                raw_q = float(usd) / float(px) if float(px) > 0 else 0.0
-            qty_str = ep.normalize_grid_limit_qty(
-                instrument=inst,
-                side=sd,
-                qty_raw=raw_q,
-            )
-            resp = ep.place_order_limit(
-                instrument=inst,
-                side=sd,
-                limit_price=float(px),
-                qty=qty_str,
-                slippage_limit=float(slip),
-                use_mark_price=bool(use_mark),
-                is_reduce_only=False,
-                is_auto_resize=False,
-            )
-        except Exception as e:
-            _log(f"gridlimits reconcile: place_order_limit failed ({type(e).__name__}: {e})")
-            return 1
-        if _order_response_rejected(resp):
-            _log(f"gridlimits reconcile: venue rejected limit response={str(resp)[:500]!r}")
-            return 1
-        return 0
-
-    return place_limit
-
-
-def _run_grid_limits_bootstrap_if_grid(
-    *,
-    ep: VariEndpoints,
-    meta: Dict[str, Any],
-    args: argparse.Namespace,
-    cycle_index: int,
-    has_positions: bool,
-    pending_by_asset: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
-) -> None:
-    if not meta.get("grid_mode"):
-        return
-    if not grid_limits_reconcile_enabled():
-        return
-    mark_fetcher: Optional[Callable[[str], float]] = None
-    if bool(args.live):
-        mark_fetcher = lambda sym, _ep=ep: float(_fetch_venue_mark_for_asset(_ep, asset=sym))
-    run_grid_limits_bootstrap(
-        ep=ep,
-        meta=meta,
-        varibot_dir=_VARIBOT_DIR,
-        cycle_index=int(cycle_index),
-        has_positions=bool(has_positions),
-        log=_log,
-        place_limit=_grid_limits_place_limit_fn(ep, args),
-        live=bool(args.live),
-        multi_script=str(args.multi_script),
-        pending_by_asset_preloaded=pending_by_asset,
-        mark_fetcher=mark_fetcher,
-    )
-
-
-def _execute_grid_market_events(meta: Dict[str, Any], *, args: argparse.Namespace) -> None:
-    evs = meta.get("grid_market_events") or []
-    if not evs:
-        return
-    script = str(args.multi_script)
-    sizing = str(meta.get("grid_market_sizing") or "qty").strip().lower()
-    for raw in evs:
-        if not isinstance(raw, dict):
-            continue
-        act = str(raw.get("action") or "")
-        if act == "grid_restore_buys":
-            _log(
-                "gridstrat: buy ladder re-armed after first-sell anchor cross "
-                f"(anchor={raw.get('price')!r})."
-            )
-            continue
-        if act not in ("open_buy", "open_sell"):
-            continue
-        asset = str(raw.get("asset") or meta.get("grid_asset") or "").strip().upper()
-        if not asset:
-            _log("gridstrat: skip event (missing asset)")
-            continue
-        side = "buy" if act == "open_buy" else "sell"
-        px = raw.get("price")
-        qty_ev = raw.get("qty")
-        use_qty = (
-            sizing != "usd"
-            and qty_ev is not None
-            and float(qty_ev) > 0.0
-        )
-        if use_qty:
-            qf = float(qty_ev)
-            _log(f"gridstrat: {act} {asset} qty={format_qty_for_indicative_api(qf)} mark_rung={px!r} live={bool(args.live)}")
-            rc = run_multimarket_asset_side(
-                multi_script=script,
-                asset=asset,
-                side=side,
-                qty=qf,
-                live=bool(args.live),
-            )
-        else:
-            usd = float(raw.get("usd") or 0.0)
-            if usd <= 0:
-                continue
-            _log(f"gridstrat: {act} {asset} usd={usd:g} mark_rung={px!r} live={bool(args.live)}")
-            rc = run_multimarket_asset_side(
-                multi_script=script,
-                asset=asset,
-                side=side,
-                usd=usd,
-                live=bool(args.live),
-            )
-        if rc != 0:
-            _log(f"{script} grid event exited {rc}")
 
 
 def _read_multimarket_skew_rejected() -> List[Dict[str, str]]:
@@ -1943,117 +1287,6 @@ def _take_side_candidates(candidates: Sequence[str], disallow: Set[str], need: i
         if len(out) >= need:
             break
     return out
-
-
-def _near_median_substitute_skew_rejected_multimarket(
-    *,
-    ep: VariEndpoints,
-    args: argparse.Namespace,
-    strat_key: str,
-    listing_json: str,
-    jobs_tag: str,
-    usd: Optional[float],
-) -> None:
-    """
-    After multimarketorder records OI-skew / risk-cap rejects or SlippageExhausted (all slippage retries
-    failed), open alternate tickers from the same strategy ranked lists (excluding open book + failed
-    symbols). Controlled by VARIBOT_SKEW_REPLACE_MAX_ROUNDS (default 1).
-    """
-    if _strategy_key_normalized(strat_key) != "invert_extreme":
-        return
-    if not bool(args.live):
-        return
-    skew_sub_extra: List[str] = []
-    if (getattr(args, "mm_probe_short", None) or "").strip():
-        skew_sub_extra.append("--skip-im-hard-cap")
-    try:
-        max_rounds = max(1, int(os.getenv("VARIBOT_SKEW_REPLACE_MAX_ROUNDS", "1")))
-    except Exception:
-        max_rounds = 1
-
-    symbols_failed: Set[str] = set()
-
-    for _ in range(max_rounds):
-        skew = _read_multimarket_skew_rejected()
-        slip = _read_multimarket_slippage_exhausted()
-        rejects: List[Dict[str, str]] = list(skew) + list(slip)
-        if not rejects:
-            return
-
-        try:
-            raw_pos = ep.get_positions()
-        except Exception as e:
-            _log(
-                f"PM(near_median): reject substitution ({jobs_tag}) skipped — positions fetch failed ({e})."
-            )
-            return
-
-        open_syms = {str(r.ticker).strip().upper() for r in positions_to_rows(raw_pos) if r.ticker}
-        for x in rejects:
-            a = str(x.get("asset") or "").strip().upper()
-            if a:
-                symbols_failed.add(a)
-        disallow = set(open_syms) | set(symbols_failed)
-
-        n_buy = sum(1 for x in rejects if str(x.get("side") or "").lower() in ("buy", "b"))
-        n_sell = sum(1 for x in rejects if str(x.get("side") or "").lower() in ("sell", "s"))
-
-        top_n = _top_n_for_strategy(strat_key)
-        try:
-            listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
-            longs, shorts, meta = run_strategy_pick_tickers(
-                strategy_key=strat_key,
-                listing_json=listing_json,
-                top_n=top_n,
-                args=args,
-            )
-        except Exception as e:
-            _log(
-                f"PM(near_median): reject substitution ({jobs_tag}) — strategy refresh failed "
-                f"({type(e).__name__}: {e})."
-            )
-            return
-
-        new_l = _take_side_candidates(longs, disallow, n_buy)
-        new_s = _take_side_candidates(shorts, disallow, n_sell)
-
-        if not new_l and not new_s:
-            _log(
-                f"PM(near_median): reject substitution ({jobs_tag}) — no alternate tickers "
-                f"(need buy×{n_buy} sell×{n_sell}; strategy={meta.get('strategy')})."
-            )
-            return
-
-        _log(
-            f"PM(near_median): reject substitution ({jobs_tag}) — venue blocked skew={skew} "
-            f"slippage_exhausted={slip}; "
-            f"retry longs={new_l} shorts={new_s} (same sizing mode as parent multimarket)."
-        )
-
-        if usd is not None:
-            rc2 = run_multimarket(
-                multi_script=str(args.multi_script),
-                longs=new_l,
-                shorts=new_s,
-                usd=float(usd),
-                live=True,
-                extra_args=skew_sub_extra or None,
-            )
-        else:
-            pct = _resolve_im_target_pct_for_multimarket(
-                args_im_target_pct=float(args.im_target_pct) if args.im_target_pct is not None else None,
-            )
-            rc2 = run_multimarket(
-                multi_script=str(args.multi_script),
-                longs=new_l,
-                shorts=new_s,
-                im_target_pct=pct,
-                live=True,
-                extra_args=skew_sub_extra or None,
-            )
-
-        if int(rc2) == 0:
-            _log_post_multimarket_positions_tally(ep=ep, longs=new_l, shorts=new_s)
 
 
 def build_endpoints() -> Tuple[Any, VariEndpoints]:
@@ -2226,480 +1459,6 @@ def _close_reduce_only_with_slippage_steps(
         raise last_err
 
 
-def _near_median_pm_dry_run_refill_preview(
-    *,
-    ep: VariEndpoints,
-    args: argparse.Namespace,
-    strat_key: str,
-    positions_raw: Any,
-    pairs: List[PairCandidate],
-    snap: Any,
-) -> None:
-    """
-    Dry-run only: same universe refresh + replacement picking as live refill, but without closes or orders.
-    Uses hypothetical opens after PM closes (current opens minus legs tagged for close).
-    """
-    refill_on = bool(getattr(args, "pm_refill", False)) and not bool(getattr(args, "pm_no_refill", False))
-    if not refill_on:
-        refill_on = bool(PM_REFILL_DEFAULT_ON) and not bool(getattr(args, "pm_no_refill", False))
-    if not refill_on:
-        _log("PM(near_median): dry-run preview — refill disabled (--pm-no-refill); skip listing / sizing preview.")
-        return
-
-    n_pairs = len(pairs)
-    if n_pairs <= 0:
-        return
-
-    closed_preview: Set[str] = set()
-    for p in pairs:
-        closed_preview.add(str(p.long_ticker).strip().upper())
-        closed_preview.add(str(p.short_ticker).strip().upper())
-
-    open_syms: Set[str] = set()
-    for pos in _positions_list(positions_raw):
-        sym = _instrument_label(pos).strip().upper()
-        q = _position_qty(pos)
-        if sym and q is not None and abs(float(q)) > 1e-12:
-            open_syms.add(sym)
-
-    disallow = set(open_syms) - closed_preview
-    _log(
-        f"PM(near_median): dry-run preview — hypothetical post-close disallow set size={len(disallow)} "
-        f"(removed {len(closed_preview)} close-leg symbol(s) from current {len(open_syms)} open)."
-    )
-
-    _log("PM(near_median): dry-run preview — refreshing strategy feed (venue mark → Varibot JSON)...")
-    try:
-        listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
-
-        top_n = _top_n_for_strategy(strat_key)
-        longs, shorts, meta = run_strategy_pick_tickers(
-            strategy_key=strat_key,
-            listing_json=listing_json,
-            top_n=top_n,
-            args=args,
-        )
-        need_each_side = int(n_pairs)
-        repl_l, repl_s = filter_replacements(
-            longs=longs,
-            shorts=shorts,
-            disallow=disallow,
-            need_each_side=need_each_side,
-        )
-        got_l, got_s = len(repl_l), len(repl_s)
-        repl_l, repl_s, n_do = _near_median_align_pair_candidates(
-            repl_l, repl_s, wanted_pairs=need_each_side
-        )
-        if n_do <= 0:
-            _log(
-                f"PM(near_median): dry-run preview — insufficient replacements "
-                f"(wanted {need_each_side} pair(s); got {got_l}L/{got_s}S after filter)."
-            )
-            return
-        if n_do < need_each_side:
-            _log(
-                f"PM(near_median): dry-run preview — partial replacements "
-                f"(wanted {need_each_side} pair(s), simulating {n_do}; candidates {got_l}L/{got_s}S)."
-            )
-
-        _log(
-            f"PM(near_median): dry-run preview — multimarketorder (no --live) for sizing — "
-            f"strategy={meta.get('strategy')} pairs={n_do}"
-        )
-        pos_n = _positions_notional_usd(positions_raw)
-        usd_run = _near_median_pm_usd_for_multimarket(
-            snap=snap,
-            args=args,
-            jobs_tag="dry-run preview",
-            book_pos_notional_usd=float(pos_n),
-        )
-        if usd_run is None:
-            return
-        run_multimarket(
-            multi_script=str(args.multi_script),
-            longs=repl_l,
-            shorts=repl_s,
-            usd=float(usd_run),
-            live=False,
-        )
-    except Exception as e:
-        _log(f"PM(near_median): dry-run preview error: {type(e).__name__}: {e}")
-
-
-def _near_median_pm_manager(
-    *,
-    ep: VariEndpoints,
-    cfg: Any,
-    args: argparse.Namespace,
-    positions_raw: Any,
-    snap: Any,
-) -> None:
-    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
-    strat_norm = _strategy_key_normalized(strat_key)
-    if strat_norm != "invert_extreme":
-        return
-
-    rows = positions_to_rows(positions_raw)
-    if not rows:
-        return
-
-    # This branch uses individual-leg TP/SL monitoring (no pairing):
-    # - close legs with upnl_pct >= +5% or <= -10% (thresholds are defaults below)
-    tp_pct = float(PM_LEG_TP_THRESHOLD_PCT_DEFAULT)
-    sl_pct = float(PM_LEG_SL_THRESHOLD_PCT_DEFAULT)
-    legs = select_legs_to_close(rows=rows, tp_pct=tp_pct, sl_pct=sl_pct)
-    if not legs:
-        _log(f"PM(invert_extreme): no eligible legs to close (tp>={tp_pct:g}%, sl<=-{sl_pct:g}%).")
-        return
-
-    _log(f"PM(invert_extreme): {len(legs)} leg(s) to close (tp>={tp_pct:g}%, sl<=-{sl_pct:g}%).")
-    for x in legs:
-        _log(
-            f"  close_if_live: {x.side} {x.ticker} upnl%={x.upnl_pct:.3f}% "
-            f"(${x.upnl_usd:,.2f} / ${x.value_usd:,.2f}) reason={x.reason}"
-        )
-
-    if not bool(args.live):
-        _log("PM(invert_extreme): dry-run (not live) — would close legs and (optionally) replace.")
-        return
-
-    # Build qty lookup once.
-    by_sym: Dict[str, float] = {}
-    for pos in _positions_list(positions_raw):
-        sym = _instrument_label(pos).strip().upper()
-        q = _position_qty(pos)
-        if sym and q is not None and abs(float(q)) > 1e-12:
-            by_sym[sym] = float(q)
-
-    max_slip = _resolve_max_slippage()
-    closed_syms: Set[str] = set()
-    closed_long_n = 0
-    closed_short_n = 0
-
-    for x in legs:
-        sym = str(x.ticker).strip().upper()
-        q = by_sym.get(sym)
-        if q is None or abs(float(q)) <= 1e-12:
-            _log(f"PM(invert_extreme): skip close {sym} (no open qty found).")
-            continue
-        close_side = "sell" if float(q) > 0 else "buy"
-        qty_abs = abs(float(q))
-        _log(f"PM(invert_extreme): closing {sym} qty={qty_abs:g} side={close_side} reduce-only...")
-        _close_reduce_only_with_slippage_steps(
-            ep=ep,
-            sym=sym,
-            qty_abs=float(qty_abs),
-            close_side=str(close_side),
-            max_slip=float(max_slip),
-        )
-        closed_syms.add(sym)
-        if x.side == "L":
-            closed_long_n += 1
-        else:
-            closed_short_n += 1
-
-    # Replacement: open new tickers in the SAME direction as closed legs, avoiding:
-    # - symbols closed earlier in this interval check
-    # - currently open symbols after closes
-    refill_on = bool(getattr(args, "pm_refill", False)) and not bool(getattr(args, "pm_no_refill", False))
-    if not refill_on:
-        # Default behavior for this branch: refill unless explicitly disabled.
-        refill_on = bool(PM_REFILL_DEFAULT_ON) and not bool(getattr(args, "pm_no_refill", False))
-    if not refill_on:
-        return
-
-    try:
-        raw_pf_after = ep.get_portfolio(compute_margin=True)
-        snap_after = parse_portfolio_snapshot(raw_pf_after)
-        open_after = ep.get_positions()
-        pos_n_after = _positions_notional_usd(open_after)
-    except Exception:
-        _log("PM(invert_extreme): skip replacements — could not fetch portfolio/positions after closes.")
-        return
-
-    pv_after = getattr(snap_after, "portfolio_value_usd", None)
-    if pv_after is None or float(pv_after) <= 0:
-        _log("PM(invert_extreme): skip replacements — post-close portfolio_value_usd missing or non-positive.")
-        return
-
-    lev_m = _multimarket_effective_leverage()
-    leg_refill = (
-        float(args.usd)
-        if args.usd is not None
-        else _near_median_slot_usd_per_leg(
-            portfolio_value_usd=float(pv_after),
-            leverage=int(lev_m),
-        )
-    )
-    im_usage_after = getattr(snap_after, "im_usage", None)
-    if im_usage_after is None:
-        _log("PM(invert_extreme): skip replacements — im_usage missing; cannot enforce IM hard cap.")
-        return
-    cap_ratio = float(DEFAULT_IM_TARGET_PCT) / 100.0
-    if float(im_usage_after) >= cap_ratio:
-        _log(
-            f"PM(invert_extreme): skip replacements — IM hard cap "
-            f"(IM%={float(im_usage_after) * 100.0:.2f}%; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
-        )
-        return
-    usd_run = float(leg_refill)
-
-    # Refresh strategy listing snapshot (venue mark) for replacement picks.
-    _log("PM(invert_extreme): refreshing strategy feed for replacements...")
-    listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
-
-    # Disallow: closed this cycle + currently open positions (post-close).
-    open_syms: Set[str] = set()
-    for pos in _positions_list(open_after):
-        sym = _instrument_label(pos).strip().upper()
-        q = _position_qty(pos)
-        if sym and q is not None and abs(float(q)) > 1e-12:
-            open_syms.add(sym)
-    disallow = set(open_syms) | set(closed_syms)
-
-    top_n = _top_n_for_strategy(strat_key)
-    longs, shorts, meta = run_strategy_pick_tickers(
-        strategy_key=strat_key, listing_json=listing_json, top_n=top_n, args=args
-    )
-
-    # Pick per-side replacements.
-    repl_l = filter_replacements_one_side(candidates=longs, disallow=disallow, need=int(closed_long_n))
-    repl_s = filter_replacements_one_side(candidates=shorts, disallow=disallow, need=int(closed_short_n))
-
-    # Never open more replacement tickers than slots remaining under max book size (e.g. 60).
-    # If both long and short refills were planned but only one slot remains, keep the candidate
-    # with larger abs(7d change %) from strategy listing JSON (tie: earlier in sorted list wins).
-    max_open_tickers = int(INVERT_EXTREME_MAX_TICKER_ENTRIES)
-    slot_budget = max(0, max_open_tickers - len(open_syms))
-    planned_n = len(repl_l) + len(repl_s)
-    if planned_n > slot_budget:
-        abs7_map = _ticker_abs_7d_from_listing_json(str(listing_json))
-
-        def _abs7_score(sym: str) -> float:
-            v = abs7_map.get(str(sym).strip().upper())
-            return float(v) if v is not None else -1.0
-
-        tagged: List[Tuple[str, str]] = [("L", str(s).strip().upper()) for s in repl_l] + [
-            ("S", str(s).strip().upper()) for s in repl_s
-        ]
-        tagged.sort(key=lambda t: _abs7_score(t[1]), reverse=True)
-        kept_l: List[str] = []
-        kept_s: List[str] = []
-        seen: Set[str] = set()
-        for side, sym_u in tagged:
-            if not sym_u or sym_u in seen:
-                continue
-            seen.add(sym_u)
-            if side == "L":
-                kept_l.append(sym_u)
-            else:
-                kept_s.append(sym_u)
-            if len(kept_l) + len(kept_s) >= slot_budget:
-                break
-        repl_l, repl_s = kept_l, kept_s
-        _log(
-            f"PM(invert_extreme): replacement slot cap — budget={slot_budget}/{max_open_tickers} "
-            f"(planned was {planned_n}); |7d| ranked — L={repl_l} S={repl_s}"
-        )
-
-    if closed_long_n and not repl_l:
-        _log(f"PM(invert_extreme): WARNING no long replacements (closed_long={closed_long_n}).")
-    if closed_short_n and not repl_s:
-        _log(f"PM(invert_extreme): WARNING no short replacements (closed_short={closed_short_n}).")
-
-    if repl_l:
-        _log(f"PM(invert_extreme): opening long replacements n={len(repl_l)} (strategy={meta.get('strategy')})...")
-        rc_l = run_multimarket(
-            multi_script=str(args.multi_script),
-            longs=repl_l,
-            shorts=[],
-            usd=float(usd_run),
-            live=bool(args.live),
-        )
-        if bool(args.live) and int(rc_l) == 0:
-            _log_post_multimarket_positions_tally(ep=ep, longs=repl_l, shorts=[])
-    if repl_s:
-        _log(f"PM(invert_extreme): opening short replacements n={len(repl_s)} (strategy={meta.get('strategy')})...")
-        rc_s = run_multimarket(
-            multi_script=str(args.multi_script),
-            longs=[],
-            shorts=repl_s,
-            usd=float(usd_run),
-            live=bool(args.live),
-        )
-        if bool(args.live) and int(rc_s) == 0:
-            _log_post_multimarket_positions_tally(ep=ep, longs=[], shorts=repl_s)
-
-
-def _invert_extreme_topup_if_needed(
-    *,
-    ep: VariEndpoints,
-    args: argparse.Namespace,
-    snap: Any,
-    positions_raw: Any,
-    cycle_index: int = 0,
-) -> None:
-    """
-    Top-up (invert_extreme only): fill empty ticker slots up to DEFAULT_MAX_TICKER_ENTRIES.
-
-    This is intentionally NON-PAIRED and can be lopsided (strategy picks are lopsided).
-    We enforce the same IM hard cap as other entry paths: if snap.im_usage >= DEFAULT_IM_TARGET_PCT,
-    do not add new exposure.
-    """
-    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
-    strat_norm = _strategy_key_normalized(strat_key)
-    if strat_norm != "invert_extreme":
-        return
-
-    pv = getattr(snap, "portfolio_value_usd", None)
-    if pv is None or float(pv) <= 0:
-        _log("PM(invert_extreme): skip top-up — portfolio_value_usd missing or non-positive.")
-        return
-
-    rows = positions_to_rows(positions_raw)
-    if not rows:
-        return
-
-    target_total = int(INVERT_EXTREME_MAX_TICKER_ENTRIES)
-    if target_total <= 0:
-        return
-    cur_total = len(rows)
-    cur_long = sum(1 for r in rows if r.side == "L")
-    cur_short = sum(1 for r in rows if r.side == "S")
-    slots_total = max(0, int(target_total) - int(cur_total))
-
-    if int(cycle_index) == 1:
-        syms = sorted({str(r.ticker).strip().upper() for r in rows if r.ticker})
-        preview = ", ".join(syms[:24])
-        if len(syms) > 24:
-            preview += f", … (+{len(syms) - 24} more)"
-        _log(
-            f"PM(invert_extreme): init — loaded open book tickers={cur_total} "
-            f"(L={cur_long}, S={cur_short}): {preview}"
-        )
-
-    _log(
-        f"PM(invert_extreme): book snapshot — tickers={cur_total}/{target_total} "
-        f"L={cur_long} S={cur_short}; slots_total={slots_total}."
-    )
-
-    im_usage = getattr(snap, "im_usage", None)
-    if im_usage is None:
-        _log("PM(invert_extreme): skip top-up — im_usage missing; cannot enforce IM hard cap.")
-        return
-    cap_ratio = float(DEFAULT_IM_TARGET_PCT) / 100.0
-    if float(im_usage) >= cap_ratio:
-        if int(cycle_index) == 1:
-            _log(
-                "PM(invert_extreme): init — no top-up: IM at or above portfolio target "
-                f"({float(DEFAULT_IM_TARGET_PCT):g}%); book snapshot above. Next cycles same checks apply."
-            )
-        else:
-            _log(
-                "PM(invert_extreme): skip top-up — IM hard cap "
-                f"(IM%={float(im_usage) * 100.0:.2f}%; cap {float(DEFAULT_IM_TARGET_PCT):g}%)."
-            )
-        return
-
-    if cur_total >= target_total:
-        _log(
-            f"PM(invert_extreme): skip top-up — book at max tickers ({cur_total}/{target_total}; "
-            f"DEFAULT_MAX_TICKER_ENTRIES)."
-        )
-        return
-
-    if int(slots_total) <= 0:
-        _log("PM(invert_extreme): skip top-up — no slots needed (book already at target).")
-        return
-
-    open_syms: Set[str] = {r.ticker.strip().upper() for r in rows if r.ticker}
-    _log(
-        f"PM(invert_extreme): top-up plan — current={cur_total}/{target_total} "
-        f"(L={cur_long}, S={cur_short}); slots_total={slots_total} (non-paired; follow strategy picks)."
-    )
-
-    if not bool(args.live):
-        _log(
-            "PM(invert_extreme): dry-run — refreshing strategy feed + strategy picks + multimarketorder "
-            "(no --live; prints sizing line and per-ticker quote dry-run)."
-        )
-
-    listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args)
-
-    top_n = _top_n_for_strategy(strat_key)
-    longs, shorts, meta = run_strategy_pick_tickers(
-        strategy_key=strat_key, listing_json=listing_json, top_n=top_n, args=args
-    )
-    disallow = set(open_syms)
-
-    # Fill by global priority: biggest abs(7d chg%) first (ties: keep strategy order/ticker).
-    abs7 = _ticker_abs_7d_from_listing_json(str(listing_json))
-    # (abs7, seq, side, sym) so ties keep strategy-list ordering.
-    combined: List[Tuple[float, int, str, str]] = []
-    seq = 0
-    for t in longs:
-        sym = str(t).strip().upper()
-        if sym:
-            combined.append((float(abs7.get(sym, 0.0)), seq, "L", sym))
-            seq += 1
-    for t in shorts:
-        sym = str(t).strip().upper()
-        if sym:
-            combined.append((float(abs7.get(sym, 0.0)), seq, "S", sym))
-            seq += 1
-    combined.sort(key=lambda x: (-float(x[0]), int(x[1])))
-
-    add_l: List[str] = []
-    add_s: List[str] = []
-    for _, __, side, sym in combined:
-        if sym in disallow:
-            continue
-        if side == "L":
-            add_l.append(sym)
-        else:
-            add_s.append(sym)
-        disallow.add(sym)
-        if len(add_l) + len(add_s) >= int(slots_total):
-            break
-    n_open = int(len(add_l) + len(add_s))
-    if n_open <= 0:
-        _log(
-            "PM(invert_extreme): top-up skipped — insufficient new tickers "
-            f"(slots_total={slots_total}; got {len(add_l)}L/{len(add_s)}S after filter)."
-        )
-        return
-
-    _log(
-        f"PM(invert_extreme): topping up with n={n_open} (non-paired) "
-        f"(strategy={meta.get('strategy')}) longs={add_l} shorts={add_s}"
-    )
-    usd_run = _near_median_pm_usd_for_multimarket(
-        snap=snap,
-        args=args,
-        jobs_tag="top-up",
-    )
-    if usd_run is None:
-        return
-    rc_mm = run_multimarket(
-        multi_script=str(args.multi_script),
-        longs=add_l,
-        shorts=add_s,
-        usd=float(usd_run),
-        live=bool(args.live),
-    )
-    if bool(args.live) and int(rc_mm) == 0:
-        _log_post_multimarket_positions_tally(ep=ep, longs=add_l, shorts=add_s)
-    if bool(args.live):
-        _near_median_substitute_skew_rejected_multimarket(
-            ep=ep,
-            args=args,
-            strat_key=strat_key,
-            listing_json=listing_json,
-            jobs_tag="PM top-up",
-            usd=float(usd_run),
-        )
-
-
 def one_cycle(
     *,
     ep: VariEndpoints,
@@ -2710,49 +1469,18 @@ def one_cycle(
     """
     Returns True when a live time-in-position close-all just succeeded; main() should
     use a short cooldown then run the next cycle instead of sleeping to the wall clock.
-
-    cycle_index is the 1-based cycle counter from the main loop (used for near_median init logging).
     """
+    _ = cycle_index
     strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
+    if not strat_key:
+        raise RuntimeError("VARIBOT_STRATEGY is required (e.g. my_strategy.py under strategy/).")
+
     raw_pf = ep.get_portfolio(compute_margin=True)
     snap = parse_portfolio_snapshot(raw_pf)
     out = _build_out_dict(cfg=cfg, snap=snap)
 
     raw_pos = ep.get_positions()
     _log(_fmt_portfolio_snapshot_line(out))
-
-    _maybe_apply_grid_ticker_rotation(
-        ep=ep,
-        args=args,
-        strat_key=strat_key,
-        positions_raw=raw_pos,
-    )
-
-    vol_paused = _maybe_run_grid_vol_pause(
-        ep=ep,
-        args=args,
-        strat_key=strat_key,
-        cycle_index=int(cycle_index),
-    )
-    drift_paused, raw_pos = _maybe_run_grid_drift_pause(
-        ep=ep,
-        positions_raw=raw_pos,
-        args=args,
-        strat_key=strat_key,
-        cycle_index=int(cycle_index),
-    )
-    paused_tickers, raw_pos = _maybe_run_ticker_pain_pause(
-        ep=ep,
-        positions_raw=raw_pos,
-        args=args,
-        strat_key=strat_key,
-    )
-    if vol_paused:
-        paused_tickers = set(paused_tickers) | set(vol_paused)
-    if drift_paused:
-        paused_tickers = set(paused_tickers) | set(drift_paused)
-    if paused_tickers:
-        _log(f"paused tickers (vol+drift+pain): {', '.join(sorted(paused_tickers))}")
 
     cycle_bulk_marks: Optional[Dict[str, float]] = None
     if bool(args.live) and _use_bulk_supported_assets_marks():
@@ -2784,75 +1512,29 @@ def one_cycle(
             log=_log,
             max_slippage=float(_resolve_max_slippage()),
             mark_fetcher=lambda sym: float(
-                _grid_mark_for_asset(ep, asset=sym, bulk_map=cycle_bulk_marks)
+                _mark_for_asset(ep, asset=sym, bulk_map=cycle_bulk_marks)
             ),
             varibot_dir=_VARIBOT_DIR,
         )
 
-    grid_ignore_pos = _gridstrat_ignores_venue_positions(strat_key)
-
-    if not has_pos or grid_ignore_pos:
+    if not has_pos:
         _clear_position_latch()
-        if grid_ignore_pos and has_pos:
-            _log(
-                "gridstrat: ignoring venue open positions (GRIDSTRAT_IGNORE_VENUE_POSITIONS) — "
-                "flat / fresh-book grid path"
-            )
-        else:
-            _log("No open positions -> venue listing snapshot -> strategy -> multimarket")
-        marks_src = _grid_marks_source()
-        cycle_pending_by: Optional[Dict[str, Set[Tuple[str, str]]]] = None
-        if _is_grid_like_strategy(strat_key):
-            cycle_pending_by = _fetch_cycle_pending_by_asset(
-                ep, assets=grid_trading_ticker_band_pcts().keys()
-            )
+        _log("No open positions -> venue listing snapshot -> strategy -> multimarket")
+        marks_src = _marks_source()
         _log(f"step: refreshing strategy feed ({marks_src} mark → Varibot JSON)...")
-        grid_marks_once: Dict[str, float] = {}
-        if _is_grid_like_strategy(strat_key) and bool(args.live):
-            grid_marks_once = _fetch_grid_marks_for_assets(
-                ep, grid_trading_ticker_band_pcts().keys(), bulk_map=cycle_bulk_marks
-            )
         listing_json, _ = _prepare_varibot_strategy_feed(
-            ep, args=args, grid_marks=grid_marks_once or None, bulk_map=cycle_bulk_marks
+            ep, args=args, marks=None, bulk_map=cycle_bulk_marks
         )
         top_n = _top_n_for_strategy(strat_key)
-        marks_by: Dict[str, float] = {}
-        pending_by: Dict[str, Set[Tuple[str, str]]] = {}
-        flat_by: Dict[str, bool] = {}
-        if _is_grid_like_strategy(strat_key):
-            marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
-                ep,
-                args=args,
-                positions_raw=raw_pos,
-                ignore_venue_positions=grid_ignore_pos,
-                venue_marks_by_asset=grid_marks_once or None,
-                venue_pending_by_asset=cycle_pending_by,
-                bulk_map=cycle_bulk_marks,
-            )
-            for sym, mk in sorted(marks_by.items()):
-                _log(f"step: venue mark {sym}={mk:g} ({marks_src})")
         longs, shorts, meta = run_strategy_pick_tickers(
             strategy_key=strat_key,
             listing_json=listing_json,
             top_n=top_n,
             args=args,
-            venue_marks_by_asset=marks_by or None,
-            venue_pending_by_asset=pending_by or None,
-            account_flat_by_asset=flat_by or None,
             account_flat=True,
-            paused_assets=paused_tickers or None,
         )
         _log("step: strategy feed ready")
         _log(f"step: strategy finished (strategy={meta.get('strategy')}, longs={len(longs)}, shorts={len(shorts)})")
-        if meta.get("grid_fresh_flat_start"):
-            _log("gridstrat: fresh flat session — symmetric paired ladder reinit at current mark")
-        if _meta_flag_any_asset(meta, "grid_flat_inventory_rebalance"):
-            _log(
-                "gridstrat: flat inventory — rebalancing buy/sell limits symmetrically around venue mark "
-                "(drift reconcile will cancel lopsided venue limits)"
-            )
-        if meta.get("grid_paired_limit_mode"):
-            _log_gridstrat_paired_step(meta, prefix="gridstrat")
 
         if _should_write_strategy_output():
             out_path = os.path.join(_VARIBOT_DIR, "strategy_output.json")
@@ -2869,27 +1551,6 @@ def one_cycle(
                     json.dump(payload, f, ensure_ascii=False, indent=2)
             except OSError as e:
                 _log(f"WARNING: could not write {out_path}: {e}")
-
-        if meta.get("grid_mode"):
-            n_ev = len(meta.get("grid_market_events") or [])
-            _log(f"step: gridstrat grid_mode events={n_ev}")
-            if meta.get("grid_paired_limit_mode"):
-                _log_gridstrat_step_summary(meta, positions_label="flat")
-            # Prevent double-posting: if gridstrat emitted limit events this cycle, let those run
-            # and skip remnant reconcile (which may otherwise post the same rung concurrently).
-            if n_ev == 0:
-                _run_grid_limits_bootstrap_if_grid(
-                    ep=ep,
-                    meta=meta,
-                    args=args,
-                    cycle_index=cycle_index,
-                    has_positions=bool(has_pos and not grid_ignore_pos),
-                    pending_by_asset=cycle_pending_by,
-                )
-            else:
-                _log("gridlimits reconcile: skip (gridstrat emitted events this cycle).")
-            _execute_grid_market_events(meta, args=args)
-            return False
 
         if not longs and not shorts:
             _log("strategy returned no tickers; skip multimarket.")
@@ -2921,152 +1582,9 @@ def one_cycle(
             _log(f"step: {args.multi_script} finished OK")
             if bool(args.live):
                 _log_post_multimarket_positions_tally(ep=ep, longs=longs, shorts=shorts)
-        if _strategy_key_normalized(strat_key) == "invert_extreme" and bool(args.live):
-            _near_median_substitute_skew_rejected_multimarket(
-                ep=ep,
-                args=args,
-                strat_key=strat_key,
-                listing_json=listing_json,
-                jobs_tag="flat entry",
-                usd=float(args.usd) if args.usd is not None else None,
-            )
         return False
 
-    # --- have positions ---
-    strat_norm = _strategy_key_normalized(strat_key)
-
-    if _is_grid_like_strategy(strat_key) and not grid_ignore_pos:
-        try:
-            cycle_pending_pos = _fetch_cycle_pending_by_asset(
-                ep, assets=grid_trading_ticker_band_pcts().keys()
-            )
-            grid_marks_pos = (
-                _fetch_grid_marks_for_assets(
-                    ep, grid_trading_ticker_band_pcts().keys(), bulk_map=cycle_bulk_marks
-                )
-                if bool(args.live)
-                else {}
-            )
-            listing_grid, _ = _prepare_varibot_strategy_feed(
-                ep, args=args, grid_marks=grid_marks_pos or None, bulk_map=cycle_bulk_marks
-            )
-            top_n_g = _top_n_for_strategy(strat_key)
-            marks_by, pending_by, flat_by = _grid_venue_inputs_for_cycle(
-                ep,
-                args=args,
-                positions_raw=raw_pos,
-                ignore_venue_positions=False,
-                venue_marks_by_asset=grid_marks_pos or None,
-                venue_pending_by_asset=cycle_pending_pos,
-                bulk_map=cycle_bulk_marks,
-            )
-            _, _, meta_g = run_strategy_pick_tickers(
-                strategy_key=strat_key,
-                listing_json=listing_grid,
-                top_n=top_n_g,
-                args=args,
-                venue_marks_by_asset=marks_by,
-                venue_pending_by_asset=pending_by,
-                account_flat_by_asset=flat_by,
-                account_flat=False,
-                paused_assets=paused_tickers or None,
-            )
-            if meta_g.get("grid_mode"):
-                n_ev = len(meta_g.get("grid_market_events") or [])
-                if n_ev:
-                    _log(f"gridstrat (open positions): events={n_ev}")
-                if meta_g.get("grid_fresh_flat_start"):
-                    _log("gridstrat (open positions): fresh flat reinit skipped — has position")
-                if meta_g.get("grid_paired_limit_mode"):
-                    _log_gridstrat_step_summary(meta_g, positions_label="open positions")
-                    _log_gridstrat_paired_step(meta_g, prefix="gridstrat")
-                if n_ev == 0:
-                    _run_grid_limits_bootstrap_if_grid(
-                        ep=ep,
-                        meta=meta_g,
-                        args=args,
-                        cycle_index=cycle_index,
-                        has_positions=True,
-                        pending_by_asset=cycle_pending_pos,
-                    )
-                else:
-                    _log("gridlimits reconcile: skip (gridstrat emitted events this cycle).")
-                _execute_grid_market_events(meta_g, args=args)
-                return False
-        except Exception as e:
-            _log(f"WARNING: gridstrat cycle with open positions ({type(e).__name__}: {e})")
-
-    # Log oldest open position (helps sanity-check time-kill / holds).
-    if strat_norm == "invert_extreme":
-        oldest = _oldest_position_summary(raw_pos, now_ts=time.time())
-        if oldest is not None:
-            sym, age_s = oldest
-            _log(f"oldest_pos= {sym} ({_format_duration_s(age_s)})")
-
-    # Hard time-kill (invert_extreme only): if the oldest open position is too old, close all.
-    if strat_norm == "invert_extreme":
-        kill_hours = float(TIME_KILL_POSITION_HOURS)
-        try:
-            v = (os.getenv("VARIBOT_TIME_KILL_POSITION_HOURS", "") or "").strip()
-            if v:
-                kill_hours = float(v)
-        except Exception:
-            pass
-        if kill_hours > 0:
-            kill_s = float(kill_hours) * 3600.0
-            candidates = _positions_time_kill_candidates(
-                positions_raw=raw_pos,
-                now_ts=time.time(),
-                kill_after_s=kill_s,
-            )
-            if candidates:
-                _log(
-                    f"time-kill: {len(candidates)} position(s) age >= {_format_duration_s(kill_s)} "
-                    f"(hours={kill_hours:g}); "
-                    f"{'closing reduce-only (LIVE)' if args.live else 'dry-run only'}..."
-                )
-                if bool(args.live):
-                    max_slip = _resolve_max_slippage()
-                    for sym, qty, age_s in candidates:
-                        close_side = "sell" if float(qty) > 0 else "buy"
-                        qty_abs = abs(float(qty))
-                        try:
-                            _log(
-                                f"time-kill: close {sym} qty={qty:g} age={_format_duration_s(age_s)} "
-                                f"(reduce-only {close_side} qty_abs={qty_abs:g})"
-                            )
-                            _close_reduce_only_with_slippage_steps(
-                                ep=ep,
-                                sym=sym,
-                                qty_abs=qty_abs,
-                                close_side=close_side,
-                                max_slip=float(max_slip),
-                            )
-                        except Exception as e:
-                            _log(f"time-kill: close {sym} failed ({type(e).__name__}: {e})")
-                    # Refresh book before PM/top-up logic.
-                    try:
-                        raw_pos = ep.get_positions()
-                    except Exception as e:
-                        _log(f"WARNING: time-kill post-close positions refresh failed ({type(e).__name__}: {e})")
-
-    # 1) PM(near_median): per-pair threshold exits / refill (before top-up IM checks).
-    _near_median_pm_manager(ep=ep, cfg=cfg, args=args, positions_raw=raw_pos, snap=snap)
-
-    # 2) Live PM closes change the book — refresh snapshot before top-up / other managers.
-    if strat_norm == "invert_extreme" and bool(args.live):
-        try:
-            raw_pf = ep.get_portfolio(compute_margin=True)
-            snap = parse_portfolio_snapshot(raw_pf)
-            raw_pos = ep.get_positions()
-        except Exception as e:
-            _log(f"WARNING: post-PM portfolio refresh failed ({type(e).__name__}: {e}); using stale snapshot for rest of cycle.")
-
-    # 3) Top-up only after PM(pair-threshold) step above (uses refreshed snap when live).
-    _invert_extreme_topup_if_needed(
-        ep=ep, args=args, snap=snap, positions_raw=raw_pos, cycle_index=int(cycle_index)
-    )
-
+    _log("Open positions — cycle complete (no flat-entry path).")
     return False
 
 
@@ -3155,18 +1673,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--strategy",
         default=Strategy,
-        help=f"Strategy key to use when flat (default {Strategy!r}; see strategy/gridstrat.py).",
-    )
-    p.add_argument(
-        "--grid-band-pct",
-        type=float,
-        default=None,
-        dest="grid_band_pct",
-        metavar="PCT",
-        help=(
-            "Grid only: set GRID_BAND_PCT for this process (symmetric ±%% bracket when "
-            "GRID_LOWER/GRID_UPPER are not both set; see strategy/gridstrat.py)."
-        ),
+        help="Strategy module under strategy/ (default VARIBOT_STRATEGY env).",
     )
     p.add_argument("--once", action="store_true", help="Run a single cycle then exit (no sleep loop).")
     p.add_argument(
@@ -3180,8 +1687,7 @@ def parse_args() -> argparse.Namespace:
         metavar="TICKER",
         help=(
             "Bypass the normal cycle: after auth, run one live multimarket short for this ticker "
-            "(notional from --usd if set, else --mm-probe-usd), pass --skip-im-hard-cap to the child script, "
-            "then run invert_extreme skew substitution if .multimarket_last_result.json lists rejects."
+            "(notional from --usd if set, else --mm-probe-usd); passes --skip-im-hard-cap to the child."
         ),
     )
     p.add_argument(
@@ -3195,8 +1701,6 @@ def parse_args() -> argparse.Namespace:
 
 def _child_main() -> int:
     args = parse_args()
-    if getattr(args, "grid_band_pct", None) is not None:
-        os.environ["GRID_BAND_PCT"] = str(float(args.grid_band_pct))
     probe_ticker = (getattr(args, "mm_probe_short", None) or "").strip()
     if probe_ticker:
         if not bool(args.live):
@@ -3205,9 +1709,8 @@ def _child_main() -> int:
         run_auth_or_exit()
         cfg, ep = build_endpoints()
         usd_probe = float(args.usd) if args.usd is not None else float(getattr(args, "mm_probe_usd", 100.0) or 100.0)
-        listing_json, _ = _prepare_varibot_strategy_feed(ep, args=args, asset_hint=sym_u)
-        strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
         sym_u = probe_ticker.upper()
+        strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
         _log(
             f"mm-probe: multimarket live short {sym_u} usd={usd_probe:g} (child --skip-im-hard-cap); "
             f"strategy={strat_key}"
@@ -3220,14 +1723,6 @@ def _child_main() -> int:
             live=True,
             extra_args=["--skip-im-hard-cap"],
         )
-        _near_median_substitute_skew_rejected_multimarket(
-            ep=ep,
-            args=args,
-            strat_key=strat_key,
-            listing_json=str(listing_json),
-            jobs_tag="mm_probe_short",
-            usd=float(usd_probe),
-        )
         return int(rc_mm)
 
     if args.usd is not None and args.im_target_pct is not None:
@@ -3235,93 +1730,6 @@ def _child_main() -> int:
         return 2
     run_auth_or_exit()
     cfg, ep = build_endpoints()
-    _maybe_initialize_grid_roster(ep, args)
-
-    # Session mode (strategies in STRATEGY_SESSION_CLOSEALL_KEYS):
-    # - Enter immediately (strategy → multimarket if flat)
-    # - While holding, run TP/PnL check every CHECK_INTERVAL_MIN minutes
-    # - Close all at the next wall multiple of STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN
-    # - Sleep 15 seconds, then restart (enter again)
-    strat_key = str(getattr(args, "strategy", "") or Strategy).strip() or Strategy
-    strat_norm = _strategy_key_normalized(strat_key)
-    if strat_norm in STRATEGY_SESSION_CLOSEALL_KEYS:
-        session_n = 0
-        while True:
-            session_n += 1
-            _log(
-                f"=== session {session_n} (strategy={strat_norm}, "
-                f"tp_check_interval_min={int(CHECK_INTERVAL_MIN)}, "
-                f"closeall_wall_interval_min={int(STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN)}, "
-                f"live={bool(args.live)}) ==="
-            )
-            _log("session: entering now (ignoring schedule)...")
-            try:
-                one_cycle(ep=ep, cfg=cfg, args=args)
-            except Exception as e:
-                _log(f"session enter error: {type(e).__name__}: {e}")
-                return 1
-
-            # Hold loop: TP check cadence while waiting for wall-clock close-all.
-            close_delay = seconds_until_next_wall_interval(
-                period_minutes=int(STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN)
-            )
-            close_at = time.time() + float(close_delay)
-            _log(
-                f"session: next close-all (wall {int(STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN)}m) in "
-                f"{_format_duration_s(close_delay)} at {_format_wake_at_sgt(close_delay)} SGT"
-            )
-
-            while True:
-                remaining = float(close_at - time.time())
-                if remaining <= 0:
-                    break
-
-                # If positions are already flat (e.g. TP close fired), restart quickly.
-                try:
-                    if not has_open_positions(ep.get_positions()):
-                        _log("session: positions flat before scheduled close-all → restart in 15s")
-                        time.sleep(_TIME_IN_POSITION_POST_CLOSE_SLEEP_S)
-                        break
-                except Exception:
-                    pass
-
-                step_s = float(int(CHECK_INTERVAL_MIN) * 60)
-                sleep_s = min(step_s, remaining)
-                _log(f"session: next TP/PnL check in {_format_duration_s(sleep_s)}")
-                time.sleep(max(1.0, sleep_s))
-
-                # Run one_cycle while holding (it will only do TP check / management when positions exist).
-                try:
-                    one_cycle(ep=ep, cfg=cfg, args=args)
-                except Exception as e:
-                    _log(f"session check error: {type(e).__name__}: {e}")
-                    if not bool(args.live):
-                        return 1
-
-            # If we broke out early due to TP flatten, restart next session.
-            try:
-                if not has_open_positions(ep.get_positions()):
-                    if not bool(args.live):
-                        return 0
-                    continue
-            except Exception:
-                pass
-
-            _log(
-                f"session: closing all at {int(STRATEGY_SESSION_CLOSEALL_INTERVAL_MIN)}m wall boundary "
-                f"({'LIVE' if args.live else 'dry-run'})..."
-            )
-            try:
-                rc = run_closeallpositions(live=bool(args.live))
-                if rc != 0:
-                    _log(f"closeallpositions exited {rc}")
-            except Exception as e:
-                _log(f"session close error: {type(e).__name__}: {e}")
-                return 1
-
-            if not bool(args.live):
-                return 0
-            time.sleep(_TIME_IN_POSITION_POST_CLOSE_SLEEP_S)
 
     cycle_n = 0
     while True:

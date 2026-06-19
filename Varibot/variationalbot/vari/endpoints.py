@@ -178,8 +178,7 @@ def rwa_commodity_underlyings() -> frozenset[str]:
     """
     RWA commodity perps (``perpetual_rwa_future``, ``kind: commodity``).
 
-    Primary source: ``GRID_RWA_TICKERS`` env (set from ``strategy.gridstrat.GRID_RWA_COMMODITY_TICKERS``
-    on import). Falls back to ``_DEFAULT_RWA_COMMODITY_UNDERLYINGS`` if unset.
+    Primary source: ``GRID_RWA_TICKERS`` env. Falls back to ``_DEFAULT_RWA_COMMODITY_UNDERLYINGS`` if unset.
     """
     raw = (os.environ.get("GRID_RWA_TICKERS") or "").strip()
     if raw:
@@ -254,7 +253,7 @@ def instrument_query_param(asset: str) -> Optional[str]:
 
   Crypto (DevTools): ``P-BTC-USDC-3600`` — four segments after ``P-``.
   RWA (``perpetual_rwa_future``): omit ``instrument`` query param; filter by
-  ``instrument.underlying`` client-side (see ``grid_limits_reconcile``).
+  ``instrument.underlying`` client-side.
     """
     sym = str(asset).strip().upper()
     if sym in rwa_perp_underlyings():

@@ -1,7 +1,7 @@
 """
 Resilient pending limit cancels (Omni 418 ban-aware).
 
-Shared by ``cancelalllimitorders.py`` and ``grid_limits_reconcile`` drift cancel.
+Shared by ``cancelalllimitorders.py`` and other limit-cancel callers.
 Pacing: ``CANCEL_ALL_SLEEP_BETWEEN_S`` (default 1.5s between successful cancels).
 """
 from __future__ import annotations
@@ -17,8 +17,7 @@ ENV_CANCEL_SLEEP_BETWEEN_S: str = "CANCEL_ALL_SLEEP_BETWEEN_S"
 ENV_CANCEL_MAX_RETRIES: str = "CANCEL_ALL_MAX_RETRIES"
 ENV_CANCEL_BAN_BUFFER_S: str = "CANCEL_ALL_BAN_BUFFER_S"
 ENV_CANCEL_PASSES: str = "CANCEL_ALL_PASSES"
-# Legacy grid reconcile alias (same pacing when set).
-ENV_GRID_LIMITS_CANCEL_SLEEP_S: str = "VARIBOT_GRID_LIMITS_CANCEL_SLEEP_S"
+ENV_GRID_LIMITS_CANCEL_SLEEP_S: str = "VARIBOT_GRID_LIMITS_CANCEL_SLEEP_S"  # legacy alias
 
 
 def cancel_sleep_between_s() -> float:

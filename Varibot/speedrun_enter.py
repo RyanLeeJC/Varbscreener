@@ -11,7 +11,7 @@ from pathlib import Path
 _VARIBOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_VARIBOT))
 
-from gridbotsnapshot import _apply_wallet_from_env  # noqa: E402
+from wallet_env import apply_wallet_from_env  # noqa: E402
 
 WALLET = "0x1c993748bd640c7263fa72fdf3e1a506fe2baf96"
 NOTIONAL_USD = 500.0
@@ -21,7 +21,7 @@ SLIPPAGE_STEP = 0.001  # +0.10% per retry
 
 
 def main() -> int:
-    _apply_wallet_from_env(WALLET)
+    apply_wallet_from_env(WALLET)
     os.environ["MAX_SLIPPAGE"] = str(SLIPPAGE_CAP)
 
     spec = json.loads((_VARIBOT / "speedrunners.json").read_text(encoding="utf-8"))

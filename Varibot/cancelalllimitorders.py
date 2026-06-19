@@ -13,7 +13,7 @@ if _REPO_ROOT not in sys.path:
 if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
-from grid_limits_reconcile import fetch_pending_order_rows_paginated  # noqa: E402
+from pending_orders import fetch_pending_order_rows_paginated  # noqa: E402
 from pending_limit_cancel import (  # noqa: E402
     cancel_ban_buffer_s,
     cancel_limit_rows,

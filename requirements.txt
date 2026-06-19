@@ -1,9 +1,8 @@
-# Vari (GridBot) — third-party wheels for the whole runnable tree.
+# Vari / Varb — third-party wheels for the runnable tree.
 #
 # Covers:
 #   - Varibot/ (curl_cffi HTTP client, python-dotenv for .env)
-#   - requests (used by some scripts; optional dotenv when run standalone)
-#   - strategy/gridstrat.py (stdlib only)
+#   - requests (used by some scripts)
 #
 # Install from repo root:
 #   python3 -m pip install -r requirements.txt

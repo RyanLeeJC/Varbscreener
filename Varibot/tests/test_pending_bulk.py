@@ -10,7 +10,7 @@ _VARIBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
-from grid_limits_reconcile import (  # noqa: E402
+from pending_orders import (  # noqa: E402
     bulk_pending_fetch_enabled,
     pending_limit_keys_by_asset_from_rows,
 )

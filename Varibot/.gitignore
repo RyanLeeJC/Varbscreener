@@ -3,11 +3,9 @@
 varibot_output.txt
 median_filter_output.txt
 state.db
-gridstrat_state.json
 __pycache__/
 *.pyc
 .cursor/
 runs/
 Bot_credentials/
 *.log
-.DS_Store

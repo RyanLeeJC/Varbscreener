@@ -39,7 +39,7 @@ def _cooldown_s() -> float:
 
 
 def _deployment_label() -> str:
-    """Render service / git branch name shown after Vari> in alerts (e.g. Gridbot)."""
+    """Render service / git branch name shown after Vari> in alerts (e.g. Varb)."""
     for key in (
         "VARIBOT_NOTIFY_DEPLOYMENT_NAME",
         "RENDER_SERVICE_NAME",
@@ -49,7 +49,7 @@ def _deployment_label() -> str:
         val = (os.getenv(key) or "").strip()
         if val:
             return val
-    return "Gridbot"
+    return "Varb"
 
 
 def _mask_wallet(wallet: str) -> str:

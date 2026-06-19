@@ -226,11 +226,9 @@ def rebalance_constants() -> Tuple[float, float, float, float]:
     )
 
 
-def grid_rung_usd_notional(*, ticker: Optional[str] = None) -> float:
+def position_rung_usd_notional(*, ticker: Optional[str] = None) -> float:
     """
-    Per-rung USD notional: GRID_INVESTMENT_USD × leverage / GRID_NUM (strategy/gridstrat defaults).
-
-    When ``ticker`` is set, uses per-ticker leverage (``grid_leverage_for_asset``).
+    Per-rung USD notional from VARIBOT_REBALANCE_* / GRID_* env (legacy names).
     """
     try:
         from strategy.gridstrat import (  # noqa: WPS433
@@ -263,9 +261,14 @@ def grid_rung_usd_notional(*, ticker: Optional[str] = None) -> float:
     return per_rung_usd_notional(investment_usd=inv, leverage=lev, n_rungs=n_grids)
 
 
-def grid_rung_usd_for_ticker(ticker: str) -> float:
-    """Per-rung USD for one grid ticker (respects per-ticker leverage caps)."""
-    return grid_rung_usd_notional(ticker=str(ticker).strip().upper())
+def position_rung_usd_for_ticker(ticker: str) -> float:
+    """Per-rung USD for one ticker (respects per-ticker leverage when strategy module present)."""
+    return position_rung_usd_notional(ticker=str(ticker).strip().upper())
+
+
+# Legacy aliases
+grid_rung_usd_notional = position_rung_usd_notional
+grid_rung_usd_for_ticker = position_rung_usd_for_ticker
 
 
 def trim_constants() -> Tuple[float, float, float]:
@@ -273,7 +276,7 @@ def trim_constants() -> Tuple[float, float, float]:
     return (
         _env_float(ENV_TRIM_MULTIPLE, DEFAULT_TRIM_MULTIPLE),
         _env_float(ENV_TRIM_FRACTION, DEFAULT_TRIM_FRACTION),
-        grid_rung_usd_notional(),
+        position_rung_usd_notional(),
     )
 
 
@@ -337,11 +340,12 @@ def plan_notional_cap_trims(
     cap_multiple: Optional[float] = None,
     trim_fraction: Optional[float] = None,
     min_order_usd: Optional[float] = None,
+    rung_usd: Optional[float] = None,
 ) -> List[PlannedTrimOrder]:
     """
-    Reduce-only trim when position notional exceeds ``cap_multiple × grid_rung_usd``.
+    Reduce-only trim when position notional exceeds ``cap_multiple × position_rung_usd``.
 
-    Rung USD is ``GRID_INVESTMENT_USD × leverage / GRID_NUM`` per ticker (default 30× $100 = $3,000).
+    Rung USD defaults from env (GRID_INVESTMENT_USD × leverage / GRID_NUM) per ticker.
     Trims ``trim_fraction`` of position qty (default 50%) via market order.
     Set ``VARIBOT_POSITION_NOTIONAL_CAP_TRIM_MULTIPLE=0`` to disable.
     """
@@ -359,7 +363,7 @@ def plan_notional_cap_trims(
 
     out: List[PlannedTrimOrder] = []
     for pos in positions:
-        rung = grid_rung_usd_for_ticker(pos.ticker)
+        rung = float(rung_usd) if rung_usd is not None else position_rung_usd_for_ticker(pos.ticker)
         if rung <= 0:
             continue
         threshold = float(mult) * float(rung)
@@ -433,7 +437,7 @@ def plan_oversized_profit_flattens(
     for pos in positions:
         if pos.upnl_usd is None or float(pos.upnl_usd) <= float(min_upnl):
             continue
-        rung = grid_rung_usd_for_ticker(pos.ticker)
+        rung = position_rung_usd_for_ticker(pos.ticker)
         if rung <= 0:
             continue
         threshold = float(mult) * float(rung)
@@ -470,7 +474,7 @@ def plan_im_high_usage_trims(
 
     out: List[PlannedTrimOrder] = []
     for pos in positions:
-        rung = grid_rung_usd_for_ticker(pos.ticker)
+        rung = position_rung_usd_for_ticker(pos.ticker)
         planned = _planned_trim_order(
             pos,
             threshold=-1.0,

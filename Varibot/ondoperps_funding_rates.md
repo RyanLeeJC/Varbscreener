@@ -190,9 +190,11 @@ Per [Ondo Perps API docs](https://docs.ondoperps.xyz/api-reference/funding-rate/
 | UI label | Endpoint | Field | Meaning |
 | :--- | :--- | :--- | :--- |
 | **Last** (settled) | `GET /v1/perps/funding_rate_history?market={TICKER}-USD.P&limit=1` | `result[0].fundingRate` | Hourly rate **as a fraction** at the last UTC hour boundary (e.g. `0.0000063` → **0.00063%/h**) |
+| **Last** (bulk) | `GET /v1/perps/contracts` | `fundingRate` per row | Same as last settled rate in UI |
 | **Next** (estimate) | `GET /v1/perps/funding_rates?market={TICKER}-USD.P` | `result.rate` | Current-interval **estimate** from in-progress premium samples |
+| **Next** (bulk) | `GET /v1/perps/contracts` | `nextFundingRate` per row | Same value as `funding_rates.rate`; all markets in one response |
 
-`fundingratecheck.py` and the funding screener use **Last** only (`funding_rate_history`).
+`fundingratecheck.py` stores **both** from bulk **`/v1/perps/contracts`**. The screener defaults to **Last** (`fundingRate`); toggle **Next FR** uses `nextFundingRate`.
 
 Scale Last to other periods (same as UI tooltip):
 

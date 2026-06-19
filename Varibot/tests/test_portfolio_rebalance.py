@@ -213,13 +213,13 @@ class TestPlanPortfolioRebalance(unittest.TestCase):
         )
         self.assertIsNotNone(plan)
         assert plan is not None
-        self.assertEqual(plan.n_eff, 12)
-        self.assertEqual(plan.target_notional, 830.0)
-        self.assertIsNone(plan.dropped_ticker)
+        self.assertEqual(plan.n_eff, 14)
+        self.assertEqual(plan.target_notional, 710.0)
+        self.assertEqual(plan.dropped_ticker, "ONDO")
         longs = [o for o in plan.orders if o.assigned_side == "long"]
         shorts = [o for o in plan.orders if o.assigned_side == "short"]
-        self.assertEqual(len(longs), 6)
-        self.assertEqual(len(shorts), 6)
+        self.assertEqual(len(longs), 7)
+        self.assertEqual(len(shorts), 7)
         self.assertGreater(plan.total_volume_usd, 0.0)
 
     def test_delta_qty_signs(self) -> None:
@@ -251,6 +251,7 @@ class TestPlanNotionalCapTrims(unittest.TestCase):
             cap_multiple=20.0,
             trim_fraction=0.5,
             min_order_usd=5.0,
+            rung_usd=400.0,
         )
         self.assertEqual(len(trims), 1)
         t = trims[0]
@@ -266,6 +267,7 @@ class TestPlanNotionalCapTrims(unittest.TestCase):
             [_pos("AVAX", "long", 4.0, 2000.0)],
             cap_multiple=20.0,
             trim_fraction=0.5,
+            rung_usd=400.0,
         )
         self.assertEqual(trims, [])
 
@@ -291,8 +293,8 @@ class TestPlanNotionalCapTrims(unittest.TestCase):
 
 
 class TestPlanPositionTrims(unittest.TestCase):
-    def test_rung_usd_default_matches_gridstrat(self) -> None:
-        # DEFAULT_GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM (16 × 50 / 8 = 100)
+    def test_rung_usd_default_env_fallback(self) -> None:
+        # GRID_INVESTMENT_USD × GRID_LEVERAGE / GRID_NUM (16 × 50 / 8 = 100) when no strategy module
         self.assertEqual(grid_rung_usd_notional(), 100.0)
 
     def test_trims_when_over_threshold(self) -> None:
@@ -382,7 +384,7 @@ class TestPlanImHighUsageTrims(unittest.TestCase):
 
 
 class TestPlanOversizedProfitFlattens(unittest.TestCase):
-    @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
+    @patch("portfolio_rebalance.position_rung_usd_for_ticker", return_value=200.0)
     def test_flattens_oversized_profitable_positions(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
             [
@@ -402,7 +404,7 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
         self.assertEqual(aave.order_side, "buy")
         self.assertAlmostEqual(aave.order_quantity, 39.293)
 
-    @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
+    @patch("portfolio_rebalance.position_rung_usd_for_ticker", return_value=200.0)
     def test_skips_when_upnl_not_positive(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
             [_pos("BNB", "short", 5.6813, 674.9, upnl_usd=-84.05)],
@@ -411,7 +413,7 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
         )
         self.assertEqual(trims, [])
 
-    @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
+    @patch("portfolio_rebalance.position_rung_usd_for_ticker", return_value=200.0)
     def test_skips_when_upnl_at_or_below_five_dollars(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
             [
@@ -423,7 +425,7 @@ class TestPlanOversizedProfitFlattens(unittest.TestCase):
         )
         self.assertEqual(trims, [])
 
-    @patch("portfolio_rebalance.grid_rung_usd_for_ticker", return_value=200.0)
+    @patch("portfolio_rebalance.position_rung_usd_for_ticker", return_value=200.0)
     def test_skips_when_below_rung_multiple(self, _mock: object) -> None:
         trims = plan_oversized_profit_flattens(
             [_pos("AVAX", "long", 0.5, 2000.0, upnl_usd=10.0)],

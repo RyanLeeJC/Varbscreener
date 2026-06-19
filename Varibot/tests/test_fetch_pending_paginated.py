@@ -11,7 +11,7 @@ _VARIBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _VARIBOT_DIR not in sys.path:
     sys.path.insert(0, _VARIBOT_DIR)
 
-from grid_limits_reconcile import fetch_pending_order_rows_paginated  # noqa: E402
+from pending_orders import fetch_pending_order_rows_paginated  # noqa: E402
 
 
 def _pending_page(rows: list, *, offset: int, limit: int, has_more: bool) -> dict:
