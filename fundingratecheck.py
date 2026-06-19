@@ -154,6 +154,9 @@ ONDO_FUNDING_RATES_URL = "https://api.ondoperps.xyz/v1/perps/funding_rates"
 
 LIGHTER_FUNDING_RATES_URL = "https://mainnet.zklighter.elliot.ai/api/v1/funding-rates"
 LIGHTER_FUNDING_INTERVAL_H = 8.0
+VARI_METADATA_STATS_URL = (
+    "https://omni-client-api.prod.ap-northeast-1.variational.io/metadata/stats"
+)
 YAHOO_CHART_URL = "https://query2.finance.yahoo.com/v8/finance/chart"
 YAHOO_UA = "Mozilla/5.0"
 
@@ -238,7 +241,8 @@ def _funding_from_lighter_rate(rate: float) -> VenueFunding:
 
 def _funding_from_vari_rate(rate: float, interval_h: float) -> VenueFunding:
     """
-    Vari ``supported_assets`` ``funding_rate`` is **annualized APR** (Omni UI "Ann. Funding").
+    Vari ``funding_rate`` (``/metadata/stats`` listings or ``supported_assets``) is
+    **annualized APR** (Omni UI "Ann. Funding").
 
     API stores APR as a decimal fraction: ``0.2123`` → **21.23%** Ann. Funding.
     Derive per-interval / 24h from the funding interval (equity RWA is usually 8h).
@@ -305,25 +309,28 @@ def _vari_client():
 
 
 def fetch_vari_equity_funding(tickers: Set[str]) -> Dict[str, VenueFunding]:
-    ep = _vari_client()
-    bulk = ep.get_supported_assets()
+    """Public ``GET /metadata/stats`` — no vr-token or wallet required."""
+    resp = requests.get(VARI_METADATA_STATS_URL, timeout=30)
+    resp.raise_for_status()
+    body = resp.json()
+    listings = body.get("listings") if isinstance(body, dict) else None
+    if not isinstance(listings, list):
+        raise TypeError("Unexpected Vari metadata/stats response")
+
     out: Dict[str, VenueFunding] = {}
-    for sym, rows in bulk.items():
-        sym_u = str(sym).strip().upper()
+    for row in listings:
+        if not isinstance(row, dict):
+            continue
+        sym_u = str(row.get("ticker", "")).strip().upper()
         if sym_u not in tickers:
             continue
-        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
-            continue
-        row = rows[0]
-        if str(row.get("asset_class", "")).lower() != "equity":
-            continue
         try:
-            rate_pct = float(row["funding_rate"])
+            rate = float(row["funding_rate"])
         except (KeyError, TypeError, ValueError):
             continue
-        interval_s = int(row.get("funding_interval_s") or 3600)
+        interval_s = int(row.get("funding_interval_s") or 28800)
         interval_h = max(interval_s / 3600.0, 1e-9)
-        out[sym_u] = _funding_from_vari_rate(rate_pct, interval_h)
+        out[sym_u] = _funding_from_vari_rate(rate, interval_h)
     return out
 
 
