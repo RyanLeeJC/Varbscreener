@@ -714,7 +714,7 @@
     <header>
       <h1>Equity Funding Rate Arbitrage Screener</h1>
       <div class="search-wrap">
-        <input id="search" type="search" placeholder="Search by symbol…" autocomplete="off" />
+        <input id="search" type="search" placeholder="Search by symbol… (/)" autocomplete="off" />
       </div>
       <div class="controls">
         <label class="max-lev-toggle">
@@ -1489,7 +1489,24 @@
       });
     }
 
-    document.getElementById("search").addEventListener("input", render);
+    const searchInput = document.getElementById("search");
+    searchInput.addEventListener("input", render);
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        searchInput.value = "";
+        searchInput.blur();
+        render();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || active?.isContentEditable) return;
+      e.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+    });
     exchangesTrigger.addEventListener("click", (e) => {
       e.stopPropagation();
       setExchangesOpen(exchangesPanel.hidden);
