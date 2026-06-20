@@ -235,9 +235,17 @@
       font-size: 11px;
       padding: 8px 18px;
       border-bottom: 1px solid var(--border);
+      flex-wrap: nowrap;
     }
 
-    .meta-summary { min-width: 0; }
+    .meta-summary {
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #nextFundingCountdown { white-space: nowrap; }
 
     .table-shell {
       flex: 1;
