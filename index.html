@@ -15,7 +15,6 @@
       --green-dim: #1a3d2a;
       --red: #f06464;
       --red-dim: #3d1a1a;
-      --pin-bg: #101612;
       --scroll-bg: #0c0c0c;
       --star: #555;
       --star-on: #e6c84a;
@@ -58,7 +57,7 @@
       white-space: nowrap;
     }
 
-    .search-wrap { flex: 1; min-width: 200px; max-width: 420px; }
+    .search-wrap { flex: 0 1 auto; min-width: 80px; max-width: 168px; }
     .search-wrap input {
       width: 100%;
       background: #141414;
@@ -229,11 +228,16 @@
     }
 
     .meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       color: var(--muted);
       font-size: 11px;
       padding: 8px 18px;
       border-bottom: 1px solid var(--border);
     }
+
+    .meta-summary { min-width: 0; }
 
     .table-shell {
       flex: 1;
@@ -535,7 +539,7 @@
 
     th.sticky-left, th.sticky-left-2, th.sticky-left-3, th.sticky-left-4 { z-index: 25; }
 
-    /* Venue columns — Ondo pinned tint; HL + Vari share scroll bg */
+    /* Venue columns — Ondo pinned; HL + Vari scroll */
     .col-venue-ondo,
     .col-venue-scroll {
       width: var(--col-venue-w);
@@ -544,13 +548,11 @@
       padding-left: var(--col-venue-pad-x);
       padding-right: var(--col-venue-pad-x);
       text-align: center;
+      background: var(--scroll-bg);
     }
-    .col-venue-ondo { background: var(--pin-bg); }
-    th.col-venue-ondo { background: #121816; }
-    td.col-venue-ondo { background: var(--pin-bg); }
-
-    .col-venue-scroll { background: var(--scroll-bg); }
+    th.col-venue-ondo,
     th.col-venue-scroll { background: #111; }
+    td.col-venue-ondo,
     td.col-venue-scroll { background: var(--scroll-bg); }
 
     .sticky-pin-1 { position: sticky; left: var(--col-left-w); z-index: 11; }
@@ -650,7 +652,7 @@
     .star.on { color: var(--star-on); }
 
     tbody tr:hover td { background: #121212; }
-    tbody tr:hover td.col-venue-ondo { background: #141a16; }
+    tbody tr:hover td.col-venue-ondo,
     tbody tr:hover td.col-venue-scroll { background: #101010; }
     tbody tr:hover .sticky-left,
     tbody tr:hover .sticky-left-2,
@@ -673,11 +675,13 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
+      margin-left: auto;
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 500;
       white-space: nowrap;
       user-select: none;
+      flex-shrink: 0;
     }
     .refresh-btn {
       display: grid;
@@ -714,7 +718,7 @@
     <header>
       <h1>Equity Funding Rate Arbitrage Screener</h1>
       <div class="search-wrap">
-        <input id="search" type="search" placeholder="Search by symbol… (/)" autocomplete="off" />
+        <input id="search" type="search" placeholder="Search by symbol" autocomplete="off" />
       </div>
       <div class="controls">
         <label class="max-lev-toggle">
@@ -762,17 +766,20 @@
           <span class="ondo-only-slider" aria-hidden="true"></span>
         </label>
         <div class="tf-toggle" id="tfToggle">
+          <button type="button" data-tf="1h">1H</button>
           <button type="button" data-tf="8h" class="active">8H</button>
           <button type="button" data-tf="24h">24H</button>
           <button type="button" data-tf="ann">Ann.</button>
         </div>
-        <div class="refresh-control">
-          <span>Auto-refresh: <span id="refreshSec">60</span>s</span>
-          <button type="button" class="refresh-btn" id="refreshBtn" aria-label="Refresh now">↻</button>
-        </div>
       </div>
     </header>
-    <div class="meta" id="meta">Loading…</div>
+    <div class="meta" id="meta">
+      <span class="meta-summary" id="metaSummary">Loading…</span>
+      <div class="refresh-control">
+        <span>Auto-refresh: <span id="refreshSec">60</span>s</span>
+        <button type="button" class="refresh-btn" id="refreshBtn" aria-label="Refresh now">↻</button>
+      </div>
+    </div>
     <div class="table-shell">
       <table id="grid">
         <thead>
@@ -844,7 +851,7 @@
   <script>
     const TF_KEYS = { "8h": "pct8h", "24h": "pct24h", ann: "pctAnn" };
     const NEXT_TF_KEYS = { "8h": "nextPct8h", "24h": "nextPct24h", ann: "nextPctAnn" };
-    const TF_DECIMALS = { "8h": 5, "24h": 4, "7d": 3, ann: 2 };
+    const TF_DECIMALS = { "1h": 5, "8h": 5, "24h": 4, "7d": 3, ann: 2 };
     const VENUE_LABELS = { ondo: "Ondo", hl: "HL", lighter: "Lighter", vari: "Variational" };
     const VENUE_DEFS = [
       { id: "ondo", short: "Ondo", logo: "O", logoClass: "logo-ondo", colClass: "col-venue-ondo", pinned: true },
@@ -859,6 +866,8 @@
     const MAX_LEV_KEY = "funding_screener_max_lev";
     const EXCHANGES_KEY = "funding_screener_exchanges";
     const REFRESH_INTERVAL_S = 60;
+    const VARI_METADATA_STATS_URL =
+      "https://omni-client-api.prod.ap-northeast-1.variational.io/metadata/stats";
 
     let timeframe = "8h";
     let sortKey = "maxArb";
@@ -881,6 +890,57 @@
     const theadRow = document.querySelector("#grid thead tr");
     const refreshSecEl = document.getElementById("refreshSec");
     const refreshBtn = document.getElementById("refreshBtn");
+
+    function fundingFromVariRate(rate, intervalS) {
+      const intervalH = Math.max(intervalS / 3600, 1e-9);
+      const pctAnn = rate * 100;
+      const periodsPerYear = (24 / intervalH) * 365;
+      return {
+        pct8h: pctAnn / periodsPerYear,
+        pct24h: pctAnn / 365,
+        pctAnn,
+      };
+    }
+
+    async function enrichVariFunding(data) {
+      if (!data?.rows?.length) return data;
+      try {
+        const resp = await fetch(VARI_METADATA_STATS_URL, { cache: "no-store" });
+        if (!resp.ok) return data;
+        const body = await resp.json();
+        const listings = body?.listings;
+        if (!Array.isArray(listings)) return data;
+
+        const byTicker = new Map();
+        for (const listing of listings) {
+          const sym = String(listing?.ticker || "").trim().toUpperCase();
+          if (sym) byTicker.set(sym, listing);
+        }
+
+        return {
+          ...data,
+          variFundingAt: new Date().toISOString(),
+          rows: data.rows.map((row) => {
+            const listing = byTicker.get(row.symbol);
+            if (!listing) return row;
+            const rate = Number(listing.funding_rate);
+            if (!Number.isFinite(rate)) return row;
+            const intervalS = Number(listing.funding_interval_s) || 28800;
+            const funding = fundingFromVariRate(rate, intervalS);
+            const prev = row.venues?.vari || {};
+            return {
+              ...row,
+              venues: {
+                ...row.venues,
+                vari: { ...prev, ...funding },
+              },
+            };
+          }),
+        };
+      } catch (_) {
+        return data;
+      }
+    }
 
     function parseEmbeddedScreener(text) {
       const m = text.match(/window\.__FUNDING_SCREENER__\s*=\s*(\{[\s\S]*\})\s*;?\s*$/);
@@ -907,7 +967,7 @@
           const resp = await fetch(url, { cache: "no-store" });
           if (!resp.ok) continue;
           const data = await resp.json();
-          if (data && Array.isArray(data.rows)) return data;
+          if (data && Array.isArray(data.rows)) return enrichVariFunding(data);
         } catch (_) {
           /* try next endpoint */
         }
@@ -917,11 +977,14 @@
           const resp = await fetch(`funding_screener.data.js?t=${Date.now()}`, { cache: "no-store" });
           if (resp.ok) {
             const parsed = parseEmbeddedScreener(await resp.text());
-            if (parsed) return parsed;
+            if (parsed) return enrichVariFunding(parsed);
           }
         } catch (_) {
           /* keep embedded snapshot */
         }
+      }
+      if (window.__FUNDING_SCREENER__?.rows?.length) {
+        return enrichVariFunding(window.__FUNDING_SCREENER__);
       }
       return null;
     }
@@ -1127,7 +1190,13 @@
 
     function getRate(venue, tf, venueId) {
       if (!venue) return null;
-      if (venueId === "ondo" && ondoNextFr) {
+      const useNext = venueId === "ondo" && ondoNextFr;
+      if (tf === "1h") {
+        const key = useNext ? "nextPct8h" : "pct8h";
+        const v = venue[key];
+        return v != null ? v / 8 : null;
+      }
+      if (useNext) {
         const nextKey = NEXT_TF_KEYS[tf];
         if (nextKey && venue[nextKey] != null) return venue[nextKey];
       }
@@ -1393,10 +1462,10 @@
       const q = document.getElementById("search").value.trim().toUpperCase();
       const tbody = document.getElementById("tbody");
       const empty = document.getElementById("empty");
-      const meta = document.getElementById("meta");
+      const metaSummary = document.getElementById("metaSummary");
 
       if (!data || !Array.isArray(data.rows)) {
-        meta.textContent = "Missing funding_screener.data.js — open this page from the same folder as the data file.";
+        metaSummary.textContent = "Missing funding_screener.data.js — open this page from the same folder as the data file.";
         tbody.innerHTML = "";
         return;
       }
@@ -1410,9 +1479,7 @@
       const countLabel = ondoOnly && !q
         ? `${rows.length} of ${data.rows.length} symbols`
         : `${rows.length} symbols`;
-      const ondoHint = ondoOnly ? " · Ondo only" : "";
-      const nextFrHint = ondoNextFr ? " · Ondo Next FR" : "";
-      meta.innerHTML = `<span>${countLabel}</span><span class="hint">· Updated ${updated} UTC${ondoHint}${nextFrHint} · Buy = long perp / Sell = short perp on that venue for max funding capture · Max arb uses ${timeframe.toUpperCase()} spread</span>`;
+      metaSummary.innerHTML = `<span>${countLabel}</span><span class="hint">· Updated ${updated} UTC · Max arb uses ${timeframe.toUpperCase()} spread</span>`;
 
       rows.sort(compareRows);
       updateExchangesUi();
@@ -1578,8 +1645,14 @@
       refreshScreenerData().finally(resetRefreshCountdown);
     });
 
-    render();
-    startAutoRefresh();
+    async function boot() {
+      const data = await fetchLiveScreenerData();
+      if (data) window.__FUNDING_SCREENER__ = data;
+      render();
+      startAutoRefresh();
+    }
+
+    boot();
   </script>
 </body>
 </html>

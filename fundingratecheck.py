@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare equity/stock funding rates across Vari, Ondo Perps, Hyperliquid xyz, and Lighter.
 
-Default tickers: HL xyz names that also list on Vari and/or Ondo Perps (27 symbols).
+Default tickers: HL xyz names that also list on Vari and/or Ondo Perps (32 symbols).
 Use --triple-only for the 9 names on all three venues (Vari, Ondo, HL).
 
 Examples:
@@ -54,7 +54,32 @@ DEFAULT_OVERLAP_TICKERS: tuple[str, ...] = (
     "SPCX",
     "TSLA",
     "TSM",
+    "US100",
+    "US500",
+    "WTI",
+    "XAG",
+    "XAU",
 )
+
+# Screener row symbol → venue API symbol when names differ (Ondo uses left-hand key).
+VENUE_TICKER_ALIASES: Dict[str, Dict[str, str]] = {
+    "WTI": {"hl": "CL", "vari": "CL"},
+    "XAG": {"hl": "SILVER"},
+    "XAU": {"hl": "GOLD"},
+    "US500": {"hl": "SP500"},
+    "US100": {"hl": "XYZ100"},
+}
+
+# HL xyz non-stock names we fetch when aliased from a screener row (see VENUE_TICKER_ALIASES).
+HL_TRADFI_FETCH_SYMBOLS: frozenset[str] = frozenset({"CL", "GOLD", "SILVER", "SP500", "XYZ100"})
+
+YAHOO_TICKER_ALIASES: Dict[str, str] = {
+    "WTI": "CL=F",
+    "XAG": "SI=F",
+    "XAU": "GC=F",
+    "US500": "ES=F",
+    "US100": "NQ=F",
+}
 
 # HL xyz ∩ Vari ∩ Ondo Perps
 TRIPLE_OVERLAP_TICKERS: frozenset[str] = frozenset(
@@ -96,8 +121,12 @@ VARI_MAX_LEV: Dict[str, int] = {
     "CBRS": 20,
     "COIN": 20,
     "CRCL": 20,
+    "CL": 20,
     "DRAM": 20,
     "INTC": 20,
+    "US500": 20,
+    "XAG": 20,
+    "XAU": 20,
     "LITE": 20,
     "MRVL": 20,
     "MSTR": 20,
@@ -276,6 +305,27 @@ def _funding_from_ondo_hourly_raw(raw: Any) -> Optional[VenueFunding]:
         return None
 
 
+def _venue_fetch_ticker(row_sym: str, venue: str) -> str:
+    return VENUE_TICKER_ALIASES.get(row_sym, {}).get(venue, row_sym)
+
+
+def _expand_tickers_for_venue(tickers: Set[str], venue: str) -> Set[str]:
+    return {_venue_fetch_ticker(sym, venue) for sym in tickers}
+
+
+def _remap_venue_results(fetched: Dict[str, Any], tick_set: Set[str], venue: str) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for row_sym in tick_set:
+        venue_sym = _venue_fetch_ticker(row_sym, venue)
+        if venue_sym in fetched:
+            out[row_sym] = fetched[venue_sym]
+    return out
+
+
+def _yahoo_chart_ticker(sym: str) -> str:
+    return YAHOO_TICKER_ALIASES.get(sym, sym)
+
+
 def _parse_tickers(raw: Optional[str]) -> List[str]:
     if not raw:
         return []
@@ -354,27 +404,36 @@ def _fetch_ondo_contracts() -> List[Dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
-def _ondo_equity_contract_rows() -> List[Dict[str, Any]]:
-    """Enabled equity/ETF contracts (excludes commodities/indices)."""
+def _ondo_all_enabled_contract_rows() -> List[Dict[str, Any]]:
+    """All enabled Ondo contracts (equities, ETFs, commodities, indices)."""
     out: List[Dict[str, Any]] = []
     for row in _fetch_ondo_contracts():
         if row.get("disabled"):
             continue
         base = str(row.get("baseCurrency", "")).strip().upper()
-        if not base or base in ONDO_COMMODITY_INDEX:
+        if not base:
             continue
         out.append(row)
     return out
 
 
+def _ondo_equity_contract_rows() -> List[Dict[str, Any]]:
+    """Enabled equity/ETF contracts (excludes commodities/indices)."""
+    return [
+        row
+        for row in _ondo_all_enabled_contract_rows()
+        if str(row.get("baseCurrency", "")).strip().upper() not in ONDO_COMMODITY_INDEX
+    ]
+
+
 def _fetch_ondo_enabled_bases() -> frozenset[str]:
-    return frozenset(str(row.get("baseCurrency", "")).strip().upper() for row in _ondo_equity_contract_rows())
+    return frozenset(str(row.get("baseCurrency", "")).strip().upper() for row in _ondo_all_enabled_contract_rows())
 
 
 def fetch_ondo_market_bases() -> Dict[str, str]:
     """base ticker → market id (e.g. INTC → INTC-USD.P); enabled contracts only."""
     out: Dict[str, str] = {}
-    for row in _ondo_equity_contract_rows():
+    for row in _ondo_all_enabled_contract_rows():
         base = str(row.get("baseCurrency", "")).strip().upper()
         market_id = str(row.get("market", "")).strip()
         if base and market_id:
@@ -391,7 +450,7 @@ def fetch_ondo_prices(tickers: Set[str]) -> Dict[str, float]:
             continue
         pair = row.get("pair") if isinstance(row.get("pair"), dict) else {}
         base = str(pair.get("base", "")).strip().upper()
-        if not base or base in ONDO_COMMODITY_INDEX or base not in enabled or base not in tickers:
+        if not base or base not in enabled or base not in tickers:
             continue
         raw = row.get("markPrice", row.get("price"))
         try:
@@ -409,7 +468,7 @@ def fetch_ondo_funding(tickers: Set[str]) -> Dict[str, OndoFunding]:
     - ``nextFundingRate`` — Next (in-progress estimate; same as ``funding_rates.rate``)
     """
     out: Dict[str, OndoFunding] = {}
-    for row in _ondo_equity_contract_rows():
+    for row in _ondo_all_enabled_contract_rows():
         base = str(row.get("baseCurrency", "")).strip().upper()
         if not base or base not in tickers:
             continue
@@ -538,7 +597,8 @@ def fetch_hl_xyz_markets(tickers: Set[str]) -> Dict[str, HlMarketCtx]:
         if meta.get("isDelisted"):
             continue
         sym = str(meta.get("name", "")).replace("xyz:", "").strip().upper()
-        if not sym or sym in HL_XYZ_NON_STOCK or sym not in tickers:
+        tradfi = sym in HL_TRADFI_FETCH_SYMBOLS and sym in tickers
+        if not sym or (sym in HL_XYZ_NON_STOCK and not tradfi) or sym not in tickers:
             continue
         try:
             oi = float(ctx.get("openInterest") or 0.0)
@@ -609,7 +669,7 @@ def _arb_sides(rates: Dict[str, Optional[float]]) -> Dict[str, Optional[str]]:
 def _yahoo_5d_bars(ticker: str) -> Optional[List[tuple[float, float, float]]]:
     """Last 5 daily bars as (high, low, close) from Yahoo chart API."""
     resp = requests.get(
-        f"{YAHOO_CHART_URL}/{ticker}",
+        f"{YAHOO_CHART_URL}/{_yahoo_chart_ticker(ticker)}",
         params={"range": "5d", "interval": "1d"},
         headers={"User-Agent": YAHOO_UA},
         timeout=15,
@@ -811,9 +871,18 @@ def fetch_screener_payload(
             return timer.run(label, fn)
         return fn()
 
-    vari = timed("Vari funding", lambda: fetch_vari_equity_funding(tick_set))
+    vari_fetch = _expand_tickers_for_venue(tick_set, "vari")
+    hl_fetch = _expand_tickers_for_venue(tick_set, "hl")
+
+    vari = timed(
+        "Vari funding",
+        lambda: _remap_venue_results(fetch_vari_equity_funding(vari_fetch), tick_set, "vari"),
+    )
     ondo = timed("Ondo funding", lambda: fetch_ondo_funding(tick_set))
-    hl = timed("HL xyz funding", lambda: fetch_hl_xyz_funding(tick_set))
+    hl = timed(
+        "HL xyz funding",
+        lambda: _remap_venue_results(fetch_hl_xyz_funding(hl_fetch), tick_set, "hl"),
+    )
     lighter = timed("Lighter funding", lambda: fetch_lighter_funding(tick_set))
 
     rows: List[FundingRow] = []
@@ -831,15 +900,21 @@ def fetch_screener_payload(
     ondo_prices = timed("Ondo prices", lambda: fetch_ondo_prices(tick_set))
 
     ondo_markets = timed("Max lev · Ondo markets", lambda: fetch_ondo_market_bases())
-    hl_markets = timed("Max lev · HL xyz", lambda: fetch_hl_xyz_markets(tick_set))
+    hl_markets_raw = timed("Max lev · HL xyz", lambda: fetch_hl_xyz_markets(hl_fetch))
+    hl_markets = _remap_venue_results(hl_markets_raw, tick_set, "hl")
     lighter_lev = timed("Max lev · Lighter", lambda: fetch_lighter_max_lev(tick_set))
-    vari_lev = timed(
+    vari_lev_raw = timed(
         "Max lev · Vari",
-        lambda: fetch_vari_max_lev(tick_set, force_refresh=refresh_vari_max_lev),
+        lambda: fetch_vari_max_lev(vari_fetch, force_refresh=refresh_vari_max_lev),
     )
+    vari_lev = _remap_venue_results(vari_lev_raw, tick_set, "vari")
     max_lev_maps = {
         "ondo": {sym: ondo_max_lev(sym) for sym in tick_set if sym in ondo_markets},
-        "hl": {sym: ctx.max_lev for sym, ctx in hl_markets.items() if ctx.max_lev is not None},
+        "hl": {
+            sym: ctx.max_lev
+            for sym, ctx in hl_markets.items()
+            if isinstance(ctx, HlMarketCtx) and ctx.max_lev is not None
+        },
         "lighter": lighter_lev,
         "vari": vari_lev,
     }
@@ -857,6 +932,82 @@ def fetch_screener_payload(
             technicals=yahoo_technicals,
         ),
     )
+
+
+@dataclass(frozen=True)
+class OndoVariArbOpportunity:
+    symbol: str
+    vari_symbol: str
+    ondo_market: str
+    max_arb_pct_8h: float
+    ondo_side: str
+    vari_side: str
+    ondo_rate_8h: float
+    vari_rate_8h: float
+    price: Optional[float] = None
+
+
+def rank_ondo_vari_arb(
+    tickers: Optional[Sequence[str]] = None,
+    *,
+    use_ondo_next: bool = False,
+    min_spread_pct: float = 0.0,
+) -> List[OndoVariArbOpportunity]:
+    """Rank Ondo Perps vs Variational funding arb opportunities (8H-equivalent %)."""
+    if tickers:
+        tick_list = sorted({str(t).strip().upper() for t in tickers if str(t).strip()})
+    else:
+        tick_list = list(DEFAULT_OVERLAP_TICKERS)
+    tick_set = set(tick_list)
+
+    vari_fetch = _expand_tickers_for_venue(tick_set, "vari")
+    vari_raw = fetch_vari_equity_funding(vari_fetch)
+    vari = _remap_venue_results(vari_raw, tick_set, "vari")
+    ondo = fetch_ondo_funding(tick_set)
+    ondo_markets = fetch_ondo_market_bases()
+    ondo_prices = fetch_ondo_prices(tick_set)
+
+    out: List[OndoVariArbOpportunity] = []
+    for sym in tick_list:
+        if sym not in ondo_markets:
+            continue
+        vari_sym = _venue_fetch_ticker(sym, "vari")
+        if sym not in vari and vari_sym not in vari_raw:
+            continue
+        ondo_row = ondo.get(sym)
+        vari_row = vari.get(sym)
+        if not ondo_row or not vari_row:
+            continue
+        ondo_rate = (
+            ondo_row.next.pct_8h
+            if use_ondo_next and ondo_row.next.pct_8h is not None
+            else ondo_row.current.pct_8h
+        )
+        vari_rate = vari_row.pct_8h
+        if ondo_rate is None or vari_rate is None:
+            continue
+        rates = {"ondo": ondo_rate, "vari": vari_rate}
+        sides = _arb_sides(rates)
+        if sides["ondo"] is None or sides["vari"] is None:
+            continue
+        max_arb = abs(float(ondo_rate) - float(vari_rate))
+        if max_arb < float(min_spread_pct):
+            continue
+        out.append(
+            OndoVariArbOpportunity(
+                symbol=sym,
+                vari_symbol=vari_sym,
+                ondo_market=ondo_markets[sym],
+                max_arb_pct_8h=max_arb,
+                ondo_side=str(sides["ondo"]),
+                vari_side=str(sides["vari"]),
+                ondo_rate_8h=float(ondo_rate),
+                vari_rate_8h=float(vari_rate),
+                price=ondo_prices.get(sym),
+            )
+        )
+    out.sort(key=lambda r: (-r.max_arb_pct_8h, r.symbol))
+    return out
 
 
 def write_screener_data_js(path: str, payload: Dict[str, Any]) -> None:
@@ -938,7 +1089,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     ap.add_argument(
         "--tickers",
-        help="Comma-separated tickers (default: 27-name HL∩(Vari∪Ondo) overlap list).",
+        help="Comma-separated tickers (default: 32-name HL∩(Vari∪Ondo) overlap list).",
     )
     ap.add_argument(
         "--triple-only",
@@ -948,7 +1099,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument(
         "--all-overlap",
         action="store_true",
-        help="Same as default: full 27-name overlap list.",
+        help="Same as default: full 32-name overlap list.",
     )
     ap.add_argument("--json", action="store_true", help="Emit JSON instead of a TSV table.")
     ap.add_argument(

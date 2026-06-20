@@ -18,11 +18,12 @@ python3 fundingratecheck.py --write-screener-data funding_screener.data.js
 
 ## GitHub Pages deploy
 
-Push to `Varbscreener`. The workflow rebuilds `funding_screener.data.js` and deploys `index.html` + the data file.
+Push to `Varbscreener`. The workflow rebuilds `funding_screener.data.js` every 15 minutes and deploys `index.html` + the data file.
 
-Set repository secrets for Vari funding rates:
+Vari funding rates use the public `/metadata/stats` API (no auth required for the screener snapshot).
+
+Optional repository secrets (only if CI refresh fails without them):
 
 - `VR_TOKEN`
 - `VR_WALLET_ADDRESS`
-
-Optional: `HTTPS_PROXY` if Omni blocks GitHub Actions IPs.
+- `HTTPS_PROXY` — if Omni blocks GitHub Actions IPs
