@@ -704,26 +704,11 @@
       color: var(--text);
       background: #1a1a1a;
     }
-    .refresh-btn {
-      display: grid;
-      place-items: center;
-      width: 24px;
-      height: 24px;
-      padding: 0;
-      background: none;
-      border: none;
-      border-radius: 6px;
-      color: var(--muted);
-      cursor: pointer;
-      font-size: 15px;
-      line-height: 1;
-    }
-    .refresh-btn:hover:not(:disabled) { color: inherit; background: none; }
-    .refresh-btn:disabled {
-      opacity: 0.45;
+    .refresh-hit[aria-disabled="true"] {
+      opacity: 0.55;
       cursor: wait;
     }
-    .refresh-btn.spinning {
+    .refresh-hit.spinning {
       animation: refresh-spin 0.75s linear infinite;
     }
     @keyframes refresh-spin {
@@ -798,7 +783,6 @@
         <span class="refresh-hit" id="refreshHit" role="button" tabindex="0" aria-label="Refresh now">
           Auto-refresh: <span id="refreshSec">60</span>s
         </span>
-        <button type="button" class="refresh-btn" id="refreshBtn" aria-label="Refresh now">↻</button>
       </div>
     </div>
     <div class="table-shell">
@@ -910,7 +894,6 @@
     const exchangesDot = document.getElementById("exchangesDot");
     const theadRow = document.querySelector("#grid thead tr");
     const refreshSecEl = document.getElementById("refreshSec");
-    const refreshBtn = document.getElementById("refreshBtn");
     const refreshHit = document.getElementById("refreshHit");
     const nextFundingCountdown = document.getElementById("nextFundingCountdown");
 
@@ -1024,8 +1007,8 @@
     async function refreshScreenerData() {
       if (refreshInFlight) return false;
       refreshInFlight = true;
-      refreshBtn.disabled = true;
-      refreshBtn.classList.add("spinning");
+      refreshHit.setAttribute("aria-disabled", "true");
+      refreshHit.classList.add("spinning");
       try {
         const data = await fetchLiveScreenerData();
         if (data) {
@@ -1035,8 +1018,8 @@
         }
       } finally {
         refreshInFlight = false;
-        refreshBtn.disabled = false;
-        refreshBtn.classList.remove("spinning");
+        refreshHit.setAttribute("aria-disabled", "false");
+        refreshHit.classList.remove("spinning");
       }
       return false;
     }
@@ -1704,7 +1687,6 @@
       refreshScreenerData().finally(resetRefreshCountdown);
     }
 
-    refreshBtn.addEventListener("click", triggerRefresh);
     refreshHit.addEventListener("click", triggerRefresh);
     refreshHit.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
