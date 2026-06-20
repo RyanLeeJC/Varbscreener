@@ -672,16 +672,25 @@
     }
 
     .refresh-control {
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .refresh-hit {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      margin-left: auto;
+      padding: 2px 6px;
       color: var(--muted);
       font-size: 11px;
       font-weight: 500;
       white-space: nowrap;
       user-select: none;
-      flex-shrink: 0;
+      cursor: pointer;
+      border-radius: 8px;
+    }
+    .refresh-hit:hover {
+      color: var(--text);
+      background: #1a1a1a;
     }
     .refresh-btn {
       display: grid;
@@ -697,10 +706,7 @@
       font-size: 15px;
       line-height: 1;
     }
-    .refresh-btn:hover:not(:disabled) {
-      color: var(--text);
-      background: #1a1a1a;
-    }
+    .refresh-btn:hover:not(:disabled) { color: inherit; background: none; }
     .refresh-btn:disabled {
       opacity: 0.45;
       cursor: wait;
@@ -776,7 +782,9 @@
     <div class="meta" id="meta">
       <span class="meta-summary" id="metaSummary">Loading…</span>
       <div class="refresh-control">
-        <span>Auto-refresh: <span id="refreshSec">60</span>s</span>
+        <span class="refresh-hit" id="refreshHit" role="button" tabindex="0" aria-label="Refresh now">
+          Auto-refresh: <span id="refreshSec">60</span>s
+        </span>
         <button type="button" class="refresh-btn" id="refreshBtn" aria-label="Refresh now">↻</button>
       </div>
     </div>
@@ -890,6 +898,7 @@
     const theadRow = document.querySelector("#grid thead tr");
     const refreshSecEl = document.getElementById("refreshSec");
     const refreshBtn = document.getElementById("refreshBtn");
+    const refreshHit = document.getElementById("refreshHit");
 
     function fundingFromVariRate(rate, intervalS) {
       const intervalH = Math.max(intervalS / 3600, 1e-9);
@@ -1643,8 +1652,17 @@
     document.querySelector(".table-shell").addEventListener("scroll", hidePopups);
     window.addEventListener("resize", hidePopups);
 
-    refreshBtn.addEventListener("click", () => {
+    function triggerRefresh() {
       refreshScreenerData().finally(resetRefreshCountdown);
+    }
+
+    refreshBtn.addEventListener("click", triggerRefresh);
+    refreshHit.addEventListener("click", triggerRefresh);
+    refreshHit.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        triggerRefresh();
+      }
     });
 
     async function boot() {
