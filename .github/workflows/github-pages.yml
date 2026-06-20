@@ -2,7 +2,7 @@ name: Deploy Funding Screener
 
 on:
   push:
-    branches: [Varbscreener]
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "*/15 * * * *"

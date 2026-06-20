@@ -2,7 +2,7 @@
 
 Cross-venue funding rate screener for Ondo Perps, Hyperliquid xyz, Lighter, and Variational.
 
-**Live site:** configure GitHub Pages on branch `Varbscreener` → `https://ryanleejc.github.io/varibot/`
+**Live site:** `https://ryanleejc.github.io/Varbscreener/`
 
 ## Open locally (no server)
 
@@ -18,7 +18,7 @@ python3 fundingratecheck.py --write-screener-data funding_screener.data.js
 
 ## GitHub Pages deploy
 
-Push to `Varbscreener`. The workflow rebuilds `funding_screener.data.js` every 15 minutes and deploys `index.html` + the data file.
+Push to `main`. The workflow rebuilds `funding_screener.data.js` every 15 minutes and deploys `index.html` + the data file.
 
 Vari funding rates use the public `/metadata/stats` API (no auth required for the screener snapshot).
 
