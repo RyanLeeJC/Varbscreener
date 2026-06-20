@@ -1082,7 +1082,8 @@
       nextHour.setMinutes(60, 0, 0);
       const remainingS = (nextHour.getTime() - now.getTime()) / 1000;
       const tz = localTzLabel(now);
-      nextFundingCountdown.textContent = `Next 1h Funding in: ${formatMmSs(remainingS)}${tz ? ` ${tz}` : ""}`;
+      const nextHm = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }).format(nextHour);
+      nextFundingCountdown.textContent = `Next 1h Funding in: ${formatMmSs(remainingS)} (${nextHm}${tz ? ` ${tz}` : ""})`;
     }
 
     function loadSelectedExchanges() {
