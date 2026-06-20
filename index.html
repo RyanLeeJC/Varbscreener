@@ -708,12 +708,6 @@
       opacity: 0.55;
       cursor: wait;
     }
-    .refresh-hit.spinning {
-      animation: refresh-spin 0.75s linear infinite;
-    }
-    @keyframes refresh-spin {
-      to { transform: rotate(360deg); }
-    }
   </style>
 </head>
 <body>
@@ -1008,7 +1002,6 @@
       if (refreshInFlight) return false;
       refreshInFlight = true;
       refreshHit.setAttribute("aria-disabled", "true");
-      refreshHit.classList.add("spinning");
       try {
         const data = await fetchLiveScreenerData();
         if (data) {
@@ -1019,7 +1012,6 @@
       } finally {
         refreshInFlight = false;
         refreshHit.setAttribute("aria-disabled", "false");
-        refreshHit.classList.remove("spinning");
       }
       return false;
     }
