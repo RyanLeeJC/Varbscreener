@@ -781,6 +781,7 @@
     </header>
     <div class="meta" id="meta">
       <span class="meta-summary" id="metaSummary">Loading…</span>
+      <span class="hint" id="nextFundingCountdown" aria-live="polite"></span>
       <div class="refresh-control">
         <span class="refresh-hit" id="refreshHit" role="button" tabindex="0" aria-label="Refresh now">
           Auto-refresh: <span id="refreshSec">60</span>s
@@ -899,6 +900,7 @@
     const refreshSecEl = document.getElementById("refreshSec");
     const refreshBtn = document.getElementById("refreshBtn");
     const refreshHit = document.getElementById("refreshHit");
+    const nextFundingCountdown = document.getElementById("nextFundingCountdown");
 
     function fundingFromVariRate(rate, intervalS) {
       const intervalH = Math.max(intervalS / 3600, 1e-9);
@@ -1034,12 +1036,45 @@
       }
       refreshSecondsLeft -= 1;
       updateRefreshLabel();
+      updateNextFundingCountdown();
     }
 
     function startAutoRefresh() {
       if (refreshTicker) clearInterval(refreshTicker);
       resetRefreshCountdown();
       refreshTicker = setInterval(tickAutoRefresh, 1000);
+    }
+
+    function formatMmSs(totalSeconds) {
+      const s = Math.max(0, Math.floor(totalSeconds));
+      const mm = String(Math.floor(s / 60)).padStart(2, "0");
+      const ss = String(s % 60).padStart(2, "0");
+      return `${mm}:${ss}`;
+    }
+
+    function localTzLabel(d = new Date()) {
+      try {
+        const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: "shortOffset" }).formatToParts(d);
+        return parts.find((p) => p.type === "timeZoneName")?.value || "";
+      } catch (_) {
+        // Safari/older browsers may not support shortOffset; fall back.
+        try {
+          const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(d);
+          return parts.find((p) => p.type === "timeZoneName")?.value || "";
+        } catch (_) {
+          return "";
+        }
+      }
+    }
+
+    function updateNextFundingCountdown() {
+      if (!nextFundingCountdown) return;
+      const now = new Date();
+      const nextHour = new Date(now);
+      nextHour.setMinutes(60, 0, 0);
+      const remainingS = (nextHour.getTime() - now.getTime()) / 1000;
+      const tz = localTzLabel(now);
+      nextFundingCountdown.textContent = `Next 1h Funding in: ${formatMmSs(remainingS)}${tz ? ` ${tz}` : ""}`;
     }
 
     function loadSelectedExchanges() {
@@ -1669,6 +1704,7 @@
       const data = await fetchLiveScreenerData();
       if (data) window.__FUNDING_SCREENER__ = data;
       render();
+      updateNextFundingCountdown();
       startAutoRefresh();
     }
 
