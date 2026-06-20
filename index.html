@@ -1475,11 +1475,13 @@
       if (ondoOnly) rows = rows.filter(hasOndoMarket);
       if (q) rows = rows.filter((r) => r.symbol.includes(q));
 
-      const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "unknown";
+      const updated = data.updatedAt
+        ? new Date(data.updatedAt).toLocaleString(undefined, { timeZoneName: "short" })
+        : "unknown";
       const countLabel = ondoOnly && !q
         ? `${rows.length} of ${data.rows.length} symbols`
         : `${rows.length} symbols`;
-      metaSummary.innerHTML = `<span>${countLabel}</span><span class="hint">· Updated ${updated} UTC · Max arb uses ${timeframe.toUpperCase()} spread</span>`;
+      metaSummary.innerHTML = `<span>${countLabel}</span><span class="hint">· Updated ${updated} · Max arb uses ${timeframe.toUpperCase()} spread</span>`;
 
       rows.sort(compareRows);
       updateExchangesUi();
