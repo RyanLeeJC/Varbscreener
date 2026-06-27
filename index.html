@@ -1345,17 +1345,32 @@
       return venue[TF_KEYS[tf]];
     }
 
-    function hasOndoMarket(row) {
-      const ondo = row.venues?.ondo;
-      if (!ondo) return false;
+    function hasVenueMarket(row, venueId) {
+      const venue = row.venues?.[venueId];
+      if (!venue) return false;
+      if (venue.maxLev != null && !Number.isNaN(Number(venue.maxLev))) return true;
       return (
-        ondo.pct8h != null ||
-        ondo.pct24h != null ||
-        ondo.pctAnn != null ||
-        ondo.nextPct8h != null ||
-        ondo.nextPct24h != null ||
-        ondo.nextPctAnn != null
+        venue.pct8h != null ||
+        venue.pct24h != null ||
+        venue.pctAnn != null ||
+        venue.nextPct8h != null ||
+        venue.nextPct24h != null ||
+        venue.nextPctAnn != null
       );
+    }
+
+    function primaryPinnedExchange() {
+      for (const id of pinnedExchanges) {
+        if (selectedExchanges.has(id)) return id;
+      }
+      return null;
+    }
+
+    function passesOndoOnlyFilter(row) {
+      if (!hasVenueMarket(row, "ondo")) return false;
+      const pinned = primaryPinnedExchange();
+      if (!pinned || pinned === "ondo") return true;
+      return hasVenueMarket(row, pinned);
     }
 
     function arbForRow(row, tf) {
@@ -1614,7 +1629,7 @@
 
       let rows = data.rows.slice();
       rowBySymbol = new Map(rows.map((r) => [r.symbol, r]));
-      if (ondoOnly) rows = rows.filter(hasOndoMarket);
+      if (ondoOnly) rows = rows.filter(passesOndoOnlyFilter);
       if (q) rows = rows.filter((r) => r.symbol.includes(q));
 
       const updated = data.updatedAt
