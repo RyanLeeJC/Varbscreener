@@ -121,13 +121,22 @@
     .exchange-option {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 8px 10px;
+      gap: 8px;
+      padding: 6px 8px;
       border-radius: 8px;
-      cursor: pointer;
       user-select: none;
     }
     .exchange-option:hover { background: #1a1a1a; }
+    .exchange-option-main {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+      padding: 2px 4px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
     .exchange-option input {
       width: 14px;
       height: 14px;
@@ -141,6 +150,40 @@
       letter-spacing: 0.03em;
       text-transform: uppercase;
       color: var(--text);
+    }
+    .exchange-pin {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      margin: 0;
+      padding: 0;
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      border-radius: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      opacity: 0.55;
+      transition: color 0.15s, background 0.15s, opacity 0.15s;
+    }
+    .exchange-pin:hover:not(:disabled) {
+      background: #222;
+      color: var(--text);
+      opacity: 1;
+    }
+    .exchange-pin.on {
+      color: var(--green);
+      opacity: 1;
+    }
+    .exchange-pin:disabled {
+      cursor: default;
+      opacity: 0.2;
+    }
+    .exchange-pin svg {
+      width: 14px;
+      height: 14px;
+      display: block;
     }
 
     .ondo-only-toggle,
@@ -730,26 +773,46 @@
             <span class="exchanges-chevron" aria-hidden="true"></span>
           </button>
           <div class="exchanges-panel" id="exchangesPanel" hidden>
-            <label class="exchange-option">
-              <input type="checkbox" data-exchange="ondo" checked />
-              <span class="venue-logo logo-ondo">O</span>
-              <span class="exchange-option-name">Ondo</span>
-            </label>
-            <label class="exchange-option">
-              <input type="checkbox" data-exchange="hl" checked />
-              <span class="venue-logo logo-hl">H</span>
-              <span class="exchange-option-name">HL xyz</span>
-            </label>
-            <label class="exchange-option">
-              <input type="checkbox" data-exchange="lighter" checked />
-              <span class="venue-logo logo-lighter">L</span>
-              <span class="exchange-option-name">Lighter</span>
-            </label>
-            <label class="exchange-option">
-              <input type="checkbox" data-exchange="vari" checked />
-              <span class="venue-logo logo-vari">V</span>
-              <span class="exchange-option-name">Variational</span>
-            </label>
+            <div class="exchange-option">
+              <label class="exchange-option-main">
+                <input type="checkbox" data-exchange="ondo" checked />
+                <span class="venue-logo logo-ondo">O</span>
+                <span class="exchange-option-name">Ondo</span>
+              </label>
+              <button type="button" class="exchange-pin" data-pin="ondo" aria-label="Pin Ondo column" aria-pressed="false">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M10.5 1.2a1.8 1.8 0 0 0-2.5 0L4.5 4.7a1.8 1.8 0 0 0 0 2.5l1.3 1.3-2.8 4.7 1.5 1.5 4.7-2.8 1.3 1.3a1.8 1.8 0 0 0 2.5 0l3.5-3.5a1.8 1.8 0 0 0 0-2.5L10.5 1.2z"/></svg>
+              </button>
+            </div>
+            <div class="exchange-option">
+              <label class="exchange-option-main">
+                <input type="checkbox" data-exchange="hl" checked />
+                <span class="venue-logo logo-hl">H</span>
+                <span class="exchange-option-name">HL xyz</span>
+              </label>
+              <button type="button" class="exchange-pin" data-pin="hl" aria-label="Pin HL xyz column" aria-pressed="false">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M10.5 1.2a1.8 1.8 0 0 0-2.5 0L4.5 4.7a1.8 1.8 0 0 0 0 2.5l1.3 1.3-2.8 4.7 1.5 1.5 4.7-2.8 1.3 1.3a1.8 1.8 0 0 0 2.5 0l3.5-3.5a1.8 1.8 0 0 0 0-2.5L10.5 1.2z"/></svg>
+              </button>
+            </div>
+            <div class="exchange-option">
+              <label class="exchange-option-main">
+                <input type="checkbox" data-exchange="lighter" checked />
+                <span class="venue-logo logo-lighter">L</span>
+                <span class="exchange-option-name">Lighter</span>
+              </label>
+              <button type="button" class="exchange-pin" data-pin="lighter" aria-label="Pin Lighter column" aria-pressed="false">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M10.5 1.2a1.8 1.8 0 0 0-2.5 0L4.5 4.7a1.8 1.8 0 0 0 0 2.5l1.3 1.3-2.8 4.7 1.5 1.5 4.7-2.8 1.3 1.3a1.8 1.8 0 0 0 2.5 0l3.5-3.5a1.8 1.8 0 0 0 0-2.5L10.5 1.2z"/></svg>
+              </button>
+            </div>
+            <div class="exchange-option">
+              <label class="exchange-option-main">
+                <input type="checkbox" data-exchange="vari" checked />
+                <span class="venue-logo logo-vari">V</span>
+                <span class="exchange-option-name">Variational</span>
+              </label>
+              <button type="button" class="exchange-pin" data-pin="vari" aria-label="Pin Variational column" aria-pressed="false">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M10.5 1.2a1.8 1.8 0 0 0-2.5 0L4.5 4.7a1.8 1.8 0 0 0 0 2.5l1.3 1.3-2.8 4.7 1.5 1.5 4.7-2.8 1.3 1.3a1.8 1.8 0 0 0 2.5 0l3.5-3.5a1.8 1.8 0 0 0 0-2.5L10.5 1.2z"/></svg>
+              </button>
+            </div>
           </div>
         </div>
         <label class="next-fr-toggle">
@@ -853,17 +916,20 @@
     const TF_DECIMALS = { "1h": 5, "8h": 5, "24h": 4, "7d": 3, ann: 2 };
     const VENUE_LABELS = { ondo: "Ondo", hl: "HL", lighter: "Lighter", vari: "Variational" };
     const VENUE_DEFS = [
-      { id: "ondo", short: "Ondo", logo: "O", logoClass: "logo-ondo", colClass: "col-venue-ondo", pinned: true },
-      { id: "hl", short: "HL xyz", logo: "H", logoClass: "logo-hl", colClass: "col-venue-scroll", pinned: true },
-      { id: "lighter", short: "Lighter", logo: "L", logoClass: "logo-lighter", colClass: "col-venue-scroll", pinned: false },
-      { id: "vari", short: "Vari", logo: "V", logoClass: "logo-vari", colClass: "col-venue-scroll", pinned: false },
+      { id: "ondo", short: "Ondo", logo: "O", logoClass: "logo-ondo", colClass: "col-venue-ondo" },
+      { id: "hl", short: "HL xyz", logo: "H", logoClass: "logo-hl", colClass: "col-venue-scroll" },
+      { id: "lighter", short: "Lighter", logo: "L", logoClass: "logo-lighter", colClass: "col-venue-scroll" },
+      { id: "vari", short: "Vari", logo: "V", logoClass: "logo-vari", colClass: "col-venue-scroll" },
     ];
+    const DEFAULT_PINNED_EXCHANGES = ["vari"];
+    const MAX_PINNED_EXCHANGES = 2;
     const NOTIONAL = 10000;
     const STAR_KEY = "funding_screener_stars";
     const ONDO_ONLY_KEY = "funding_screener_ondo_only";
     const NEXT_FR_KEY = "funding_screener_next_fr";
     const MAX_LEV_KEY = "funding_screener_max_lev";
     const EXCHANGES_KEY = "funding_screener_exchanges";
+    const PINNED_EXCHANGES_KEY = "funding_screener_pinned_exchanges";
     const REFRESH_INTERVAL_S = 60;
     const VARI_METADATA_STATS_URL =
       "https://omni-client-api.prod.ap-northeast-1.variational.io/metadata/stats";
@@ -875,6 +941,7 @@
     let ondoNextFr = localStorage.getItem(NEXT_FR_KEY) === "true";
     let showMaxLev = localStorage.getItem(MAX_LEV_KEY) === "true";
     let selectedExchanges = loadSelectedExchanges();
+    let pinnedExchanges = loadPinnedExchanges().filter((id) => selectedExchanges.has(id));
     let stars = new Set(JSON.parse(localStorage.getItem(STAR_KEY) || "[]"));
     let rowBySymbol = new Map();
     let refreshSecondsLeft = REFRESH_INTERVAL_S;
@@ -1084,13 +1151,34 @@
       localStorage.setItem(EXCHANGES_KEY, JSON.stringify([...selectedExchanges]));
     }
 
+    function loadPinnedExchanges() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(PINNED_EXCHANGES_KEY) || "null");
+        if (Array.isArray(raw)) {
+          const valid = raw.filter((id) => VENUE_DEFS.some((v) => v.id === id));
+          if (valid.length) return valid.slice(0, MAX_PINNED_EXCHANGES);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      return [...DEFAULT_PINNED_EXCHANGES];
+    }
+
+    function savePinnedExchanges() {
+      localStorage.setItem(PINNED_EXCHANGES_KEY, JSON.stringify(pinnedExchanges));
+    }
+
+    function isVenuePinned(id) {
+      return pinnedExchanges.includes(id);
+    }
+
     function activeVenueDefs() {
       return VENUE_DEFS.filter((v) => selectedExchanges.has(v.id));
     }
 
     function venueColClasses(venue, pinIndex) {
       const classes = [venue.colClass];
-      if (venue.pinned && pinIndex != null) {
+      if (isVenuePinned(venue.id) && pinIndex != null) {
         classes.push(pinIndex === 0 ? "sticky-pin-1" : "sticky-pin-2");
       }
       return classes.join(" ");
@@ -1101,6 +1189,21 @@
       exchangesDot.classList.toggle("off", selectedExchanges.size === VENUE_DEFS.length);
       exchangesPanel.querySelectorAll("[data-exchange]").forEach((input) => {
         input.checked = selectedExchanges.has(input.dataset.exchange);
+      });
+      exchangesPanel.querySelectorAll("[data-pin]").forEach((btn) => {
+        const id = btn.dataset.pin;
+        const selected = selectedExchanges.has(id);
+        const pinned = isVenuePinned(id);
+        btn.classList.toggle("on", pinned);
+        btn.setAttribute("aria-pressed", pinned ? "true" : "false");
+        btn.disabled = !selected;
+        btn.title = !selected
+          ? "Enable exchange to pin"
+          : pinned
+            ? "Unpin column"
+            : pinnedExchanges.length >= MAX_PINNED_EXCHANGES
+              ? "Pin column (replaces oldest pin)"
+              : "Pin column";
       });
     }
 
@@ -1115,7 +1218,7 @@
       return activeVenueDefs()
         .map((venue) => {
           let pinIndex = null;
-          if (venue.pinned && pinSlot < 2) {
+          if (isVenuePinned(venue.id) && pinSlot < MAX_PINNED_EXCHANGES) {
             pinIndex = pinSlot;
             pinSlot += 1;
           }
@@ -1136,7 +1239,7 @@
       return activeVenueDefs()
         .map((venue) => {
           let pinIndex = null;
-          if (venue.pinned && pinSlot < 2) {
+          if (isVenuePinned(venue.id) && pinSlot < MAX_PINNED_EXCHANGES) {
             pinIndex = pinSlot;
             pinSlot += 1;
           }
@@ -1614,7 +1717,24 @@
       e.stopPropagation();
       setExchangesOpen(exchangesPanel.hidden);
     });
-    exchangesPanel.addEventListener("click", (e) => e.stopPropagation());
+    exchangesPanel.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const btn = e.target.closest("[data-pin]");
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      const id = btn.dataset.pin;
+      if (!selectedExchanges.has(id)) return;
+      if (isVenuePinned(id)) {
+        pinnedExchanges = pinnedExchanges.filter((pinId) => pinId !== id);
+      } else {
+        pinnedExchanges = [...pinnedExchanges, id];
+        if (pinnedExchanges.length > MAX_PINNED_EXCHANGES) {
+          pinnedExchanges = pinnedExchanges.slice(-MAX_PINNED_EXCHANGES);
+        }
+      }
+      savePinnedExchanges();
+      render();
+    });
     exchangesPanel.addEventListener("change", (e) => {
       const input = e.target.closest("[data-exchange]");
       if (!input) return;
@@ -1626,6 +1746,8 @@
         return;
       } else {
         selectedExchanges.delete(id);
+        pinnedExchanges = pinnedExchanges.filter((pinId) => pinId !== id);
+        savePinnedExchanges();
       }
       if (!selectedExchanges.has(sortKey) && sortKey !== "maxArb") sortKey = "maxArb";
       saveSelectedExchanges();
