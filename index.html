@@ -1173,7 +1173,12 @@
     }
 
     function activeVenueDefs() {
-      return VENUE_DEFS.filter((v) => selectedExchanges.has(v.id));
+      const active = VENUE_DEFS.filter((v) => selectedExchanges.has(v.id));
+      const pinned = pinnedExchanges
+        .map((id) => active.find((v) => v.id === id))
+        .filter(Boolean);
+      const unpinned = active.filter((v) => !isVenuePinned(v.id));
+      return [...pinned, ...unpinned];
     }
 
     function venueColClasses(venue, pinIndex) {
